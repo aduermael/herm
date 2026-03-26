@@ -783,7 +783,7 @@ func (a *App) handleResult(result any) {
 		go func() { a.resultCh <- fetchStatusCmd(wtPath) }()
 		go func() { a.resultCh <- fetchProjectSnapshot(wtPath) }()
 		go func() {
-			bootContainerCmd(bootContainerCmdOptions{workspace: wtPath, sessionID: a.sessionID, ch: a.resultCh})
+			bootContainerCmd(bootContainerCmdOptions{workspace: wtPath, sessionID: a.sessionID, ch: a.resultCh, stop: a.stopCh})
 		}()
 		go cleanupTmpDir(wtPath)
 		go cleanupAgentOutputDir(wtPath)
@@ -820,7 +820,9 @@ func (a *App) handleResult(result any) {
 
 	case containerErrMsg:
 		a.containerErr = msg.err
-		a.messages = append(a.messages, chatMessage{kind: msgError, content: msg.err.Error()})
+		if !msg.retrying {
+			a.messages = append(a.messages, chatMessage{kind: msgError, content: msg.err.Error()})
+		}
 
 	case worktreeListMsg:
 		if msg.err != nil {
