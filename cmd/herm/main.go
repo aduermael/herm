@@ -120,7 +120,7 @@ type App struct {
 	configReady         bool // true after workspace/project config has been merged
 	shownInitialModel   bool // true after the startup model line has been displayed
 	ollamaFetched       bool // true after the initial Ollama model fetch completes (or was skipped)
-	openRouterFetched   bool // true after the initial OpenRouter model fetch completes (or was skipped)
+	openRouterFetched   bool // true after initial OpenRouter fetch
 	status           statusInfo
 	projectSnap      *projectSnapshot
 	modelCatalog     *langdag.ModelCatalog
@@ -711,7 +711,6 @@ func (a *App) handleResult(result any) {
 			a.render()
 		}
 		return
-
 	case ctrlCExpiredMsg:
 		_ = msg
 		if a.ctrlCHint {
@@ -720,7 +719,6 @@ func (a *App) handleResult(result any) {
 			a.renderInput()
 		}
 		return
-
 	case escExpiredMsg:
 		_ = msg
 		if a.escHint {
@@ -747,23 +745,18 @@ func (a *App) handleResult(result any) {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
 			a.maybeShowInitialModels()
-			// Fetch Ollama models asynchronously if configured. catalogMsg can
-			// arrive twice (once from local cache, once from network refresh),
-			// so ollamaFetched ensures we only start one probe per session.
+			// Fetch Ollama + OpenRouter models async
 			if a.config.OllamaBaseURL != "" && !a.ollamaFetched {
 				go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.OllamaBaseURL) }()
 			}
-			// Fetch OpenRouter models asynchronously if configured.
 			if a.config.OpenRouterAPIKey != "" && !a.openRouterFetched {
 				go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.OpenRouterAPIKey) }()
 			}
 		}
-
 	case ollamaModelsMsg:
 		a.ollamaFetched = true
 		if len(msg.models) > 0 {
 			base := modelsFromCatalog(a.modelCatalog)
-			// Preserve any already-fetched OpenRouter models
 			for _, m := range a.models {
 				if m.Provider == ProviderOpenRouter {
 					base = append(base, m)
@@ -776,9 +769,7 @@ func (a *App) handleResult(result any) {
 		}
 		alreadyShown := a.shownInitialModel
 		a.maybeShowInitialModels()
-		// Once Ollama responds, show the offline warning if the model line
-		// was already displayed. If maybeShowInitialModels runs here for the
-		// first time, showModelChange handles the warning directly.
+		// Show offline warning if model was already displayed
 		if alreadyShown {
 			activeID := a.config.resolveActiveModel(a.models)
 			if a.config.OllamaBaseURL != "" && a.isOllamaOffline(activeID) {
@@ -791,26 +782,21 @@ func (a *App) handleResult(result any) {
 				a.messages = append(a.messages, chatMessage{kind: msgInfo, content: msg})
 			}
 		}
-
 	case openRouterModelsMsg:
 		a.openRouterFetched = true
 		if len(msg.models) > 0 {
 			base := modelsFromCatalog(a.modelCatalog)
-			// Preserve any already-fetched Ollama models
 			for _, m := range a.models {
 				if m.Provider == ProviderOllama {
 					base = append(base, m)
 				}
 			}
-			// Replace all OpenRouter models with the fresh batch (new key may
-			// return a different model set — don't mix old and new).
 			a.models = append(base, msg.models...)
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
 		}
 		a.maybeShowInitialModels()
-
 	case openPickerMsg:
 		if a.cfgActive {
 			a.doOpenConfigModelPicker(doOpenConfigModelPickerOptions{models: a.models, getCurrentID: msg.getCurrentID, onSelect: msg.onSelect})
@@ -975,10 +961,6 @@ func (a *App) cleanup() {
 		_ = unlockWorktree(a.worktreePath)
 	}
 }
-
-// ─── main ───
-
-// handleUpdateCommand lives in wiring.go.
 
 func main() {
 	log.SetOutput(io.Discard)

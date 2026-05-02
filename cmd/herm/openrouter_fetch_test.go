@@ -47,7 +47,7 @@ func TestFetchOpenRouterModelsSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if len(models) != 2 {
 		t.Fatalf("expected 2 models, got %d", len(models))
 	}
@@ -81,7 +81,7 @@ func TestFetchOpenRouterModelsPricingConversion(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
@@ -112,7 +112,7 @@ func TestFetchOpenRouterModelsFreeModelPricing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
@@ -130,7 +130,7 @@ func TestFetchOpenRouterModelsServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if models != nil {
 		t.Errorf("expected nil on server error, got %d models", len(models))
 	}
@@ -142,14 +142,14 @@ func TestFetchOpenRouterModelsInvalidJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if models != nil {
 		t.Errorf("expected nil on invalid JSON, got %d models", len(models))
 	}
 }
 
 func TestFetchOpenRouterModelsUnreachable(t *testing.T) {
-	models := fetchOpenRouterModelsFrom("test-key", "http://127.0.0.1:1")
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: "http://127.0.0.1:1"})
 	if models != nil {
 		t.Errorf("expected nil for unreachable server, got %d models", len(models))
 	}
@@ -161,7 +161,7 @@ func TestFetchOpenRouterModelsEmpty(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if len(models) != 0 {
 		t.Errorf("expected 0 models for empty list, got %d", len(models))
 	}
@@ -175,7 +175,7 @@ func TestFetchOpenRouterModelsAuthHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	fetchOpenRouterModelsFrom("my-api-key", srv.URL)
+	fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "my-api-key", baseURL: srv.URL})
 	if gotAuth != "Bearer my-api-key" {
 		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer my-api-key")
 	}
@@ -199,7 +199,7 @@ func TestFetchOpenRouterModelsInvalidPricing(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
@@ -226,7 +226,7 @@ func TestFetchOpenRouterModelsMissingContextLength(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
@@ -245,7 +245,7 @@ func TestFetchOpenRouterModelsRequiredHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	fetchOpenRouterModelsFrom("test-key", srv.URL)
+	fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if gotAuth != "Bearer test-key" {
 		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer test-key")
 	}
@@ -268,7 +268,7 @@ func TestFetchOpenRouterModelsProviderField(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	models := fetchOpenRouterModelsFrom("test-key", srv.URL)
+	models := fetchOpenRouterModelsFrom(fetchOpenRouterOptions{apiKey: "test-key", baseURL: srv.URL})
 	if len(models) != 1 {
 		t.Fatalf("expected 1 model, got %d", len(models))
 	}
