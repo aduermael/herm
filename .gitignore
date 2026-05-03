@@ -15,6 +15,7 @@ tools/edit-file/edit-file
 # App data
 .herm/
 .herm-lock
+.agents/
 
 # OS
 .DS_Store
