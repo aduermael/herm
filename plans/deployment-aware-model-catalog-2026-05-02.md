@@ -14,11 +14,21 @@ Langdag already has provider variants for direct Anthropic, Anthropic Vertex, An
 - **API:** the wire/protocol adapter used to call a model, such as Anthropic Messages, OpenAI Chat Completions, OpenAI Responses, or Gemini generateContent.
 - **Deployment:** a concrete routeable hosting surface with its own auth, endpoint rules, native model IDs, capabilities, and pricing, such as Anthropic direct, Anthropic on Bedrock, Anthropic on Vertex, OpenAI direct, Azure OpenAI, Gemini direct, Gemini on Vertex, Grok direct, or Ollama local.
 - **Model:** the canonical model identity independent of where it is hosted.
-- **Model offering:** a model served by a deployment. This is the unit Herm should display, select, route, and price.
+- **Model offering:** a model served by a deployment. This is the internal catalog unit langdag resolves to when a user targets a canonical model.
 
 **Contract direction:**
 
-Langdag should own the catalog schema, remote refresh, deployment metadata, provider adapter binding, and compatibility helpers. Herm should consume a list of model offerings from langdag, store stable offering/deployment identifiers in config, and compute cost from the exact offering that served a request. Herm can keep UI copy concise, but internally it should stop assuming that a model ID alone identifies pricing or routing.
+Langdag should own the catalog schema, remote refresh, deployment metadata, provider adapter binding, canonical-model-to-deployment resolution, fallback, retry, and compatibility helpers. Herm should let users target canonical models, configure deployment credentials and global routing policy, and compute cost from the exact resolved deployment/offering that served a request. Herm can keep UI copy concise, but internally it should stop assuming that a model ID alone identifies pricing or routing.
+
+**Resolved decisions:**
+
+- Remote catalog v1 is data-only: delivered over HTTPS, strictly schema-validated, and backed by cached/embedded fallback. It can define model offerings, prices, capabilities, aliases, and metadata for known deployments/APIs, but it cannot define arbitrary endpoints, auth behavior, request templates, or new protocol behavior.
+- V1 supports catalog-known deployments backed by existing langdag adapters, plus local Ollama discovery. Arbitrary user-defined deployments are deferred until the deployment contract is stable.
+- New assistant nodes should store the resolved deployment/model identity and pricing snapshot used at generation time so historical costs remain stable.
+- Users target canonical models. Langdag resolves a canonical model to an eligible deployment/native model using configured deployment credentials, global routing policy, retry, fallback, and capability requirements.
+- Herm should expose deployment credentials and non-secret parameters as first-class config. Model availability is derived from configured/valid deployment credentials.
+- Fallback policy is global for v1. It is an ordered list of stages; each stage can contain one deployment with 100% weight or several deployments with weighted selection, plus a retry count before falling through to the next stage.
+- Herm's config UI should stay progressive: with one configured deployment, do not expose routing complexity; once a second deployment is configured, show the simplest useful global routing/fallback controls.
 
 **Failure modes to cover:**
 
@@ -34,19 +44,21 @@ Langdag should own the catalog schema, remote refresh, deployment metadata, prov
 **Success criteria:**
 
 - Langdag exposes deployment-aware model offerings with stable IDs, canonical model metadata, native model IDs, API protocol, deployment, capabilities, pricing, and update provenance.
-- Herm can select and run a newly published model offering from a refreshed langdag catalog when the offering uses an already-supported API and locally available credentials.
+- Herm can target and run a newly published canonical model from a refreshed langdag catalog when at least one eligible deployment uses an already-supported API and locally available credentials.
 - Herm cost display, traces, and session history price usage by served deployment/offering rather than model ID alone.
 - Existing configs and conversations continue to load, with deterministic migration/fallback behavior for ambiguous old model IDs.
 - Network failures fall back to cached or embedded catalog data without blocking startup.
 - Tests prove direct/Bedrock/Vertex/Azure style pricing ambiguity is handled explicitly.
+- Global routing can express ordered fallback stages, weighted deployment choice within a stage, and retry counts.
 
 ---
 
 ## Phase 1: Define the catalog and identity contract
 - [ ] 1a: Document the model/provider/API/deployment/offering vocabulary in the plan-facing langdag docs and map current langdag provider names to the new concepts.
 - [ ] 1b: Define the versioned catalog contract in langdag, including stable offering IDs, canonical model IDs, native model IDs, API protocol IDs, deployment IDs, provider IDs, capability metadata, pricing metadata, provenance, and compatibility behavior for the current provider-keyed catalog.
-- [ ] 1c: Decide the compatibility rules for old Herm config values that store only `active_model` and `exploration_model`, including deterministic selection when a model ID appears in multiple offerings.
-- [ ] 1d: Decide the unknown-capability policy for new catalog entries so server tools are not incorrectly stripped or incorrectly sent when a model is callable but capability metadata is absent.
+- [ ] 1c: Define compatibility rules for old Herm config values that store only `active_model` and `exploration_model`, mapping them to canonical model IDs and letting langdag apply global deployment routing.
+- [ ] 1d: Define the unknown-capability policy for new catalog entries so server tools are not incorrectly stripped or incorrectly sent when a model is callable but capability metadata is absent.
+- [ ] 1e: Define the global routing policy schema: ordered fallback stages, weighted deployments within each stage, retry count per stage, and validation rules for missing or invalid deployments.
 
 ## Phase 2: Make langdag's catalog deployment-aware
 - [ ] 2a: Update `external/langdag/internal/models/catalog.go`, `external/langdag/langdag.go`, and catalog tests so langdag loads, validates, saves, and exports the deployment-aware catalog while still accepting the current embedded provider-keyed shape.
@@ -55,12 +67,13 @@ Langdag should own the catalog schema, remote refresh, deployment metadata, prov
 - [ ] 2d: Add catalog merge and validation behavior for embedded, cached, and remote data, including stale data handling, schema-version checks, and clear diagnostics when an offering is dropped.
 - [ ] 2e: Update the langdag `models` CLI in `external/langdag/internal/cli/models.go` to display offerings by deployment/API/provider/model and expose the deployment-aware JSON shape.
 
-## Phase 3: Bind deployments to langdag provider adapters
+## Phase 3: Bind deployments and routing to langdag provider adapters
 - [ ] 3a: Update langdag provider construction in `external/langdag/langdag.go` and `external/langdag/internal/config/config.go` so a deployment ID can resolve to an existing API adapter and its required local configuration.
 - [ ] 3b: Extend langdag completion and stream metadata so responses and saved nodes can record the actual deployment/offering that served the request in addition to the provider and model fields that already exist.
 - [ ] 3c: Move model capability lookup for server-tool filtering from hardcoded provider `Models()` lists toward catalog-backed offering metadata, with a safe fallback for locally discovered providers like Ollama.
-- [ ] 3d: Update routing and fallback behavior in `external/langdag/internal/provider/router.go` so routing can preserve the served deployment/offering in metadata when fallback changes the actual host.
-- [ ] 3e: Add tests for selecting the same canonical Anthropic model through direct, Bedrock, and Vertex deployments and verifying that the request uses the deployment-native model ID.
+- [ ] 3d: Update routing and fallback behavior in `external/langdag/internal/provider/router.go` so global fallback stages can choose among weighted deployments, retry a stage, fall through to the next stage, and preserve the served deployment/offering in metadata.
+- [ ] 3e: Add canonical-model resolution so callers provide a canonical model ID and langdag maps it to an eligible deployment-native model ID using configured credentials, capability requirements, and global routing policy.
+- [ ] 3f: Add tests for targeting the same canonical Anthropic model through direct, Bedrock, and Vertex deployments and verifying that langdag chooses the expected deployment-native model ID.
 
 ## Phase 4: Publish and refresh catalog data without app updates
 - [ ] 4a: Choose the remote distribution path for the catalog, preferring a static langdag-hosted JSON artifact generated by automation unless a server is needed for a concrete requirement.
@@ -70,32 +83,38 @@ Langdag should own the catalog schema, remote refresh, deployment metadata, prov
 - [ ] 4e: Add tests for remote success, remote timeout, invalid remote schema, stale cache fallback, and embedded fallback.
 
 ## Phase 5: Teach Herm to consume model offerings
-- [ ] 5a: Update `cmd/herm/models.go` so `ModelDef` represents a model offering with deployment/API/provider/canonical model fields and prices from langdag's deployment-aware catalog.
-- [ ] 5b: Update provider filtering and configured-provider detection in `cmd/herm/config.go` so availability is based on deployment credential requirements rather than only direct provider API-key fields.
-- [ ] 5c: Update model selection, smart defaults, and exploration model resolution so Herm stores and resolves stable offering IDs while migrating old model-only config values deterministically.
-- [ ] 5d: Update `cmd/herm/agent.go` and related client-switching paths so selecting a model offering creates or reuses a langdag client for that offering's deployment.
-- [ ] 5e: Update the model picker and config editor so users can distinguish model, deployment, API, provider, price, and context without crowding the menu.
+- [ ] 5a: Update `cmd/herm/models.go` so Herm can render canonical models from langdag's deployment-aware catalog while retaining resolved offering/deployment metadata for availability, diagnostics, and pricing.
+- [ ] 5b: Update provider filtering and configured-provider detection in `cmd/herm/config.go` so model availability is based on deployment credential requirements rather than only direct provider API-key fields.
+- [ ] 5c: Update model selection, smart defaults, and exploration model resolution so Herm stores canonical model IDs and lets langdag resolve deployments, while migrating old model-only config values deterministically.
+- [ ] 5d: Update `cmd/herm/agent.go` and related client-switching paths so targeted canonical models are sent to langdag with the current deployment routing policy instead of preselecting a Herm-side deployment.
+- [ ] 5e: Update the model picker so it remains model-centric by default, while exposing deployment availability and resolved-route diagnostics only when useful.
 
-## Phase 6: Price usage by served offering
-- [ ] 6a: Update Herm cost calculation in `cmd/herm/models.go`, `cmd/herm/tree.go`, `cmd/herm/agentui.go`, and trace aggregation so cost lookup uses served offering/deployment metadata when available.
-- [ ] 6b: Extend pricing metadata to cover cache read/write, reasoning, and deployment-specific price variants without assuming Anthropic direct cache pricing applies to every Anthropic-compatible deployment.
-- [ ] 6c: Add backward-compatible cost fallback for old nodes that have provider/model but no deployment/offering metadata, including an explicit ambiguous/unknown behavior.
-- [ ] 6d: Add tests where the same canonical model has different direct, Bedrock, and Vertex prices and verify session cost, tree cost, and trace cost use the served offering.
-- [ ] 6e: Add tests for missing pricing, zero pricing, stale pricing, and cache-token pricing differences by deployment.
+## Phase 6: Add deployment configuration and global routing UX
+- [ ] 6a: Extend Herm config to store deployment credentials and non-secret parameters for catalog-known deployments, including direct API keys, cloud credential selectors, endpoints, regions, project IDs, and local Ollama URLs as applicable.
+- [ ] 6b: Add a deployment config surface that starts simple for one configured deployment and reveals global fallback/routing controls only after multiple eligible deployments exist.
+- [ ] 6c: Add global routing config with ordered stages, weighted deployment choices within each stage, and retry count per stage.
+- [ ] 6d: Validate routing config against currently configured deployments, gracefully ignoring or flagging unavailable deployments without hiding canonical models that remain callable through another deployment.
+- [ ] 6e: Add tests for one-deployment UI behavior, two-deployment routing controls, weighted-stage parsing, retry validation, and model availability changing when deployment credentials are added or removed.
 
-## Phase 7: End-to-end compatibility and rollout
-- [ ] 7a: Add langdag integration tests that exercise dynamic catalog refresh, deployment selection, provider fallback, and metadata persistence with mock providers.
-- [ ] 7b: Add Herm integration tests for startup with embedded-only catalog, cached catalog, refreshed remote catalog, and migrated old model config.
-- [ ] 7c: Update docs and examples in Herm and langdag to describe deployments, model offerings, custom/openAI-compatible endpoints, and the catalog refresh lifecycle.
-- [ ] 7d: Verify the existing smart-defaults behavior still chooses sensible active and exploration offerings when multiple deployments can serve the same canonical model.
-- [ ] 7e: Run the relevant langdag and Herm test suites and record any intentionally deferred gaps.
+## Phase 7: Price usage by served offering
+- [ ] 7a: Update Herm cost calculation in `cmd/herm/models.go`, `cmd/herm/tree.go`, `cmd/herm/agentui.go`, and trace aggregation so cost lookup uses served offering/deployment metadata when available.
+- [ ] 7b: Extend pricing metadata to cover cache read/write, reasoning, and deployment-specific price variants without assuming Anthropic direct cache pricing applies to every Anthropic-compatible deployment.
+- [ ] 7c: Store resolved deployment/model identity and pricing snapshots on new assistant nodes so historical cost displays do not change when the remote catalog changes.
+- [ ] 7d: Add backward-compatible cost fallback for old nodes that have provider/model but no deployment/offering metadata, including an explicit ambiguous/unknown behavior.
+- [ ] 7e: Add tests where the same canonical model has different direct, Bedrock, and Vertex prices and verify session cost, tree cost, and trace cost use the served offering.
+- [ ] 7f: Add tests for missing pricing, zero pricing, stale pricing, and cache-token pricing differences by deployment.
+
+## Phase 8: End-to-end compatibility and rollout
+- [ ] 8a: Add langdag integration tests that exercise dynamic catalog refresh, canonical-model targeting, deployment resolution, provider fallback, retry, and metadata persistence with mock providers.
+- [ ] 8b: Add Herm integration tests for startup with embedded-only catalog, cached catalog, refreshed remote catalog, migrated old model config, and changing deployment credentials.
+- [ ] 8c: Update docs and examples in Herm and langdag to describe deployments, canonical model selection, global routing, fallback stages, credentials, and the catalog refresh lifecycle.
+- [ ] 8d: Verify the existing smart-defaults behavior still chooses sensible active and exploration canonical models when multiple deployments can serve the same model.
+- [ ] 8e: Run the relevant langdag and Herm test suites and record any intentionally deferred gaps.
 
 ---
 
-**Open questions:**
+**Deferred questions:**
 
-- Should the remote catalog be signed, checksum-pinned, or simply schema-validated with HTTPS and an embedded fallback?
-- Should arbitrary user-defined deployments be supported through Herm config immediately, or should the first pass cover catalog-known deployments plus existing local Ollama discovery?
-- Should pricing history be stored per node so old conversations keep the price that was current at generation time, or should historical displays use the latest catalog with a visible caveat?
-- How should Herm present credential setup for dynamic deployments whose auth is external to Herm, such as AWS Bedrock and Google Vertex?
-- Should langdag expose both canonical model IDs and deployment-native model IDs to callers, or keep native IDs internal except in diagnostics?
+- Should the remote catalog be signed later if it grows beyond data-only metadata for known deployments?
+- What is the exact minimal config format for each deployment's credentials and non-secret parameters?
+- Which arbitrary user-defined deployments should be supported after v1, and how should user-owned pricing/capability metadata be validated?
