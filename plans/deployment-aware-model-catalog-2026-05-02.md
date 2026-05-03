@@ -25,6 +25,8 @@ Langdag should own the catalog schema, remote refresh, deployment metadata, prov
 - Remote catalog v1 is data-only: delivered over HTTPS, strictly schema-validated, and backed by cached/embedded fallback. It can define model offerings, prices, capabilities, aliases, and metadata for known deployments/APIs, but it cannot define arbitrary endpoints, auth behavior, request templates, or new protocol behavior.
 - V1 supports catalog-known deployments backed by existing langdag adapters, plus local Ollama discovery. Arbitrary user-defined deployments are deferred until the deployment contract is stable.
 - New assistant nodes should store the resolved deployment/model identity and pricing snapshot used at generation time so historical costs remain stable.
+- Model lists should show simple input/output pricing for comparison, but live and historical accounting should use the provider-returned usage counters for each response plus the resolved deployment's pricing snapshot. The displayed model-list prices are not the accounting source of truth.
+- Langdag's unified usage model should preserve all billable usage dimensions a provider returns, including cached input, cache creation/write, output, reasoning/thought tokens, tool-use prompt tokens, modality-specific tokens, service tier, and built-in tool usage where applicable.
 - Users target canonical models. Langdag resolves a canonical model to an eligible deployment/native model using configured deployment credentials, global routing policy, retry, fallback, and capability requirements.
 - Herm should expose deployment credentials and non-secret parameters as first-class config. Model availability is derived from configured/valid deployment credentials.
 - Fallback policy is global for v1. It is an ordered list of stages; each stage can contain one deployment with 100% weight or several deployments with weighted selection, plus a retry count before falling through to the next stage.
@@ -38,6 +40,8 @@ Langdag should own the catalog schema, remote refresh, deployment metadata, prov
 - Existing Herm config stores only model IDs from before this change.
 - Provider adapters serve a new model through an existing API before Herm ships again.
 - Pricing is missing, stale, or effective only after a future date.
+- Provider responses include usage token types the current unified `Usage` struct does not preserve.
+- A provider exposes aggregate billing APIs, but does not return exact per-response dollar cost synchronously.
 - Server-tool capability data is missing for an otherwise callable model.
 - Conversation history contains nodes created before deployment metadata existed.
 
@@ -50,6 +54,7 @@ Langdag should own the catalog schema, remote refresh, deployment metadata, prov
 - Network failures fall back to cached or embedded catalog data without blocking startup.
 - Tests prove direct/Bedrock/Vertex/Azure style pricing ambiguity is handled explicitly.
 - Global routing can express ordered fallback stages, weighted deployment choice within a stage, and retry counts.
+- Live session costs are computed from actual response usage counters and deployment-specific pricing rules, while the model list remains a simple input/output price comparison view.
 
 ---
 
@@ -97,12 +102,13 @@ Langdag should own the catalog schema, remote refresh, deployment metadata, prov
 - [ ] 6e: Add tests for one-deployment UI behavior, two-deployment routing controls, weighted-stage parsing, retry validation, and model availability changing when deployment credentials are added or removed.
 
 ## Phase 7: Price usage by served offering
-- [ ] 7a: Update Herm cost calculation in `cmd/herm/models.go`, `cmd/herm/tree.go`, `cmd/herm/agentui.go`, and trace aggregation so cost lookup uses served offering/deployment metadata when available.
-- [ ] 7b: Extend pricing metadata to cover cache read/write, reasoning, and deployment-specific price variants without assuming Anthropic direct cache pricing applies to every Anthropic-compatible deployment.
-- [ ] 7c: Store resolved deployment/model identity and pricing snapshots on new assistant nodes so historical cost displays do not change when the remote catalog changes.
-- [ ] 7d: Add backward-compatible cost fallback for old nodes that have provider/model but no deployment/offering metadata, including an explicit ambiguous/unknown behavior.
-- [ ] 7e: Add tests where the same canonical model has different direct, Bedrock, and Vertex prices and verify session cost, tree cost, and trace cost use the served offering.
-- [ ] 7f: Add tests for missing pricing, zero pricing, stale pricing, and cache-token pricing differences by deployment.
+- [ ] 7a: Audit and extend langdag's unified usage model, storage, SDK structs, and provider mappings so all billable usage counters returned by supported APIs are preserved, including cached input, cache creation/write, output, reasoning/thought tokens, tool-use prompt tokens, modality-specific token details, service tier, and built-in tool usage where applicable.
+- [ ] 7b: Update the catalog pricing model so each deployment offering can define rates for the usage dimensions it bills, while preserving simple input/output prices for model-list display.
+- [ ] 7c: Update Herm cost calculation in `cmd/herm/models.go`, `cmd/herm/tree.go`, `cmd/herm/agentui.go`, and trace aggregation so live cost is computed from actual provider-returned usage counters plus served offering/deployment pricing metadata.
+- [ ] 7d: Store resolved deployment/model identity, raw normalized usage counters, and pricing snapshots on new assistant nodes so historical cost displays do not change when the remote catalog changes.
+- [ ] 7e: Add backward-compatible cost fallback for old nodes that have provider/model but no deployment/offering metadata, including an explicit ambiguous/unknown behavior.
+- [ ] 7f: Add tests where the same canonical model has different direct, Bedrock, and Vertex prices and verify session cost, tree cost, and trace cost use the served offering.
+- [ ] 7g: Add tests for missing pricing, zero pricing, stale pricing, missing usage dimensions, and cache-token pricing differences by deployment.
 
 ## Phase 8: End-to-end compatibility and rollout
 - [ ] 8a: Add langdag integration tests that exercise dynamic catalog refresh, canonical-model targeting, deployment resolution, provider fallback, retry, and metadata persistence with mock providers.
