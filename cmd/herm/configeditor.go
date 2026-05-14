@@ -62,6 +62,7 @@ var cfgAPIKeyFields = []cfgField{
 	{label: "OpenAI", get: func(c Config) string { return c.OpenAIAPIKey }, display: func(c Config) string { return maskKey(c.OpenAIAPIKey) }, set: func(c *Config, v string) { c.OpenAIAPIKey = v }},
 	{label: "Grok", get: func(c Config) string { return c.GrokAPIKey }, display: func(c Config) string { return maskKey(c.GrokAPIKey) }, set: func(c *Config, v string) { c.GrokAPIKey = v }},
 	{label: "OpenRouter", get: func(c Config) string { return c.OpenRouterAPIKey }, display: func(c Config) string { return maskKey(c.OpenRouterAPIKey) }, set: func(c *Config, v string) { c.OpenRouterAPIKey = v }},
+	{label: "Kimi", get: func(c Config) string { return c.KimiAPIKey }, display: func(c Config) string { return maskKey(c.KimiAPIKey) }, set: func(c *Config, v string) { c.KimiAPIKey = v }},
 	{label: "Gemini", get: func(c Config) string { return c.GeminiAPIKey }, display: func(c Config) string { return maskKey(c.GeminiAPIKey) }, set: func(c *Config, v string) { c.GeminiAPIKey = v }},
 	{label: "Ollama URL", get: func(c Config) string { return c.OllamaBaseURL }, set: func(c *Config, v string) {
 		v = strings.TrimSpace(v)
@@ -82,10 +83,12 @@ func apiKeyRowForProvider(provider string) int {
 		return 2
 	case ProviderOpenRouter:
 		return 3
-	case ProviderGemini:
+	case ProviderKimi:
 		return 4
-	case ProviderOllama:
+	case ProviderGemini:
 		return 5
+	case ProviderOllama:
+		return 6
 	default:
 		return 0
 	}
@@ -112,7 +115,7 @@ func (a *App) preferredAPIKeyCursor(cfg Config) int {
 	if p, _ := a.effectiveProviderForConfig(cfg); p != "" {
 		return apiKeyRowForProvider(p)
 	}
-	ordered := []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama}
+	ordered := []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderKimi, ProviderGemini, ProviderOllama}
 	configured := cfg.configuredProviders()
 	for _, p := range ordered {
 		if configured[p] {
@@ -173,6 +176,10 @@ func (a *App) exitConfigMode(save bool) {
 			a.openRouterFetched = false // allow re-fetch with new key
 			go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.OpenRouterAPIKey) }()
 		}
+		if a.config.KimiAPIKey != "" {
+			a.kimiFetched = false // allow re-fetch with new key
+			go func() { a.resultCh <- fetchKimiModelsCmd(a.config.KimiAPIKey) }()
+		}
 		// Show updated model if it changed
 		if a.models != nil {
 			a.showModelChange(a.config.resolveActiveModel(a.models))
@@ -222,6 +229,16 @@ func (a *App) openConfigModelPicker(opts openConfigModelPickerOptions) {
 	if a.cfgDraft.OpenRouterAPIKey != "" && a.config.OpenRouterAPIKey != a.cfgDraft.OpenRouterAPIKey {
 		go func() {
 			msg := fetchOpenRouterModelsCmd(a.cfgDraft.OpenRouterAPIKey)
+			a.resultCh <- msg
+			a.resultCh <- openPickerMsg{getCurrentID: getCurrentID, onSelect: onSelect}
+		}()
+		return
+	}
+	// If the draft Kimi key differs from the saved key, fetch fresh models
+	// async before opening the picker.
+	if a.cfgDraft.KimiAPIKey != "" && a.config.KimiAPIKey != a.cfgDraft.KimiAPIKey {
+		go func() {
+			msg := fetchKimiModelsCmd(a.cfgDraft.KimiAPIKey)
 			a.resultCh <- msg
 			a.resultCh <- openPickerMsg{getCurrentID: getCurrentID, onSelect: onSelect}
 		}()

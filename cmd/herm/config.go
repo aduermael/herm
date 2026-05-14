@@ -19,6 +19,7 @@ type Config struct {
 	AnthropicAPIKey       string          `json:"anthropic_api_key,omitempty"`
 	GrokAPIKey            string          `json:"grok_api_key,omitempty"`
 	OpenRouterAPIKey      string          `json:"openrouter_api_key,omitempty"`
+	KimiAPIKey            string          `json:"kimi_api_key,omitempty"`
 	OpenAIAPIKey          string          `json:"openai_api_key,omitempty"`
 	GeminiAPIKey          string          `json:"gemini_api_key,omitempty"`
 	OllamaBaseURL         string          `json:"ollama_base_url,omitempty"` // e.g., "http://localhost:11434"
@@ -71,6 +72,9 @@ func (c Config) configuredProviders() map[string]bool {
 	if c.OpenRouterAPIKey != "" {
 		providers[ProviderOpenRouter] = true
 	}
+	if c.KimiAPIKey != "" {
+		providers[ProviderKimi] = true
+	}
 	if c.OpenAIAPIKey != "" {
 		providers[ProviderOpenAI] = true
 	}
@@ -96,6 +100,9 @@ func (c Config) defaultLangdagProvider() string {
 	}
 	if c.OpenRouterAPIKey != "" {
 		return ProviderOpenRouter
+	}
+	if c.KimiAPIKey != "" {
+		return ProviderKimi
 	}
 	if c.GeminiAPIKey != "" {
 		return ProviderGemini

@@ -24,13 +24,14 @@ const (
 	ProviderAnthropic   = "anthropic"
 	ProviderGrok        = "grok"
 	ProviderOpenRouter  = "openrouter"
+	ProviderKimi        = "kimi"
 	ProviderOpenAI      = "openai"
 	ProviderGemini      = "gemini"
 	ProviderOllama      = "ollama"
 )
 
 // supportedProviders lists providers in display order.
-var supportedProviders = []string{ProviderAnthropic, ProviderGrok, ProviderOpenRouter, ProviderOpenAI, ProviderGemini, ProviderOllama}
+var supportedProviders = []string{ProviderAnthropic, ProviderGrok, ProviderOpenRouter, ProviderKimi, ProviderOpenAI, ProviderGemini, ProviderOllama}
 
 // ModelDef describes a model available for selection.
 // Models are derived from the langdag model catalog at runtime.
@@ -45,6 +46,30 @@ type ModelDef struct {
 	ServerTools     []string // server-side tools supported by this model (e.g. "web_search")
 }
 
+// mergeDynamicModelsOptions is the parameter bundle for mergeDynamicModels.
+type mergeDynamicModelsOptions struct {
+	models   []ModelDef
+	provider string
+}
+
+// mergeDynamicModels replaces the models for a given provider with fresh results.
+// It rebuilds the list from catalog + other dynamic providers, then appends the new models.
+func (a *App) mergeDynamicModels(opts mergeDynamicModelsOptions) {
+	if len(opts.models) > 0 {
+		base := modelsFromCatalog(a.modelCatalog)
+		for _, m := range a.models {
+			if m.Provider != opts.provider && (m.Provider == ProviderOllama || m.Provider == ProviderOpenRouter || m.Provider == ProviderKimi) {
+				base = append(base, m)
+			}
+		}
+		a.models = append(base, opts.models...)
+		if a.sweLoaded && a.sweScores != nil {
+			matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
+		}
+	}
+	a.maybeShowInitialModels()
+}
+
 // modelsFromCatalog builds the model list from the langdag catalog.
 // Only models from supported providers are included.
 func modelsFromCatalog(catalog *langdag.ModelCatalog) []ModelDef {
@@ -53,8 +78,8 @@ func modelsFromCatalog(catalog *langdag.ModelCatalog) []ModelDef {
 	}
 	var models []ModelDef
 	for _, provider := range supportedProviders {
-		// Ollama and OpenRouter models are fetched separately via their own fetch functions
-		if provider == ProviderOllama || provider == ProviderOpenRouter {
+		// Ollama, OpenRouter, and Kimi models are fetched separately via their own fetch functions
+		if provider == ProviderOllama || provider == ProviderOpenRouter || provider == ProviderKimi {
 			continue
 		}
 		for _, p := range catalog.ForProvider(provider) {
@@ -228,6 +253,68 @@ func fetchOpenRouterModelsFrom(opts fetchOpenRouterOptions) []ModelDef {
 			PromptPrice:     promptPrice,
 			CompletionPrice: completionPrice,
 			ContextWindow:   m.ContextLength,
+		})
+	}
+	return models
+}
+
+const kimiDefaultBase = "https://api.moonshot.ai/v1"
+
+// fetchKimiModels fetches available models from the Kimi (Moonshot AI) API.
+// Returns nil if apiKey is empty or the request fails.
+func fetchKimiModels(apiKey string) []ModelDef {
+	return fetchKimiModelsFrom(fetchKimiOptions{apiKey: apiKey, baseURL: kimiDefaultBase})
+}
+
+// fetchKimiOptions is the parameter bundle for fetchKimiModelsFrom.
+type fetchKimiOptions struct {
+	apiKey  string
+	baseURL string
+}
+
+// fetchKimiModelsFrom fetches models using the given base URL.
+func fetchKimiModelsFrom(opts fetchKimiOptions) []ModelDef {
+	apiKey, baseURL := opts.apiKey, opts.baseURL
+	if apiKey == "" {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	client := &http.Client{}
+	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/models", nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	var body struct {
+		Data []struct {
+			ID            string `json:"id"`
+			ContextLength int    `json:"context_length"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil
+	}
+
+	models := make([]ModelDef, 0, len(body.Data))
+	for _, m := range body.Data {
+		models = append(models, ModelDef{
+			Provider:      ProviderKimi,
+			ID:            m.ID,
+			ContextWindow: m.ContextLength,
 		})
 	}
 	return models

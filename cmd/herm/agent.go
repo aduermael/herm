@@ -53,6 +53,9 @@ func newLangdagClient(cfg Config) (*langdag.Client, error) {
 	if cfg.OpenRouterAPIKey != "" {
 		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOpenRouter})
 	}
+	if cfg.KimiAPIKey != "" {
+		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderKimi})
+	}
 	if cfg.GeminiAPIKey != "" {
 		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderGemini})
 	}
@@ -90,6 +93,9 @@ func newLangdagClientForProvider(opts newLangdagClientForProviderOptions) (*lang
 	case ProviderOpenRouter:
 		langdagCfg.Provider = "openrouter"
 		langdagCfg.APIKeys = map[string]string{"openrouter": opts.cfg.OpenRouterAPIKey}
+	case ProviderKimi:
+		langdagCfg.Provider = "kimi"
+		langdagCfg.APIKeys = map[string]string{"kimi": opts.cfg.KimiAPIKey}
 	case ProviderGemini:
 		langdagCfg.Provider = "gemini"
 		langdagCfg.APIKeys = map[string]string{"gemini": opts.cfg.GeminiAPIKey}

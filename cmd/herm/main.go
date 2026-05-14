@@ -121,6 +121,7 @@ type App struct {
 	shownInitialModel   bool // true after the startup model line has been displayed
 	ollamaFetched       bool // true after the initial Ollama model fetch completes (or was skipped)
 	openRouterFetched   bool // true after initial OpenRouter fetch
+	kimiFetched         bool // true after initial Kimi fetch
 	status           statusInfo
 	projectSnap      *projectSnapshot
 	modelCatalog     *langdag.ModelCatalog
@@ -752,24 +753,14 @@ func (a *App) handleResult(result any) {
 			if a.config.OpenRouterAPIKey != "" && !a.openRouterFetched {
 				go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.OpenRouterAPIKey) }()
 			}
+			if a.config.KimiAPIKey != "" && !a.kimiFetched {
+				go func() { a.resultCh <- fetchKimiModelsCmd(a.config.KimiAPIKey) }()
+			}
 		}
 	case ollamaModelsMsg:
 		a.ollamaFetched = true
-		if len(msg.models) > 0 {
-			base := modelsFromCatalog(a.modelCatalog)
-			for _, m := range a.models {
-				if m.Provider == ProviderOpenRouter {
-					base = append(base, m)
-				}
-			}
-			a.models = append(base, msg.models...)
-			if a.sweLoaded && a.sweScores != nil {
-				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
-			}
-		}
 		alreadyShown := a.shownInitialModel
-		a.maybeShowInitialModels()
-		// Show offline warning if model was already displayed
+		a.mergeDynamicModels(mergeDynamicModelsOptions{models: msg.models, provider: ProviderOllama})
 		if alreadyShown {
 			activeID := a.config.resolveActiveModel(a.models)
 			if a.config.OllamaBaseURL != "" && a.isOllamaOffline(activeID) {
@@ -784,19 +775,10 @@ func (a *App) handleResult(result any) {
 		}
 	case openRouterModelsMsg:
 		a.openRouterFetched = true
-		if len(msg.models) > 0 {
-			base := modelsFromCatalog(a.modelCatalog)
-			for _, m := range a.models {
-				if m.Provider == ProviderOllama {
-					base = append(base, m)
-				}
-			}
-			a.models = append(base, msg.models...)
-			if a.sweLoaded && a.sweScores != nil {
-				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
-			}
-		}
-		a.maybeShowInitialModels()
+		a.mergeDynamicModels(mergeDynamicModelsOptions{models: msg.models, provider: ProviderOpenRouter})
+	case kimiModelsMsg:
+		a.kimiFetched = true
+		a.mergeDynamicModels(mergeDynamicModelsOptions{models: msg.models, provider: ProviderKimi})
 	case openPickerMsg:
 		if a.cfgActive {
 			a.doOpenConfigModelPicker(doOpenConfigModelPickerOptions{models: a.models, getCurrentID: msg.getCurrentID, onSelect: msg.onSelect})

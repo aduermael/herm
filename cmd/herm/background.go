@@ -141,6 +141,10 @@ type openRouterModelsMsg struct {
 	models []ModelDef
 }
 
+type kimiModelsMsg struct {
+	models []ModelDef
+}
+
 // openPickerMsg is sent after an async Ollama fetch completes to open the
 // model picker in the config editor with the freshly fetched model list.
 type openPickerMsg struct {
@@ -662,6 +666,10 @@ func fetchOllamaModelsCmd(baseURL string) ollamaModelsMsg {
 
 func fetchOpenRouterModelsCmd(apiKey string) openRouterModelsMsg {
 	return openRouterModelsMsg{models: fetchOpenRouterModels(apiKey)}
+}
+
+func fetchKimiModelsCmd(apiKey string) kimiModelsMsg {
+	return kimiModelsMsg{models: fetchKimiModels(apiKey)}
 }
 
 // checkForUpdate queries the GitHub API for the latest release and compares
