@@ -1,0 +1,59 @@
+{
+  "ambiguous_old_native_model_ids": [
+    {
+      "model_id": "gemini-2.5-pro",
+      "reason": "The same native model ID can be served through direct Gemini and Gemini Vertex deployments.",
+      "offerings": [
+        {
+          "deployment_id": "gemini-direct",
+          "provider": "gemini",
+          "native_model_id": "gemini-2.5-pro",
+          "prompt_price_per_1m": 1.25,
+          "completion_price_per_1m": 10.0
+        },
+        {
+          "deployment_id": "gemini-vertex",
+          "provider": "gemini-vertex",
+          "native_model_id": "gemini-2.5-pro",
+          "prompt_price_per_1m": 1.5,
+          "completion_price_per_1m": 12.0
+        }
+      ]
+    },
+    {
+      "model_id": "gpt-4.1-2025-04-14",
+      "reason": "A direct OpenAI native ID can also be used as a user-named Azure deployment.",
+      "offerings": [
+        {
+          "deployment_id": "openai-direct",
+          "provider": "openai",
+          "native_model_id": "gpt-4.1-2025-04-14",
+          "prompt_price_per_1m": 2.0,
+          "completion_price_per_1m": 8.0
+        },
+        {
+          "deployment_id": "openai-azure",
+          "provider": "openai-azure",
+          "native_model_id": "gpt-4.1-2025-04-14",
+          "prompt_price_per_1m": 2.2,
+          "completion_price_per_1m": 8.8
+        }
+      ]
+    }
+  ],
+  "unambiguous_old_native_model_ids": [
+    {
+      "model_id": "anthropic.claude-sonnet-4-20250514-v1:0",
+      "reason": "Bedrock model IDs include deployment-specific native naming.",
+      "offerings": [
+        {
+          "deployment_id": "anthropic-bedrock",
+          "provider": "anthropic-bedrock",
+          "native_model_id": "anthropic.claude-sonnet-4-20250514-v1:0",
+          "prompt_price_per_1m": 3.0,
+          "completion_price_per_1m": 15.0
+        }
+      ]
+    }
+  ]
+}

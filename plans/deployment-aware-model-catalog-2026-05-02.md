@@ -223,10 +223,17 @@ If an API returns exact per-response billable cost, store it alongside the usage
 ---
 
 ## Phase 0: Lock compatibility fixtures and current behavior
-- [ ] 0a: Add golden fixtures for old Herm global config, old project config, old provider-keyed model catalog cache, and old conversation nodes with only provider/model/token fields.
-- [ ] 0b: Add tests documenting current active/exploration model loading, smart defaults, model picker availability, and basic model-ID cost behavior before replacing those paths.
-- [ ] 0c: Add fixtures for ambiguous old native model IDs, unambiguous old native model IDs, OpenRouter models, Ollama offline models, and Azure mappings.
-- [ ] 0d: Record per-phase test commands for langdag and Herm so execution does not defer validation to the final phase.
+- [x] 0a: Add golden fixtures for old Herm global config, old project config, old provider-keyed model catalog cache, and old conversation nodes with only provider/model/token fields.
+- [x] 0b: Add tests documenting current active/exploration model loading, smart defaults, model picker availability, and basic model-ID cost behavior before replacing those paths.
+- [x] 0c: Add fixtures for ambiguous old native model IDs, unambiguous old native model IDs, OpenRouter models, Ollama offline models, and Azure mappings.
+- [x] 0d: Record per-phase test commands for langdag and Herm so execution does not defer validation to the final phase.
+
+Phase validation commands:
+
+- Herm: `go test ./...`
+- Langdag: `(cd external/langdag && go test ./...)`
+- Phase 0 targeted smoke: `go test ./cmd/herm -run 'TestPhase0' -count=1`
+- Phase 0 targeted langdag smoke: `(cd external/langdag && go test ./internal/models ./internal/conversation ./internal/storage/sqlite -run 'TestPhase0' -count=1)`
 
 ## Phase 1: Define catalog, config, routing, pricing, and persistence contracts
 - [ ] 1a: Document the provider/API protocol/deployment/model/offering vocabulary in langdag docs and map current langdag provider variant names to the new concepts.

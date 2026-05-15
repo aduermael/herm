@@ -1,0 +1,6 @@
+{
+  "base_url": "http://localhost:11434",
+  "active_model": "llama3.1:8b-instruct-q4_K_M",
+  "exploration_model": "qwen2.5-coder:7b",
+  "live_models": []
+}

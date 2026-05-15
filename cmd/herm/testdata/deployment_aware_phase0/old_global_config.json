@@ -1,0 +1,27 @@
+{
+  "paste_collapse_min_chars": 200,
+  "anthropic_api_key": "sk-ant-old-global",
+  "openai_api_key": "sk-openai-old-global",
+  "openrouter_api_key": "sk-or-old-global",
+  "gemini_api_key": "sk-gemini-old-global",
+  "ollama_base_url": "http://localhost:11434",
+  "active_model": "gpt-4.1-2025-04-14",
+  "exploration_model": "claude-haiku-4-5",
+  "model_sort_col": "price",
+  "model_sort_dirs": {
+    "name": true,
+    "provider": true,
+    "price": false,
+    "context": true
+  },
+  "sub_agent_max_turns": 12,
+  "explore_max_turns": 8,
+  "general_max_turns": 20,
+  "max_tool_iterations": 150,
+  "max_agent_depth": 2,
+  "personality": "concise",
+  "history_max_entries": 75,
+  "git_co_author": false,
+  "debug_mode": true,
+  "thinking": true
+}

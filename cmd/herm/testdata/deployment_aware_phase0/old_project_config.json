@@ -1,0 +1,12 @@
+{
+  "active_model": "claude-sonnet-4-6",
+  "exploration_model": "claude-haiku-4-5",
+  "personality": "project terse",
+  "sub_agent_max_turns": 5,
+  "explore_max_turns": 6,
+  "general_max_turns": 7,
+  "max_tool_iterations": 50,
+  "max_agent_depth": 1,
+  "debug_mode": false,
+  "thinking": false
+}

@@ -1,0 +1,16 @@
+{
+  "config_version": 2,
+  "active_model": "openai/gpt-4.1-2025-04-14",
+  "exploration_model": "openai/gpt-4.1-mini-2025-04-14",
+  "deployments": {
+    "openai-azure": {
+      "api_key": "azure-old-shape-key",
+      "endpoint": "https://example.openai.azure.com",
+      "api_version": "2024-08-01-preview",
+      "model_mappings": {
+        "openai/gpt-4.1-2025-04-14": "my-gpt-4-1-prod",
+        "openai/gpt-4.1-mini-2025-04-14": "my-gpt-4-1-mini-dev"
+      }
+    }
+  }
+}
