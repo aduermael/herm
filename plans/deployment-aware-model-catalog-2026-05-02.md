@@ -259,13 +259,13 @@ Phase validation commands:
 - Langdag contract smoke: `(cd external/langdag && go test ./internal/models ./types -run 'Test(Catalog|DeploymentBindings|NormalizedUsage|ComputeCost|AssistantNode)' -count=1)`
 
 ## Phase 2: Make langdag's catalog deployment-aware
-- [ ] 2a: Replace `external/langdag/internal/models/catalog.go` and exported catalog aliases in `external/langdag/langdag.go` with the deployment-aware catalog model, removing or replacing old provider-keyed public APIs as needed for Herm.
-- [ ] 2b: Implement catalog JSON loading, strict validation, save behavior, normalized-to-indexed in-memory compile, pointer links, and diagnostics for dropped offerings.
-- [ ] 2c: Implement compatibility loading for old embedded/provider-keyed catalog JSON and old cache files into the new canonical/offering shape.
-- [ ] 2d: Update `external/langdag/internal/models/update.go` and `external/langdag/internal/models/providers.go` so fetched provider data populates canonical models and model offerings rather than provider model lists.
-- [ ] 2e: Add curated/generated deployment-specific catalog entries for all confirmed v1 deployments, including Azure placeholders that require user `model_mappings`, OpenRouter dynamic/aggregator behavior, and Ollama local placeholders.
-- [ ] 2f: Update the langdag `models` CLI in `external/langdag/internal/cli/models.go` to display canonical models and offerings by deployment/API/provider/model and expose the deployment-aware JSON shape.
-- [ ] 2g: Add tests for catalog schema validation, in-memory indexes, stale data diagnostics, provider-keyed cache migration, OpenRouter scope, Ollama placeholders, and Azure mapping-required offerings.
+- [x] 2a: Replace `external/langdag/internal/models/catalog.go` and exported catalog aliases in `external/langdag/langdag.go` with the deployment-aware catalog model, removing or replacing old provider-keyed public APIs as needed for Herm.
+- [x] 2b: Implement catalog JSON loading, strict validation, save behavior, normalized-to-indexed in-memory compile, pointer links, and diagnostics for dropped offerings.
+- [x] 2c: Implement compatibility loading for old embedded/provider-keyed catalog JSON and old cache files into the new canonical/offering shape.
+- [x] 2d: Update `external/langdag/internal/models/update.go` and `external/langdag/internal/models/providers.go` so fetched provider data populates canonical models and model offerings rather than provider model lists.
+- [x] 2e: Add curated/generated deployment-specific catalog entries for all confirmed v1 deployments, including Azure placeholders that require user `model_mappings`, OpenRouter dynamic/aggregator behavior, and Ollama local placeholders.
+- [x] 2f: Update the langdag `models` CLI in `external/langdag/internal/cli/models.go` to display canonical models and offerings by deployment/API/provider/model and expose the deployment-aware JSON shape.
+- [x] 2g: Add tests for catalog schema validation, in-memory indexes, stale data diagnostics, provider-keyed cache migration, OpenRouter scope, Ollama placeholders, and Azure mapping-required offerings.
 
 ## Phase 3: Preserve usage, pricing snapshots, and served identity
 - [ ] 3a: Extend langdag `types.Usage`, storage-facing structs, SDK structs, REST/OpenAPI types, and provider mappings so all billable usage dimensions returned by supported APIs are preserved.

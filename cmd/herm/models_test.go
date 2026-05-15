@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"langdag.com/langdag"
 	"langdag.com/langdag/types"
@@ -18,6 +19,69 @@ func testModels() []ModelDef {
 		{Provider: ProviderOpenAI, ID: "gpt-4o", PromptPrice: 2.5, CompletionPrice: 10.0},
 		{Provider: ProviderOpenAI, ID: "gpt-4o-mini", PromptPrice: 0.15, CompletionPrice: 0.6},
 		{Provider: ProviderOpenAI, ID: "o3-mini", PromptPrice: 1.1, CompletionPrice: 4.4},
+	}
+}
+
+func testModelCatalogFromLegacyProviders(providers map[string][]langdag.ModelPricing) *langdag.ModelCatalog {
+	catalog := langdag.ReferenceCatalogV1()
+	generatedAt := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
+	catalog.GeneratedAt = generatedAt
+	catalog.StaleAfter = generatedAt.Add(30 * 24 * time.Hour)
+	catalog.Models = map[string]*langdag.ModelV1{}
+	catalog.Offerings = nil
+	catalog.OfferingTemplates = nil
+	catalog.Aliases = map[string]string{}
+
+	for provider, modelList := range providers {
+		deploymentID, ownerID := testCatalogDeploymentAndOwner(provider)
+		if catalog.Providers[ownerID] == nil {
+			catalog.Providers[ownerID] = &langdag.ProviderV1{ID: ownerID, Name: ownerID}
+		}
+		for _, pricing := range modelList {
+			canonicalID := ownerID + "/" + pricing.ID
+			catalog.Models[canonicalID] = &langdag.ModelV1{
+				ID:            canonicalID,
+				ProviderID:    ownerID,
+				Name:          pricing.ID,
+				ContextWindow: pricing.ContextWindow,
+				MaxOutput:     pricing.MaxOutput,
+			}
+			serverTools := map[string]langdag.CapabilityState{}
+			for _, tool := range pricing.ServerTools {
+				serverTools[tool] = langdag.CapabilitySupported
+			}
+			catalog.Offerings = append(catalog.Offerings, langdag.ModelOfferingV1{
+				ID:               deploymentID + ":" + pricing.ID,
+				CanonicalModelID: canonicalID,
+				DeploymentID:     deploymentID,
+				NativeModelID:    pricing.ID,
+				Capabilities:     langdag.CapabilitySetV1{ServerTools: serverTools},
+				Pricing: langdag.PricingV1{
+					Status:   langdag.PricingKnown,
+					Currency: "USD",
+					RatesPer1M: map[string]float64{
+						"input_tokens":  pricing.InputPricePer1M,
+						"output_tokens": pricing.OutputPricePer1M,
+					},
+				},
+			})
+		}
+	}
+	return catalog
+}
+
+func testCatalogDeploymentAndOwner(provider string) (deploymentID string, ownerID string) {
+	switch provider {
+	case ProviderAnthropic:
+		return "anthropic-direct", "anthropic"
+	case ProviderGrok:
+		return "grok-direct", "xai"
+	case ProviderOpenAI:
+		return "openai-direct", "openai"
+	case ProviderGemini:
+		return "gemini-direct", "google"
+	default:
+		return provider, provider
 	}
 }
 
@@ -202,17 +266,15 @@ func TestFormatPriceZero(t *testing.T) {
 // --- modelsFromCatalog tests ---
 
 func TestModelsFromCatalog(t *testing.T) {
-	catalog := &langdag.ModelCatalog{
-		Providers: map[string][]langdag.ModelPricing{
-			"anthropic": {
-				{ID: "claude-opus-4-6", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
-				{ID: "claude-opus-4-7", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
-			},
-			"grok": {
-				{ID: "grok-4-1-fast-reasoning", InputPricePer1M: 3, OutputPricePer1M: 15, ContextWindow: 131072},
-			},
+	catalog := testModelCatalogFromLegacyProviders(map[string][]langdag.ModelPricing{
+		"anthropic": {
+			{ID: "claude-opus-4-6", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
+			{ID: "claude-opus-4-7", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
 		},
-	}
+		"grok": {
+			{ID: "grok-4-1-fast-reasoning", InputPricePer1M: 3, OutputPricePer1M: 15, ContextWindow: 131072},
+		},
+	})
 	models := modelsFromCatalog(catalog)
 	if len(models) != 3 {
 		t.Fatalf("expected 3 models, got %d", len(models))
@@ -230,16 +292,14 @@ func TestModelsFromCatalog(t *testing.T) {
 }
 
 func TestModelsFromCatalogServerTools(t *testing.T) {
-	catalog := &langdag.ModelCatalog{
-		Providers: map[string][]langdag.ModelPricing{
-			"anthropic": {
-				{ID: "claude-sonnet-4", InputPricePer1M: 3, OutputPricePer1M: 15, ContextWindow: 200000, ServerTools: []string{"web_search"}},
-			},
-			"grok": {
-				{ID: "grok-3", InputPricePer1M: 3, OutputPricePer1M: 15, ContextWindow: 131072},
-			},
+	catalog := testModelCatalogFromLegacyProviders(map[string][]langdag.ModelPricing{
+		"anthropic": {
+			{ID: "claude-sonnet-4", InputPricePer1M: 3, OutputPricePer1M: 15, ContextWindow: 200000, ServerTools: []string{"web_search"}},
 		},
-	}
+		"grok": {
+			{ID: "grok-3", InputPricePer1M: 3, OutputPricePer1M: 15, ContextWindow: 131072},
+		},
+	})
 	models := modelsFromCatalog(catalog)
 	// anthropic model should have server tools
 	if m := findModelByID(findModelByIDOptions{models: models, id: "claude-sonnet-4"}); m == nil {
@@ -263,15 +323,13 @@ func TestModelsFromCatalogNil(t *testing.T) {
 }
 
 func TestModelsFromCatalogSkipsUnknownProviders(t *testing.T) {
-	catalog := &langdag.ModelCatalog{
-		Providers: map[string][]langdag.ModelPricing{
-			"anthropic": {
-				{ID: "claude-opus-4-6", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
-				{ID: "claude-opus-4-7", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
-			},
-			"unknown-provider": {{ID: "mystery-model", InputPricePer1M: 1, OutputPricePer1M: 2, ContextWindow: 100000}},
+	catalog := testModelCatalogFromLegacyProviders(map[string][]langdag.ModelPricing{
+		"anthropic": {
+			{ID: "claude-opus-4-6", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
+			{ID: "claude-opus-4-7", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
 		},
-	}
+		"unknown-provider": {{ID: "mystery-model", InputPricePer1M: 1, OutputPricePer1M: 2, ContextWindow: 100000}},
+	})
 	models := modelsFromCatalog(catalog)
 	for _, m := range models {
 		if m.Provider == "unknown-provider" {
