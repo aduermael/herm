@@ -338,6 +338,33 @@ func TestModelsFromCatalogSkipsUnknownProviders(t *testing.T) {
 	}
 }
 
+func TestModelsFromCatalogPreservingDynamicKeepsFetchedProviders(t *testing.T) {
+	catalog := testModelCatalogFromLegacyProviders(map[string][]langdag.ModelPricing{
+		"anthropic": {
+			{ID: "claude-opus-4-6", InputPricePer1M: 5, OutputPricePer1M: 25, ContextWindow: 200000},
+		},
+	})
+	current := []ModelDef{
+		{Provider: ProviderOpenRouter, ID: "z-ai/glm-4.5-air:free"},
+		{Provider: ProviderOllama, ID: "llama3.1:8b"},
+		{Provider: ProviderOpenAI, ID: "old-catalog-row"},
+	}
+
+	models := modelsFromCatalogPreservingDynamic(catalog, current)
+	if findModelByID(findModelByIDOptions{models: models, id: "claude-opus-4-6"}) == nil {
+		t.Fatal("catalog model missing")
+	}
+	if findModelByID(findModelByIDOptions{models: models, id: "z-ai/glm-4.5-air:free"}) == nil {
+		t.Fatal("OpenRouter dynamic model was not preserved")
+	}
+	if findModelByID(findModelByIDOptions{models: models, id: "llama3.1:8b"}) == nil {
+		t.Fatal("Ollama dynamic model was not preserved")
+	}
+	if findModelByID(findModelByIDOptions{models: models, id: "old-catalog-row"}) != nil {
+		t.Fatal("non-dynamic stale catalog row should not be preserved")
+	}
+}
+
 // --- parseSWEScores tests ---
 
 func TestParseSWEScoresBasic(t *testing.T) {

@@ -185,7 +185,7 @@ func (a *App) startAgent(userMessage string) {
 		if a.langdagClient != nil {
 			a.langdagClient.Close()
 		}
-		client, err := newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: a.config, provider: modelProvider})
+		client, err := newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: a.config, provider: modelProvider, catalog: a.modelCatalog})
 		if err != nil {
 			a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Error initializing %s provider: %v", modelProvider, err)})
 			return

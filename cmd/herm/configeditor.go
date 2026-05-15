@@ -179,7 +179,7 @@ func (a *App) exitConfigMode(save bool) {
 		}
 		// Reinitialize langdag client with updated config
 		go func() {
-			client, err := newLangdagClient(a.config)
+			client, err := newLangdagClientWithCatalog(a.config, a.modelCatalog)
 			a.resultCh <- langdagReadyMsg{client: client, provider: a.config.defaultLangdagProvider(), err: err}
 		}()
 	}

@@ -739,8 +739,14 @@ func (a *App) handleResult(result any) {
 
 	case catalogMsg:
 		if msg.catalog != nil {
+			if msg.source != "" {
+				log.Printf("model catalog loaded from %s", msg.source)
+			}
+			for _, diagnostic := range msg.diagnostics {
+				log.Printf("model catalog diagnostic: %s: %s", diagnostic.Code, diagnostic.Message)
+			}
 			a.modelCatalog = msg.catalog
-			a.models = modelsFromCatalog(msg.catalog)
+			a.models = modelsFromCatalogPreservingDynamic(msg.catalog, a.models)
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}

@@ -104,7 +104,9 @@ type langdagReadyMsg struct {
 }
 
 type catalogMsg struct {
-	catalog *langdag.ModelCatalog
+	catalog     *langdag.ModelCatalog
+	source      langdag.CatalogSource
+	diagnostics []langdag.CatalogDiagnosticV1
 }
 
 type resizeMsg struct{}

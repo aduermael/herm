@@ -78,6 +78,26 @@ func modelsFromCatalog(catalog *langdag.ModelCatalog) []ModelDef {
 	return models
 }
 
+func modelsFromCatalogPreservingDynamic(catalog *langdag.ModelCatalog, current []ModelDef) []ModelDef {
+	models := modelsFromCatalog(catalog)
+	seen := map[string]bool{}
+	for _, model := range models {
+		seen[model.Provider+"\x00"+model.ID] = true
+	}
+	for _, model := range current {
+		if model.Provider != ProviderOllama && model.Provider != ProviderOpenRouter {
+			continue
+		}
+		key := model.Provider + "\x00" + model.ID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		models = append(models, model)
+	}
+	return models
+}
+
 // supportsServerToolsOptions is the parameter bundle for supportsServerTools.
 type supportsServerToolsOptions struct {
 	provider string

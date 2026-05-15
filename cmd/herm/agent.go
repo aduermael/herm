@@ -40,24 +40,28 @@ func langdagStoragePath() string {
 // newLangdagClient creates a langdag client configured from the app config.
 // Returns nil if no API keys are configured.
 func newLangdagClient(cfg Config) (*langdag.Client, error) {
+	return newLangdagClientWithCatalog(cfg, nil)
+}
+
+func newLangdagClientWithCatalog(cfg Config, catalog *langdag.ModelCatalog) (*langdag.Client, error) {
 	// Use the first available provider as default.
 	if cfg.AnthropicAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderAnthropic})
+		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderAnthropic, catalog: catalog})
 	}
 	if cfg.OpenAIAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOpenAI})
+		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOpenAI, catalog: catalog})
 	}
 	if cfg.GrokAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderGrok})
+		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderGrok, catalog: catalog})
 	}
 	if cfg.OpenRouterAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOpenRouter})
+		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOpenRouter, catalog: catalog})
 	}
 	if cfg.GeminiAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderGemini})
+		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderGemini, catalog: catalog})
 	}
 	if cfg.OllamaBaseURL != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOllama})
+		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOllama, catalog: catalog})
 	}
 	return nil, nil
 }
@@ -66,12 +70,14 @@ func newLangdagClient(cfg Config) (*langdag.Client, error) {
 type newLangdagClientForProviderOptions struct {
 	cfg      Config
 	provider string
+	catalog  *langdag.ModelCatalog
 }
 
 // newLangdagClientForProvider creates a langdag client configured for a specific provider.
 func newLangdagClientForProvider(opts newLangdagClientForProviderOptions) (*langdag.Client, error) {
 	langdagCfg := langdag.Config{
-		StoragePath: langdagStoragePath(),
+		StoragePath:  langdagStoragePath(),
+		ModelCatalog: opts.catalog,
 		RetryConfig: &langdag.RetryConfig{
 			BaseDelay: 2 * time.Second,
 		},
