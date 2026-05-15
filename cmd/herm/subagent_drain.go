@@ -7,13 +7,13 @@ import "fmt"
 // drainResult holds the accumulated state from a sub-agent's event drain loop.
 // Both foreground Execute and background runBackground produce a drainResult.
 type drainResult struct {
-	textParts         []string // collected text output fragments
-	agentErrors       []string // error messages with tool/turn context
-	totalInputTokens  int
-	totalOutputTokens int
-	turns             int    // number of LLM response turns consumed
-	lastNodeID        string // last known nodeID for synthesis and resume
-	synthesisAttempted bool  // true when the agent exceeded its turn budget while still requesting tools
+	textParts          []string // collected text output fragments
+	agentErrors        []string // error messages with tool/turn context
+	totalInputTokens   int
+	totalOutputTokens  int
+	turns              int    // number of LLM response turns consumed
+	lastNodeID         string // last known nodeID for synthesis and resume
+	synthesisAttempted bool   // true when the agent exceeded its turn budget while still requesting tools
 }
 
 // drainOptions parameterizes the behavioral differences between foreground and
@@ -118,7 +118,11 @@ func (t *SubAgentTool) drainSubAgentEvents(opts drainOptions) drainResult {
 					opts.agent.SetTokenProgress(SetTokenProgressOptions{InputTokens: r.totalInputTokens, OutputTokens: r.totalOutputTokens})
 				}
 			}
-			opts.traceCollector.SetUsage(SetUsageOptions{agentID: opts.agentID, model: event.Model, nodeID: "", usage: traceUsageFromTypes(event.Usage), costUSD: 0, stopReason: event.StopReason})
+			var costUSD float64
+			if event.CostResult != nil {
+				costUSD = event.CostResult.Total
+			}
+			opts.traceCollector.SetUsage(SetUsageOptions{agentID: opts.agentID, model: event.Model, nodeID: "", usage: traceUsageFromTypes(event.Usage), costUSD: costUSD, cost: event.CostResult, metadata: event.Metadata, stopReason: event.StopReason})
 			if fullProcessing {
 				usageSeen = true
 			}

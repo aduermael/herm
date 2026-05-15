@@ -739,12 +739,55 @@ func TestComputeCostModelNotFound(t *testing.T) {
 
 func TestComputeCostZeroPricing(t *testing.T) {
 	models := []ModelDef{
-		{Provider: ProviderGrok, ID: "grok-free", PromptPrice: 0, CompletionPrice: 0},
+		{Provider: ProviderGrok, ID: "grok-free", PromptPrice: 0, CompletionPrice: 0, PricingStatus: types.CostStatusFree},
 	}
 	usage := types.Usage{InputTokens: 5000, OutputTokens: 1000}
 	got := computeCost(computeCostOptions{models: models, modelID: "grok-free", usage: usage})
 	if got != 0 {
 		t.Errorf("computeCost with zero pricing = %f, want 0", got)
+	}
+}
+
+func TestComputeCostResultStatuses(t *testing.T) {
+	usage := types.Usage{InputTokens: 1000, OutputTokens: 500, ReasoningTokens: 100}
+	result := computeCostResult(computeCostOptions{
+		models:  []ModelDef{{Provider: ProviderOpenAI, ID: "gpt", PromptPrice: 2, CompletionPrice: 8}},
+		modelID: "gpt",
+		usage:   usage,
+	})
+	if result.Status != types.CostStatusPartial {
+		t.Fatalf("status = %q, want partial for missing reasoning token rate", result.Status)
+	}
+	if len(result.MissingDimensions) != 1 || result.MissingDimensions[0] != "reasoning_tokens" {
+		t.Fatalf("missing dimensions = %+v", result.MissingDimensions)
+	}
+
+	ambiguous := computeCostResult(computeCostOptions{
+		models: []ModelDef{
+			{Provider: ProviderOpenAI, ID: "same-native", PromptPrice: 1, CompletionPrice: 2},
+			{Provider: ProviderGemini, ID: "same-native", PromptPrice: 3, CompletionPrice: 4},
+		},
+		modelID: "same-native",
+		usage:   usage,
+	})
+	if ambiguous.Status != types.CostStatusUnknown || len(ambiguous.MissingDimensions) != 1 || ambiguous.MissingDimensions[0] != "ambiguous_model_id:same-native" {
+		t.Fatalf("ambiguous result = %+v", ambiguous)
+	}
+
+	dimensionAmbiguous := computeCostResult(computeCostOptions{
+		models: []ModelDef{
+			{Provider: ProviderOpenAI, ID: "dimension-native", PromptPrice: 1, CompletionPrice: 2},
+			{
+				Provider:          ProviderGemini,
+				ID:                "dimension-native",
+				PricingRatesPer1M: map[string]float64{"input_tokens": 1, "output_tokens": 2, "reasoning_tokens": 3},
+			},
+		},
+		modelID: "dimension-native",
+		usage:   usage,
+	})
+	if dimensionAmbiguous.Status != types.CostStatusUnknown || len(dimensionAmbiguous.MissingDimensions) != 1 || dimensionAmbiguous.MissingDimensions[0] != "ambiguous_model_id:dimension-native" {
+		t.Fatalf("dimension ambiguous result = %+v", dimensionAmbiguous)
 	}
 }
 

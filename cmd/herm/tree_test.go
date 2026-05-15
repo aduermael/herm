@@ -805,6 +805,23 @@ func TestRenderTree_EmptyConversation(t *testing.T) {
 	}
 }
 
+func TestRenderTree_SkipsEarlierOutputGroupNodes(t *testing.T) {
+	a := &App{}
+	nodes := []*types.Node{
+		{ID: "1", NodeType: types.NodeTypeUser, Content: "Continue until finished"},
+		{ID: "2", ParentID: "1", NodeType: types.NodeTypeAssistant, Content: "partial", OutputGroupID: "group-1"},
+		{ID: "3", ParentID: "2", NodeType: types.NodeTypeAssistant, Content: "partial complete", OutputGroupID: "group-1"},
+	}
+
+	result := a.renderTree(nodes)
+	if strings.Contains(result, "partial\n") {
+		t.Fatalf("expected earlier continuation node to be hidden, got:\n%s", result)
+	}
+	if !strings.Contains(result, "partial complete") {
+		t.Fatalf("expected final continuation node in render, got:\n%s", result)
+	}
+}
+
 func TestRenderTree_ToolErrorAndSuccess(t *testing.T) {
 	a := &App{}
 

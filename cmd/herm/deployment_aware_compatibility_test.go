@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"langdag.com/langdag/types"
@@ -300,7 +301,7 @@ func compatibilityOfferingsToModels(offerings []compatibilityNativeOffering) []M
 	return models
 }
 
-func TestOldNativeModelCostIsModelIDOnly(t *testing.T) {
+func TestOldNativeModelCostFallbackIsExplicitForAmbiguousIDs(t *testing.T) {
 	var fixture compatibilityNativeModelCases
 	if err := json.Unmarshal(readDeploymentAwareCompatibilityFixture(t, "old_native_model_cases.json"), &fixture); err != nil {
 		t.Fatalf("unmarshal native model fixture: %v", err)
@@ -315,10 +316,12 @@ func TestOldNativeModelCostIsModelIDOnly(t *testing.T) {
 		if len(models) < 2 {
 			t.Fatalf("ambiguous case %q produced %d models, want at least 2", ambiguous.ModelID, len(models))
 		}
-		got := computeCost(computeCostOptions{models: models, modelID: ambiguous.ModelID, usage: usage})
-		want := (1000*models[0].PromptPrice + 500*models[0].CompletionPrice) / 1_000_000
-		if math.Abs(got-want) > 1e-12 {
-			t.Errorf("ambiguous computeCost(%q) = %f, want first model-ID match cost %f", ambiguous.ModelID, got, want)
+		got := computeCostResult(computeCostOptions{models: models, modelID: ambiguous.ModelID, usage: usage})
+		if got.Status != types.CostStatusUnknown {
+			t.Errorf("ambiguous computeCostResult(%q).Status = %q, want unknown", ambiguous.ModelID, got.Status)
+		}
+		if len(got.MissingDimensions) != 1 || !strings.HasPrefix(got.MissingDimensions[0], "ambiguous_model_id:") {
+			t.Errorf("ambiguous computeCostResult(%q).MissingDimensions = %+v", ambiguous.ModelID, got.MissingDimensions)
 		}
 	}
 

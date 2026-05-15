@@ -28,42 +28,51 @@ type Trace struct {
 
 // TraceInfo holds session metadata and aggregate totals.
 type TraceInfo struct {
-	SessionID        string       `json:"session_id"`
-	StartedAt        *time.Time   `json:"started_at"`
-	EndedAt          *time.Time   `json:"ended_at"`
-	DurationMS       *int64       `json:"duration_ms"`
-	Model            string       `json:"model,omitempty"`
-	SystemPromptHash string       `json:"system_prompt_hash,omitempty"`
-	GitBranch        string       `json:"git_branch,omitempty"`
-	GitRoot          string       `json:"git_root,omitempty"`
-	OS               string       `json:"os"`
-	Totals           TraceTotals  `json:"totals"`
+	SessionID        string                       `json:"session_id"`
+	StartedAt        *time.Time                   `json:"started_at"`
+	EndedAt          *time.Time                   `json:"ended_at"`
+	DurationMS       *int64                       `json:"duration_ms"`
+	Model            string                       `json:"model,omitempty"`
+	SystemPromptHash string                       `json:"system_prompt_hash,omitempty"`
+	GitBranch        string                       `json:"git_branch,omitempty"`
+	GitRoot          string                       `json:"git_root,omitempty"`
+	OS               string                       `json:"os"`
+	Totals           TraceTotals                  `json:"totals"`
 	ToolSummary      map[string]*TraceToolSummary `json:"tool_summary,omitempty"`
 }
 
 // TraceTotals holds cumulative counters for the session.
 type TraceTotals struct {
-	LLMCalls          int     `json:"llm_calls"`
-	MainAgentLLMCalls int     `json:"main_agent_llm_calls"`
-	SubAgentLLMCalls  int     `json:"sub_agent_llm_calls"`
-	InputTokens       int     `json:"input_tokens"`
-	OutputTokens      int     `json:"output_tokens"`
-	CacheReadTokens   int     `json:"cache_read_tokens"`
-	CacheCreateTokens int     `json:"cache_creation_tokens"`
-	ReasoningTokens   int     `json:"reasoning_tokens"`
-	CostUSD           float64 `json:"cost_usd"`
-	ToolCalls         int     `json:"tool_calls"`
-	ToolResultBytes   int     `json:"tool_result_bytes"`
-	SubAgentsSpawned  int     `json:"sub_agents_spawned"`
-	Compactions       int     `json:"compactions"`
-	Retries           int     `json:"retries"`
-	Errors            int     `json:"errors"`
+	LLMCalls                 int              `json:"llm_calls"`
+	MainAgentLLMCalls        int              `json:"main_agent_llm_calls"`
+	SubAgentLLMCalls         int              `json:"sub_agent_llm_calls"`
+	InputTokens              int              `json:"input_tokens"`
+	OutputTokens             int              `json:"output_tokens"`
+	CacheReadTokens          int              `json:"cache_read_tokens"`
+	CacheCreateTokens        int              `json:"cache_creation_tokens"`
+	CacheWriteTokens         int              `json:"cache_write_tokens"`
+	ReasoningTokens          int              `json:"reasoning_tokens"`
+	ToolUsePromptTokens      int              `json:"tool_use_prompt_tokens"`
+	AudioInputTokens         int              `json:"audio_input_tokens"`
+	AudioOutputTokens        int              `json:"audio_output_tokens"`
+	ImageInputTokens         int              `json:"image_input_tokens"`
+	ImageOutputTokens        int              `json:"image_output_tokens"`
+	AcceptedPredictionTokens int              `json:"accepted_prediction_tokens"`
+	RejectedPredictionTokens int              `json:"rejected_prediction_tokens"`
+	Dimensions               map[string]int64 `json:"dimensions,omitempty"`
+	CostUSD                  float64          `json:"cost_usd"`
+	ToolCalls                int              `json:"tool_calls"`
+	ToolResultBytes          int              `json:"tool_result_bytes"`
+	SubAgentsSpawned         int              `json:"sub_agents_spawned"`
+	Compactions              int              `json:"compactions"`
+	Retries                  int              `json:"retries"`
+	Errors                   int              `json:"errors"`
 }
 
 // TraceToolSummary holds per-tool aggregate stats.
 type TraceToolSummary struct {
-	Calls          int   `json:"calls"`
-	ResultBytes    int   `json:"result_bytes"`
+	Calls           int   `json:"calls"`
+	ResultBytes     int   `json:"result_bytes"`
 	TotalDurationMS int64 `json:"total_duration_ms"`
 }
 
@@ -85,42 +94,54 @@ type TraceUserMessage struct {
 
 // TraceLLMResponse is an llm_response event grouping text, usage, and tool calls.
 type TraceLLMResponse struct {
-	Type       string           `json:"type"`
-	AgentID    string           `json:"agent_id"`
-	NodeID     string           `json:"node_id,omitempty"`
-	StartedAt  time.Time        `json:"started_at"`
-	EndedAt    *time.Time       `json:"ended_at,omitempty"`
-	DurationMS *int64           `json:"duration_ms,omitempty"`
-	Model      string           `json:"model,omitempty"`
-	Content    string           `json:"content"`
-	StopReason string           `json:"stop_reason,omitempty"`
-	Usage      *TraceUsage      `json:"usage,omitempty"`
-	CostUSD    float64          `json:"cost_usd,omitempty"`
-	ToolCalls  []TraceToolCall  `json:"tool_calls,omitempty"`
+	Type            string                         `json:"type"`
+	AgentID         string                         `json:"agent_id"`
+	NodeID          string                         `json:"node_id,omitempty"`
+	StartedAt       time.Time                      `json:"started_at"`
+	EndedAt         *time.Time                     `json:"ended_at,omitempty"`
+	DurationMS      *int64                         `json:"duration_ms,omitempty"`
+	Model           string                         `json:"model,omitempty"`
+	Content         string                         `json:"content"`
+	StopReason      string                         `json:"stop_reason,omitempty"`
+	Usage           *TraceUsage                    `json:"usage,omitempty"`
+	CostUSD         float64                        `json:"cost_usd,omitempty"`
+	Cost            *types.CostResult              `json:"cost,omitempty"`
+	ModelResolution *types.ModelResolutionMetadata `json:"model_resolution,omitempty"`
+	ToolCalls       []TraceToolCall                `json:"tool_calls,omitempty"`
 }
 
 // TraceUsage holds token counts for a single LLM call.
 type TraceUsage struct {
-	InputTokens       int `json:"input_tokens"`
-	OutputTokens      int `json:"output_tokens"`
-	CacheReadTokens   int `json:"cache_read_tokens,omitempty"`
-	CacheCreateTokens int `json:"cache_creation_tokens,omitempty"`
-	ReasoningTokens   int `json:"reasoning_tokens,omitempty"`
+	InputTokens              int              `json:"input_tokens"`
+	OutputTokens             int              `json:"output_tokens"`
+	CacheReadTokens          int              `json:"cache_read_tokens,omitempty"`
+	CacheCreateTokens        int              `json:"cache_creation_tokens,omitempty"`
+	CacheWriteTokens         int              `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens          int              `json:"reasoning_tokens,omitempty"`
+	ToolUsePromptTokens      int              `json:"tool_use_prompt_tokens,omitempty"`
+	AudioInputTokens         int              `json:"audio_input_tokens,omitempty"`
+	AudioOutputTokens        int              `json:"audio_output_tokens,omitempty"`
+	ImageInputTokens         int              `json:"image_input_tokens,omitempty"`
+	ImageOutputTokens        int              `json:"image_output_tokens,omitempty"`
+	AcceptedPredictionTokens int              `json:"accepted_prediction_tokens,omitempty"`
+	RejectedPredictionTokens int              `json:"rejected_prediction_tokens,omitempty"`
+	ServiceTier              string           `json:"service_tier,omitempty"`
+	Dimensions               map[string]int64 `json:"dimensions,omitempty"`
 }
 
 // TraceToolCall pairs a tool invocation with its result.
 type TraceToolCall struct {
-	ID            string           `json:"id"`
-	Name          string           `json:"name"`
-	Input         json.RawMessage  `json:"input"`
-	ParallelGroup int              `json:"parallel_group"`
-	StartedAt     *time.Time       `json:"started_at,omitempty"`
-	EndedAt       *time.Time       `json:"ended_at,omitempty"`
-	DurationMS    *int64           `json:"duration_ms,omitempty"`
-	Result        string           `json:"result,omitempty"`
-	ResultBytes   int              `json:"result_bytes,omitempty"`
-	IsError       bool             `json:"is_error,omitempty"`
-	Approval      *TraceApproval   `json:"approval,omitempty"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Input         json.RawMessage `json:"input"`
+	ParallelGroup int             `json:"parallel_group"`
+	StartedAt     *time.Time      `json:"started_at,omitempty"`
+	EndedAt       *time.Time      `json:"ended_at,omitempty"`
+	DurationMS    *int64          `json:"duration_ms,omitempty"`
+	Result        string          `json:"result,omitempty"`
+	ResultBytes   int             `json:"result_bytes,omitempty"`
+	IsError       bool            `json:"is_error,omitempty"`
+	Approval      *TraceApproval  `json:"approval,omitempty"`
 }
 
 // TraceApproval captures the tool approval flow.
@@ -133,17 +154,17 @@ type TraceApproval struct {
 
 // TraceSubAgent is a sub_agent event containing a nested trace.
 type TraceSubAgent struct {
-	Type       string           `json:"type"`
-	AgentID    string           `json:"agent_id"`
-	Task       string           `json:"task,omitempty"`
-	Model      string           `json:"model,omitempty"`
-	StartedAt  *time.Time       `json:"started_at,omitempty"`
-	EndedAt    *time.Time       `json:"ended_at,omitempty"`
-	DurationMS *int64           `json:"duration_ms,omitempty"`
-	Usage      *TraceUsage      `json:"usage,omitempty"`
-	CostUSD    float64          `json:"cost_usd,omitempty"`
-	Turns      int              `json:"turns,omitempty"`
-	MaxTurns   int              `json:"max_turns,omitempty"`
+	Type       string            `json:"type"`
+	AgentID    string            `json:"agent_id"`
+	Task       string            `json:"task,omitempty"`
+	Model      string            `json:"model,omitempty"`
+	StartedAt  *time.Time        `json:"started_at,omitempty"`
+	EndedAt    *time.Time        `json:"ended_at,omitempty"`
+	DurationMS *int64            `json:"duration_ms,omitempty"`
+	Usage      *TraceUsage       `json:"usage,omitempty"`
+	CostUSD    float64           `json:"cost_usd,omitempty"`
+	Turns      int               `json:"turns,omitempty"`
+	MaxTurns   int               `json:"max_turns,omitempty"`
 	Events     []json.RawMessage `json:"events,omitempty"`
 }
 
@@ -301,6 +322,8 @@ type SetUsageOptions struct {
 	nodeID     string
 	usage      *TraceUsage
 	costUSD    float64
+	cost       *types.CostResult
+	metadata   *types.AssistantNodeMetadata
 	stopReason string
 }
 
@@ -315,6 +338,10 @@ func (tc *TraceCollector) SetUsage(opts SetUsageOptions) {
 	turn.NodeID = nodeID
 	turn.Usage = usage
 	turn.CostUSD = costUSD
+	turn.Cost = opts.cost
+	if opts.metadata != nil {
+		turn.ModelResolution = opts.metadata.ModelResolution
+	}
 	turn.StopReason = stopReason
 
 	if tc.info.Model == "" {
@@ -333,7 +360,21 @@ func (tc *TraceCollector) SetUsage(opts SetUsageOptions) {
 		tc.info.Totals.OutputTokens += usage.OutputTokens
 		tc.info.Totals.CacheReadTokens += usage.CacheReadTokens
 		tc.info.Totals.CacheCreateTokens += usage.CacheCreateTokens
+		tc.info.Totals.CacheWriteTokens += usage.CacheWriteTokens
 		tc.info.Totals.ReasoningTokens += usage.ReasoningTokens
+		tc.info.Totals.ToolUsePromptTokens += usage.ToolUsePromptTokens
+		tc.info.Totals.AudioInputTokens += usage.AudioInputTokens
+		tc.info.Totals.AudioOutputTokens += usage.AudioOutputTokens
+		tc.info.Totals.ImageInputTokens += usage.ImageInputTokens
+		tc.info.Totals.ImageOutputTokens += usage.ImageOutputTokens
+		tc.info.Totals.AcceptedPredictionTokens += usage.AcceptedPredictionTokens
+		tc.info.Totals.RejectedPredictionTokens += usage.RejectedPredictionTokens
+		for name, value := range usage.Dimensions {
+			if tc.info.Totals.Dimensions == nil {
+				tc.info.Totals.Dimensions = map[string]int64{}
+			}
+			tc.info.Totals.Dimensions[name] += value
+		}
 	}
 	tc.info.Totals.CostUSD += costUSD
 
@@ -624,11 +665,21 @@ func traceUsageFromTypes(u *types.Usage) *TraceUsage {
 		return nil
 	}
 	return &TraceUsage{
-		InputTokens:       u.InputTokens,
-		OutputTokens:      u.OutputTokens,
-		CacheReadTokens:   u.CacheReadInputTokens,
-		CacheCreateTokens: u.CacheCreationInputTokens,
-		ReasoningTokens:   u.ReasoningTokens,
+		InputTokens:              u.InputTokens,
+		OutputTokens:             u.OutputTokens,
+		CacheReadTokens:          u.CacheReadInputTokens,
+		CacheCreateTokens:        u.CacheCreationInputTokens,
+		CacheWriteTokens:         u.CacheWriteInputTokens,
+		ReasoningTokens:          u.ReasoningTokens,
+		ToolUsePromptTokens:      u.ToolUsePromptTokens,
+		AudioInputTokens:         u.AudioInputTokens,
+		AudioOutputTokens:        u.AudioOutputTokens,
+		ImageInputTokens:         u.ImageInputTokens,
+		ImageOutputTokens:        u.ImageOutputTokens,
+		AcceptedPredictionTokens: u.AcceptedPredictionTokens,
+		RejectedPredictionTokens: u.RejectedPredictionTokens,
+		ServiceTier:              u.ServiceTier,
+		Dimensions:               cloneTraceDimensions(u.Dimensions),
 	}
 }
 
@@ -670,15 +721,35 @@ func (tc *TraceCollector) BuildSubAgentEvent(opts BuildSubAgentEventOptions) *Tr
 
 	// Aggregate usage from totals.
 	ev.Usage = &TraceUsage{
-		InputTokens:       tc.info.Totals.InputTokens,
-		OutputTokens:      tc.info.Totals.OutputTokens,
-		CacheReadTokens:   tc.info.Totals.CacheReadTokens,
-		CacheCreateTokens: tc.info.Totals.CacheCreateTokens,
-		ReasoningTokens:   tc.info.Totals.ReasoningTokens,
+		InputTokens:              tc.info.Totals.InputTokens,
+		OutputTokens:             tc.info.Totals.OutputTokens,
+		CacheReadTokens:          tc.info.Totals.CacheReadTokens,
+		CacheCreateTokens:        tc.info.Totals.CacheCreateTokens,
+		CacheWriteTokens:         tc.info.Totals.CacheWriteTokens,
+		ReasoningTokens:          tc.info.Totals.ReasoningTokens,
+		ToolUsePromptTokens:      tc.info.Totals.ToolUsePromptTokens,
+		AudioInputTokens:         tc.info.Totals.AudioInputTokens,
+		AudioOutputTokens:        tc.info.Totals.AudioOutputTokens,
+		ImageInputTokens:         tc.info.Totals.ImageInputTokens,
+		ImageOutputTokens:        tc.info.Totals.ImageOutputTokens,
+		AcceptedPredictionTokens: tc.info.Totals.AcceptedPredictionTokens,
+		RejectedPredictionTokens: tc.info.Totals.RejectedPredictionTokens,
+		Dimensions:               cloneTraceDimensions(tc.info.Totals.Dimensions),
 	}
 	ev.CostUSD = tc.info.Totals.CostUSD
 
 	return ev
+}
+
+func cloneTraceDimensions(in map[string]int64) map[string]int64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // writeTraceFileOptions is the parameter bundle for writeTraceFile.

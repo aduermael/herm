@@ -159,21 +159,21 @@ type BackgroundCanceller interface {
 type AgentEventType int
 
 const (
-	EventTextDelta       AgentEventType = iota // streaming text chunk
-	EventToolCallStart                         // tool invocation beginning
-	EventToolCallDone                          // tool execution finished
-	EventToolResult                            // tool result available
-	EventApprovalReq                           // tool needs user approval
-	EventUsage                                 // token usage from an LLM call
-	EventDone                                  // agent loop finished
-	EventError                                 // error occurred
-	EventCompacted                             // conversation was auto-compacted
-	EventSubAgentDelta                         // sub-agent streaming text
-	EventSubAgentStatus                        // sub-agent status (tool calls, completion)
-	EventSubAgentStart                         // sub-agent started (carries task label)
-	EventLLMStart                              // LLM API call starting (for trace timing)
-	EventRetry                                 // API call being retried
-	EventStreamClear                           // TUI should discard in-progress streaming text (before stream retry)
+	EventTextDelta      AgentEventType = iota // streaming text chunk
+	EventToolCallStart                        // tool invocation beginning
+	EventToolCallDone                         // tool execution finished
+	EventToolResult                           // tool result available
+	EventApprovalReq                          // tool needs user approval
+	EventUsage                                // token usage from an LLM call
+	EventDone                                 // agent loop finished
+	EventError                                // error occurred
+	EventCompacted                            // conversation was auto-compacted
+	EventSubAgentDelta                        // sub-agent streaming text
+	EventSubAgentStatus                       // sub-agent status (tool calls, completion)
+	EventSubAgentStart                        // sub-agent started (carries task label)
+	EventLLMStart                             // LLM API call starting (for trace timing)
+	EventRetry                                // API call being retried
+	EventStreamClear                          // TUI should discard in-progress streaming text (before stream retry)
 )
 
 // AgentEvent carries a single event from the agent loop to the TUI.
@@ -203,6 +203,8 @@ type AgentEvent struct {
 	Usage      *types.Usage
 	Model      string
 	StopReason string // API stop_reason (e.g. "end_turn", "tool_use")
+	CostResult *types.CostResult
+	Metadata   *types.AssistantNodeMetadata
 
 	// EventToolCallDone / EventToolResult
 	Duration time.Duration
@@ -230,12 +232,12 @@ type ApprovalResponse struct {
 
 // Agent orchestrates LLM calls and tool execution.
 type Agent struct {
-	id               string
-	client           *langdag.Client
-	tools            map[string]Tool
-	toolDefs         []types.ToolDefinition
-	systemPrompt     string
-	model            string
+	id                string
+	client            *langdag.Client
+	tools             map[string]Tool
+	toolDefs          []types.ToolDefinition
+	systemPrompt      string
+	model             string
 	contextWindow     int    // model's context window in tokens; 0 = unknown (no clearing)
 	explorationModel  string // cheap model for compaction summaries; empty = use main model
 	maxToolIterations int    // tool-call loop cap; 0 = use defaultMaxToolIterations
@@ -244,7 +246,7 @@ type Agent struct {
 	events   chan AgentEvent
 	approval chan ApprovalResponse
 	doneCh   chan struct{} // closed when EventDone is emitted; backup signal for TUI
-	doneOnce sync.Once    // prevents double-close of doneCh
+	doneOnce sync.Once     // prevents double-close of doneCh
 
 	streamChunkTimeout time.Duration // max time to wait for the next stream chunk; 0 = use default
 
@@ -264,10 +266,10 @@ type Agent struct {
 
 	// Turn budget tracking for sub-agent budget consciousness.
 	// Updated by the drain loop in SubAgentTool via SetTurnProgress.
-	turnMu       sync.Mutex
-	maxTurns     int // 0 = no turn budget (main agent); >0 = sub-agent turn limit
-	turnsUsed    int
-	turnTokensIn int // cumulative input tokens reported via SetTokenProgress
+	turnMu        sync.Mutex
+	maxTurns      int // 0 = no turn budget (main agent); >0 = sub-agent turn limit
+	turnsUsed     int
+	turnTokensIn  int // cumulative input tokens reported via SetTokenProgress
 	turnTokensOut int // cumulative output tokens reported via SetTokenProgress
 
 	// Background sub-agent completions, injected into the next LLM call.
@@ -442,7 +444,6 @@ func (a *Agent) findBackgroundWaiter() BackgroundWaiter {
 	return nil
 }
 
-
 // Cancel stops the running agent loop and signals every background sub-agent
 // to stop. Background sub-agents run on detached contexts, so their cancel
 // funcs must be invoked explicitly here — otherwise ESC-twice would only stop
@@ -577,18 +578,25 @@ func (a *Agent) emitUsage(ctx context.Context, opts emitUsageOptions) int {
 	if err != nil || node == nil {
 		return 0
 	}
+	metadata := metadataFromNode(node)
+	usage := types.Usage{
+		InputTokens:              node.TokensIn,
+		OutputTokens:             node.TokensOut,
+		CacheReadInputTokens:     node.TokensCacheRead,
+		CacheCreationInputTokens: node.TokensCacheCreation,
+		ReasoningTokens:          node.TokensReasoning,
+	}
+	if metadata != nil && metadata.NormalizedUsage != nil {
+		usage = types.UsageFromNormalizedUsage(*metadata.NormalizedUsage)
+	}
 	a.emit(AgentEvent{
 		Type:       EventUsage,
 		Model:      node.Model,
 		NodeID:     opts.nodeID,
 		StopReason: opts.stopReason,
-		Usage: &types.Usage{
-			InputTokens:              node.TokensIn,
-			OutputTokens:             node.TokensOut,
-			CacheReadInputTokens:     node.TokensCacheRead,
-			CacheCreationInputTokens: node.TokensCacheCreation,
-			ReasoningTokens:          node.TokensReasoning,
-		},
+		Usage:      &usage,
+		Metadata:   metadata,
+		CostResult: costResultFromAssistantMetadata(metadata),
 	})
 	// Accumulate session-level stats for budget awareness.
 	inputTokens := node.TokensIn + node.TokensCacheRead

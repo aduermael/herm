@@ -268,13 +268,19 @@ Phase validation commands:
 - [x] 2g: Add tests for catalog schema validation, in-memory indexes, stale data diagnostics, provider-keyed cache migration, OpenRouter scope, Ollama placeholders, and Azure mapping-required offerings.
 
 ## Phase 3: Preserve usage, pricing snapshots, and served identity
-- [ ] 3a: Extend langdag `types.Usage`, storage-facing structs, SDK structs, REST/OpenAPI types, and provider mappings so all billable usage dimensions returned by supported APIs are preserved.
-- [ ] 3b: Add provider-response exact cost support where APIs expose it, with clear source metadata and fallback to catalog-derived estimates when exact cost is unavailable.
-- [ ] 3c: Add typed model-resolution, normalized-usage, pricing-snapshot, and optional exact-cost metadata to `CompletionResponse`, stream done events, assistant node metadata, traces where applicable, and SDK/REST surfaces.
-- [ ] 3d: Update conversation save paths so new assistant nodes store canonical model ID, offering ID, deployment ID, provider ID, API protocol ID, native model ID, pricing snapshot, normalized usage, and exact provider cost when available.
-- [ ] 3e: Add old-node fallback behavior for nodes with only provider/model/token fields, including explicit ambiguous/unknown behavior.
-- [ ] 3f: Replace Herm's `computeCost()` float-only behavior with a structured cost result that can represent known, partial, unknown, and free costs with a per-dimension breakdown.
-- [ ] 3g: Add tests for usage dimension preservation, exact provider-cost precedence, catalog-estimate fallback, missing pricing, zero/free pricing, stale pricing, partial pricing, cache-token pricing, and old-node cost fallback.
+- [x] 3a: Extend langdag `types.Usage`, storage-facing structs, SDK structs, REST/OpenAPI types, and provider mappings so all billable usage dimensions returned by supported APIs are preserved.
+- [x] 3b: Add provider-response exact cost support where APIs expose it, with clear source metadata and fallback to catalog-derived estimates when exact cost is unavailable.
+- [x] 3c: Add typed model-resolution, normalized-usage, pricing-snapshot, and optional exact-cost metadata to `CompletionResponse`, stream done events, assistant node metadata, traces where applicable, and SDK/REST surfaces.
+- [x] 3d: Update conversation save paths so new assistant nodes store canonical model ID, offering ID, deployment ID, provider ID, API protocol ID, native model ID, pricing snapshot, normalized usage, and exact provider cost when available.
+- [x] 3e: Add old-node fallback behavior for nodes with only provider/model/token fields, including explicit ambiguous/unknown behavior.
+- [x] 3f: Replace Herm's `computeCost()` float-only behavior with a structured cost result that can represent known, partial, unknown, and free costs with a per-dimension breakdown.
+- [x] 3g: Add tests for usage dimension preservation, exact provider-cost precedence, catalog-estimate fallback, missing pricing, zero/free pricing, stale pricing, partial pricing, cache-token pricing, and old-node cost fallback.
+
+Phase validation commands:
+
+- Herm: `go test ./...`
+- Langdag: `(cd external/langdag && go test ./...)`
+- Langdag Go SDK: `(cd external/langdag/sdks/go && GOWORK=off GOCACHE=/private/tmp/herm-gocache go test ./...)`
 
 ## Phase 4: Bind deployments, canonical resolution, and routing to adapters
 - [ ] 4a: Update langdag provider construction in `external/langdag/langdag.go` and `external/langdag/internal/config/config.go` so deployment IDs resolve to existing API adapters and required local configuration.

@@ -12,20 +12,85 @@ import (
 	"langdag.com/langdag/types"
 )
 
-// nodeCost computes the USD cost for a single node using its stored token
-// counts and the app's model catalog. This mirrors computeCost but takes
-// token counts directly from a types.Node instead of types.Usage.
+// nodeCost computes the USD cost for a single node using structured metadata
+// when present, with an explicit legacy fallback for old nodes.
 func (a *App) nodeCost(n *types.Node) float64 {
+	return a.nodeCostResult(n).Total
+}
+
+func (a *App) nodeCostResult(n *types.Node) types.CostResult {
 	if n.Model == "" {
-		return 0
+		return types.CostResult{Status: types.CostStatusUnknown, Source: types.CostSourceHistorical, MissingDimensions: []string{"model"}}
+	}
+	if metadata, ok := nodeAssistantMetadata(n); ok {
+		var usage types.NormalizedUsage
+		if metadata.NormalizedUsage != nil {
+			usage = *metadata.NormalizedUsage
+		}
+		result := types.ComputeCost(metadata.ProviderCost, metadata.PricingSnapshot, usage)
+		if result.Status != types.CostStatusUnknown {
+			return result
+		}
 	}
 	usage := types.Usage{
 		InputTokens:              n.TokensIn,
 		OutputTokens:             n.TokensOut,
 		CacheReadInputTokens:     n.TokensCacheRead,
 		CacheCreationInputTokens: n.TokensCacheCreation,
+		ReasoningTokens:          n.TokensReasoning,
 	}
-	return computeCost(computeCostOptions{models: a.models, modelID: n.Model, usage: usage})
+	return computeCostResult(computeCostOptions{models: a.models, modelID: n.Model, usage: usage})
+}
+
+func nodeAssistantMetadata(n *types.Node) (*types.AssistantNodeMetadata, bool) {
+	if n == nil || len(n.Metadata) == 0 {
+		return nil, false
+	}
+	metadata, err := types.ParseAssistantNodeMetadata(n.Metadata)
+	if err != nil || metadata == nil {
+		return nil, false
+	}
+	return metadata, true
+}
+
+func metadataFromNode(n *types.Node) *types.AssistantNodeMetadata {
+	metadata, ok := nodeAssistantMetadata(n)
+	if !ok {
+		return nil
+	}
+	return metadata
+}
+
+func costResultFromAssistantMetadata(metadata *types.AssistantNodeMetadata) *types.CostResult {
+	if metadata == nil {
+		return nil
+	}
+	var usage types.NormalizedUsage
+	if metadata.NormalizedUsage != nil {
+		usage = *metadata.NormalizedUsage
+	}
+	result := types.ComputeCost(metadata.ProviderCost, metadata.PricingSnapshot, usage)
+	return &result
+}
+
+func preferStructuredCost(metadataCost, fallbackCost types.CostResult) types.CostResult {
+	if metadataCost.Status == types.CostStatusUnknown && fallbackCost.Status != types.CostStatusUnknown {
+		return fallbackCost
+	}
+	return metadataCost
+}
+
+func shouldDisplayCost(cost types.CostResult, n *types.Node) bool {
+	switch cost.Status {
+	case types.CostStatusKnown, types.CostStatusPartial:
+		return cost.Total > 0
+	case types.CostStatusFree:
+		return n != nil && (n.TokensIn > 0 || n.TokensOut > 0 || n.TokensCacheRead > 0 || n.TokensCacheCreation > 0)
+	case types.CostStatusUnknown:
+		return n != nil && (n.TokensIn > 0 || n.TokensOut > 0)
+	default:
+		return false
+	}
 }
 
 // buildConversationTree retrieves the active conversation path (root to
@@ -343,8 +408,17 @@ func (a *App) renderTree(nodes []*types.Node) string {
 	// pendingTools holds tool names from the last assistant's tool_use blocks,
 	// keyed by tool_use ID so we can match them with results.
 	var pendingTools []toolUseInfo
+	lastInOutputGroup := map[string]int{}
+	for i, n := range nodes {
+		if n.OutputGroupID != "" {
+			lastInOutputGroup[n.OutputGroupID] = i
+		}
+	}
 
-	for _, n := range nodes {
+	for i, n := range nodes {
+		if n.OutputGroupID != "" && i < lastInOutputGroup[n.OutputGroupID] {
+			continue
+		}
 		totalCost += a.nodeCost(n)
 
 		switch {
@@ -394,8 +468,8 @@ func (a *App) renderTree(nodes []*types.Node) string {
 			if n.Model != "" {
 				meta = append(meta, shortModel(n.Model))
 			}
-			if cost := a.nodeCost(n); cost > 0 {
-				meta = append(meta, formatCost(cost))
+			if cost := a.nodeCostResult(n); shouldDisplayCost(cost, n) {
+				meta = append(meta, formatCostResult(cost))
 			}
 			if n.TokensIn > 0 || n.TokensOut > 0 {
 				meta = append(meta, fmt.Sprintf("%dtok in, %dtok out", n.TokensIn+n.TokensCacheRead, n.TokensOut))

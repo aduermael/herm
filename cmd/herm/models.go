@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,12 +22,12 @@ import (
 
 // Provider constants for supported AI providers.
 const (
-	ProviderAnthropic   = "anthropic"
-	ProviderGrok        = "grok"
-	ProviderOpenRouter  = "openrouter"
-	ProviderOpenAI      = "openai"
-	ProviderGemini      = "gemini"
-	ProviderOllama      = "ollama"
+	ProviderAnthropic  = "anthropic"
+	ProviderGrok       = "grok"
+	ProviderOpenRouter = "openrouter"
+	ProviderOpenAI     = "openai"
+	ProviderGemini     = "gemini"
+	ProviderOllama     = "ollama"
 )
 
 // supportedProviders lists providers in display order.
@@ -35,14 +36,18 @@ var supportedProviders = []string{ProviderAnthropic, ProviderGrok, ProviderOpenR
 // ModelDef describes a model available for selection.
 // Models are derived from the langdag model catalog at runtime.
 type ModelDef struct {
-	Provider        string
-	ID              string
-	Label           string   // optional display name override (e.g. "model (offline)")
-	PromptPrice     float64  // USD per million input tokens
-	CompletionPrice float64  // USD per million output tokens
-	ContextWindow   int      // tokens
-	SWEScore        float64  // SWE-bench Verified score (0 = no data)
-	ServerTools     []string // server-side tools supported by this model (e.g. "web_search")
+	Provider               string
+	ID                     string
+	Label                  string  // optional display name override (e.g. "model (offline)")
+	PromptPrice            float64 // USD per million input tokens
+	CompletionPrice        float64 // USD per million output tokens
+	PricingStatus          types.CostStatus
+	PricingCurrency        string
+	PricingRatesPer1M      map[string]float64
+	MissingPriceDimensions []string
+	ContextWindow          int      // tokens
+	SWEScore               float64  // SWE-bench Verified score (0 = no data)
+	ServerTools            []string // server-side tools supported by this model (e.g. "web_search")
 }
 
 // modelsFromCatalog builds the model list from the langdag catalog.
@@ -63,6 +68,8 @@ func modelsFromCatalog(catalog *langdag.ModelCatalog) []ModelDef {
 				ID:              p.ID,
 				PromptPrice:     p.InputPricePer1M,
 				CompletionPrice: p.OutputPricePer1M,
+				PricingStatus:   inferCatalogPricingStatus(p.InputPricePer1M, p.OutputPricePer1M, provider, p.ID),
+				PricingCurrency: "USD",
 				ContextWindow:   p.ContextWindow,
 				ServerTools:     p.ServerTools,
 			})
@@ -138,6 +145,8 @@ func fetchOllamaModels(baseURL string) []ModelDef {
 				ID:              m.Name,
 				PromptPrice:     0,
 				CompletionPrice: 0,
+				PricingStatus:   types.CostStatusFree,
+				PricingCurrency: "USD",
 				ContextWindow:   ollamaContextWindow(ollamaContextWindowOptions{client: client, baseURL: base, modelName: m.Name}),
 			}}
 		}()
@@ -215,18 +224,28 @@ func fetchOpenRouterModelsFrom(opts fetchOpenRouterOptions) []ModelDef {
 	models := make([]ModelDef, 0, len(body.Data))
 	for _, m := range body.Data {
 		var promptPrice, completionPrice float64
+		pricingStatus := types.CostStatusKnown
 		// Prices are per-token strings; convert to per-million
 		if p, err := strconv.ParseFloat(m.Pricing.Prompt, 64); err == nil {
 			promptPrice = p * 1_000_000
+		} else {
+			pricingStatus = types.CostStatusUnknown
 		}
 		if p, err := strconv.ParseFloat(m.Pricing.Completion, 64); err == nil {
 			completionPrice = p * 1_000_000
+		} else {
+			pricingStatus = types.CostStatusUnknown
+		}
+		if strings.Contains(m.ID, ":free") || (pricingStatus == types.CostStatusKnown && promptPrice == 0 && completionPrice == 0) {
+			pricingStatus = types.CostStatusFree
 		}
 		models = append(models, ModelDef{
 			Provider:        ProviderOpenRouter,
 			ID:              m.ID,
 			PromptPrice:     promptPrice,
 			CompletionPrice: completionPrice,
+			PricingStatus:   pricingStatus,
+			PricingCurrency: "USD",
 			ContextWindow:   m.ContextLength,
 		})
 	}
@@ -300,6 +319,16 @@ func findModelByID(opts findModelByIDOptions) *ModelDef {
 		}
 	}
 	return nil
+}
+
+func findModelsByID(models []ModelDef, id string) []ModelDef {
+	var matches []ModelDef
+	for _, model := range models {
+		if model.ID == id {
+			matches = append(matches, model)
+		}
+	}
+	return matches
 }
 
 // sortModelsByColOptions is the parameter bundle for sortModelsByCol.
@@ -538,20 +567,105 @@ type computeCostOptions struct {
 // cache read tokens are charged at 10% of the input price.
 // Returns 0 if the model is not found.
 func computeCost(opts computeCostOptions) float64 {
-	m := findModelByID(findModelByIDOptions{models: opts.models, id: opts.modelID})
-	if m == nil || (m.PromptPrice == 0 && m.CompletionPrice == 0) {
-		return 0
+	return computeCostResult(opts).Total
+}
+
+func computeCostResult(opts computeCostOptions) types.CostResult {
+	matches := findModelsByID(opts.models, opts.modelID)
+	if len(matches) == 0 {
+		return types.CostResult{
+			Status:            types.CostStatusUnknown,
+			Source:            types.CostSourceHistorical,
+			MissingDimensions: []string{"model:" + opts.modelID},
+		}
 	}
+	if len(matches) > 1 && !sameLegacyPricing(matches) {
+		return types.CostResult{
+			Status:            types.CostStatusUnknown,
+			Source:            types.CostSourceHistorical,
+			MissingDimensions: []string{"ambiguous_model_id:" + opts.modelID},
+		}
+	}
+	m := matches[0]
 	usage := opts.usage
-	inputCost := float64(usage.InputTokens) * m.PromptPrice / 1_000_000
-	outputCost := float64(usage.OutputTokens) * m.CompletionPrice / 1_000_000
-
-	// Anthropic cache read tokens are 10% of input price
-	if usage.CacheReadInputTokens > 0 && m.Provider == ProviderAnthropic {
-		inputCost += float64(usage.CacheReadInputTokens) * m.PromptPrice * 0.1 / 1_000_000
+	snapshot := pricingSnapshotForModel(m)
+	if snapshot.Status == "" {
+		snapshot.Status = inferCatalogPricingStatus(m.PromptPrice, m.CompletionPrice, m.Provider, m.ID)
 	}
+	result := types.ComputeCostFromPricingSnapshot(snapshot, types.NormalizedUsageFromUsage(usage))
+	if result.Source == "" {
+		result.Source = types.CostSourceHistorical
+	}
+	return result
+}
 
-	return inputCost + outputCost
+func sameLegacyPricing(matches []ModelDef) bool {
+	if len(matches) < 2 {
+		return true
+	}
+	first := comparablePricingSnapshotForModel(matches[0])
+	for _, match := range matches[1:] {
+		next := comparablePricingSnapshotForModel(match)
+		if !reflect.DeepEqual(first, next) {
+			return false
+		}
+	}
+	return true
+}
+
+func comparablePricingSnapshotForModel(m ModelDef) types.PricingSnapshot {
+	snapshot := pricingSnapshotForModel(m)
+	if len(snapshot.RatesPer1M) == 0 {
+		snapshot.RatesPer1M = nil
+	}
+	if len(snapshot.MissingDimensions) == 0 {
+		snapshot.MissingDimensions = nil
+	} else {
+		sort.Strings(snapshot.MissingDimensions)
+	}
+	return snapshot
+}
+
+func pricingSnapshotForModel(m ModelDef) types.PricingSnapshot {
+	rates := map[string]float64{}
+	for k, v := range m.PricingRatesPer1M {
+		rates[k] = v
+	}
+	if len(rates) == 0 {
+		rates["input_tokens"] = m.PromptPrice
+		rates["output_tokens"] = m.CompletionPrice
+		if m.Provider == ProviderAnthropic && m.PromptPrice > 0 {
+			rates["cache_read_input_tokens"] = m.PromptPrice * 0.1
+		}
+	}
+	status := m.PricingStatus
+	if status == "" {
+		status = inferCatalogPricingStatus(m.PromptPrice, m.CompletionPrice, m.Provider, m.ID)
+	}
+	if status == types.CostStatusUnknown {
+		rates = nil
+	}
+	currency := m.PricingCurrency
+	if currency == "" {
+		currency = "USD"
+	}
+	return types.PricingSnapshot{
+		Status:            status,
+		Currency:          currency,
+		Source:            types.CostSourceHistorical,
+		RatesPer1M:        rates,
+		MissingDimensions: append([]string(nil), m.MissingPriceDimensions...),
+	}
+}
+
+func inferCatalogPricingStatus(inputPrice, outputPrice float64, provider, modelID string) types.CostStatus {
+	if strings.Contains(modelID, ":free") || provider == ProviderOllama {
+		return types.CostStatusFree
+	}
+	if inputPrice == 0 && outputPrice == 0 {
+		return types.CostStatusUnknown
+	}
+	return types.CostStatusKnown
 }
 
 // formatCost formats a USD cost for display with enough precision to show
@@ -566,6 +680,19 @@ func formatCost(cost float64) string {
 		return fmt.Sprintf("$%.5f", cost)
 	default:
 		return fmt.Sprintf("$%.6f", cost)
+	}
+}
+
+func formatCostResult(result types.CostResult) string {
+	switch result.Status {
+	case types.CostStatusFree:
+		return "free"
+	case types.CostStatusUnknown:
+		return "cost unknown"
+	case types.CostStatusPartial:
+		return "partial " + formatCost(result.Total)
+	default:
+		return formatCost(result.Total)
 	}
 }
 

@@ -486,16 +486,16 @@ func (a *App) handleAgentEvent(event AgentEvent) {
 		if a.hasPendingBackgroundAgents() {
 			break
 		}
-			a.streamingText += event.Text
-			if idx := strings.LastIndex(a.streamingText, "\n"); idx >= 0 {
-				a.messages = append(a.messages, chatMessage{
-					kind:      msgAssistant,
-					content:   a.streamingText[:idx+1],
-					leadBlank: a.needsTextSep,
-				})
-				a.needsTextSep = false
-				a.streamingText = a.streamingText[idx+1:]
-			}
+		a.streamingText += event.Text
+		if idx := strings.LastIndex(a.streamingText, "\n"); idx >= 0 {
+			a.messages = append(a.messages, chatMessage{
+				kind:      msgAssistant,
+				content:   a.streamingText[:idx+1],
+				leadBlank: a.needsTextSep,
+			})
+			a.needsTextSep = false
+			a.streamingText = a.streamingText[idx+1:]
+		}
 		a.render()
 
 	case EventToolCallStart:
@@ -578,7 +578,12 @@ func (a *App) handleAgentEvent(event AgentEvent) {
 			a.traceUsageSeen = false
 		}
 		if event.Usage != nil {
-			cost := computeCost(computeCostOptions{models: a.models, modelID: event.Model, usage: *event.Usage})
+			fallbackCost := computeCostResult(computeCostOptions{models: a.models, modelID: event.Model, usage: *event.Usage})
+			costResult := fallbackCost
+			if event.CostResult != nil {
+				costResult = preferStructuredCost(*event.CostResult, fallbackCost)
+			}
+			cost := costResult.Total
 			a.sessionCostUSD += cost
 			a.lastInputTokens = event.Usage.InputTokens + event.Usage.CacheReadInputTokens + event.Usage.CacheCreationInputTokens
 			// Propagate cost to the main agent for system prompt budget display.
@@ -607,6 +612,8 @@ func (a *App) handleAgentEvent(event AgentEvent) {
 					nodeID:     event.NodeID,
 					usage:      traceUsageFromTypes(event.Usage),
 					costUSD:    cost,
+					cost:       &costResult,
+					metadata:   event.Metadata,
 					stopReason: event.StopReason,
 				})
 				a.traceCollector.FlushToFile(a.traceFilePath)
