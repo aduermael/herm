@@ -4,6 +4,8 @@
 
 **Readiness status:** Ready for execution after the contract decisions captured in this plan. The implementation should not start by preserving old langdag public APIs for external consumers; Herm is the only app consumer in this repo. Data compatibility for existing Herm configs, model catalog caches, and conversation DBs is still required.
 
+**Execution note:** This plan is expected to change both Herm and the `external/langdag` submodule. Langdag changes should be made on the counterpart submodule branch `aduermael/deployment-provider-api-model`, committed inside `external/langdag`, and then recorded in Herm by updating the parent repo gitlink. Phase commits in Herm should include the relevant Herm changes, plan updates, and the updated langdag submodule pointer.
+
 **Context:**
 
 Herm currently treats models as `Provider + Model ID`. `cmd/herm/models.go` builds `ModelDef` values from langdag's provider-keyed catalog, filters them by configured providers, and uses `computeCost()` to price usage by model ID. `cmd/herm/config.go` stores `active_model` and `exploration_model` as bare model IDs, so a saved model ID becomes ambiguous once multiple deployments can serve the same canonical model. `cmd/herm/agent.go` builds a langdag client for one direct provider based on configured keys.
