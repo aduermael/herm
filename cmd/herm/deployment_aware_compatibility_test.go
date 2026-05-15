@@ -13,35 +13,35 @@ import (
 	"langdag.com/langdag/types"
 )
 
-const phase0HermFixtureDir = "testdata/deployment_aware_phase0"
+const deploymentAwareCompatibilityFixtureDir = "testdata/deployment_aware_compatibility"
 
-func readPhase0HermFixture(t *testing.T, name string) []byte {
+func readDeploymentAwareCompatibilityFixture(t *testing.T, name string) []byte {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(file), phase0HermFixtureDir, name))
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(file), deploymentAwareCompatibilityFixtureDir, name))
 	if err != nil {
 		t.Fatalf("read fixture %s: %v", name, err)
 	}
 	return data
 }
 
-func writePhase0HermConfigFixture(t *testing.T, dir, fixture string) {
+func writeDeploymentAwareCompatibilityConfigFixture(t *testing.T, dir, fixture string) {
 	t.Helper()
 	cfgDir := filepath.Join(dir, configDir)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(cfgDir, configFile), readPhase0HermFixture(t, fixture), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, configFile), readDeploymentAwareCompatibilityFixture(t, fixture), 0o644); err != nil {
 		t.Fatalf("write config fixture: %v", err)
 	}
 }
 
-func TestPhase0OldGlobalConfigFixtureLoadsFlatFields(t *testing.T) {
+func TestOldGlobalConfigFixtureLoadsFlatFields(t *testing.T) {
 	dir := t.TempDir()
-	writePhase0HermConfigFixture(t, dir, "old_global_config.json")
+	writeDeploymentAwareCompatibilityConfigFixture(t, dir, "old_global_config.json")
 
 	cfg, err := loadConfigFrom(dir)
 	if err != nil {
@@ -77,11 +77,11 @@ func TestPhase0OldGlobalConfigFixtureLoadsFlatFields(t *testing.T) {
 	}
 }
 
-func TestPhase0OldProjectConfigFixtureMergesBareModelIDs(t *testing.T) {
+func TestOldProjectConfigFixtureMergesBareModelIDs(t *testing.T) {
 	globalDir := t.TempDir()
 	projectDir := t.TempDir()
-	writePhase0HermConfigFixture(t, globalDir, "old_global_config.json")
-	writePhase0HermConfigFixture(t, projectDir, "old_project_config.json")
+	writeDeploymentAwareCompatibilityConfigFixture(t, globalDir, "old_global_config.json")
+	writeDeploymentAwareCompatibilityConfigFixture(t, projectDir, "old_project_config.json")
 
 	global, err := loadConfigFrom(globalDir)
 	if err != nil {
@@ -109,7 +109,7 @@ func TestPhase0OldProjectConfigFixtureMergesBareModelIDs(t *testing.T) {
 	}
 }
 
-func TestPhase0SmartDefaultsRemainProviderKeyed(t *testing.T) {
+func TestSmartDefaultsRemainProviderKeyed(t *testing.T) {
 	models := []ModelDef{
 		{Provider: ProviderAnthropic, ID: "claude-sonnet-4-6"},
 		{Provider: ProviderAnthropic, ID: "claude-haiku-4-5"},
@@ -140,9 +140,9 @@ func TestPhase0SmartDefaultsRemainProviderKeyed(t *testing.T) {
 	}
 }
 
-func TestPhase0ModelPickerAvailabilityUsesConfiguredProviders(t *testing.T) {
+func TestModelPickerAvailabilityUsesConfiguredProviders(t *testing.T) {
 	dir := t.TempDir()
-	writePhase0HermConfigFixture(t, dir, "old_global_config.json")
+	writeDeploymentAwareCompatibilityConfigFixture(t, dir, "old_global_config.json")
 	cfg, err := loadConfigFrom(dir)
 	if err != nil {
 		t.Fatalf("loadConfigFrom: %v", err)
@@ -187,14 +187,14 @@ func TestPhase0ModelPickerAvailabilityUsesConfiguredProviders(t *testing.T) {
 	}
 }
 
-func TestPhase0OllamaOfflineFixtureTrustsSavedModels(t *testing.T) {
+func TestOllamaOfflineFixtureTrustsSavedModels(t *testing.T) {
 	var fixture struct {
 		BaseURL          string     `json:"base_url"`
 		ActiveModel      string     `json:"active_model"`
 		ExplorationModel string     `json:"exploration_model"`
 		LiveModels       []ModelDef `json:"live_models"`
 	}
-	if err := json.Unmarshal(readPhase0HermFixture(t, "ollama_offline_models.json"), &fixture); err != nil {
+	if err := json.Unmarshal(readDeploymentAwareCompatibilityFixture(t, "ollama_offline_models.json"), &fixture); err != nil {
 		t.Fatalf("unmarshal ollama fixture: %v", err)
 	}
 	if fixture.BaseURL == "" {
@@ -221,8 +221,8 @@ func TestPhase0OllamaOfflineFixtureTrustsSavedModels(t *testing.T) {
 	}
 }
 
-func TestPhase0OpenRouterFixtureParsesCurrentResponse(t *testing.T) {
-	body := readPhase0HermFixture(t, "openrouter_models_response.json")
+func TestOpenRouterFixtureParsesCurrentResponse(t *testing.T) {
+	body := readDeploymentAwareCompatibilityFixture(t, "openrouter_models_response.json")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/models" {
 			http.NotFound(w, r)
@@ -247,17 +247,17 @@ func TestPhase0OpenRouterFixtureParsesCurrentResponse(t *testing.T) {
 	}
 }
 
-type phase0NativeModelCases struct {
-	AmbiguousOldNativeModelIDs   []phase0NativeModelCase `json:"ambiguous_old_native_model_ids"`
-	UnambiguousOldNativeModelIDs []phase0NativeModelCase `json:"unambiguous_old_native_model_ids"`
+type compatibilityNativeModelCases struct {
+	AmbiguousOldNativeModelIDs   []compatibilityNativeModelCase `json:"ambiguous_old_native_model_ids"`
+	UnambiguousOldNativeModelIDs []compatibilityNativeModelCase `json:"unambiguous_old_native_model_ids"`
 }
 
-type phase0NativeModelCase struct {
-	ModelID   string                 `json:"model_id"`
-	Offerings []phase0NativeOffering `json:"offerings"`
+type compatibilityNativeModelCase struct {
+	ModelID   string                        `json:"model_id"`
+	Offerings []compatibilityNativeOffering `json:"offerings"`
 }
 
-type phase0NativeOffering struct {
+type compatibilityNativeOffering struct {
 	DeploymentID         string  `json:"deployment_id"`
 	Provider             string  `json:"provider"`
 	NativeModelID        string  `json:"native_model_id"`
@@ -265,7 +265,7 @@ type phase0NativeOffering struct {
 	CompletionPricePer1M float64 `json:"completion_price_per_1m"`
 }
 
-func phase0LegacyProviderForDeployment(provider string) string {
+func compatibilityLegacyProviderForDeployment(provider string) string {
 	switch provider {
 	case "anthropic", "anthropic-bedrock", "anthropic-vertex":
 		return ProviderAnthropic
@@ -284,14 +284,14 @@ func phase0LegacyProviderForDeployment(provider string) string {
 	}
 }
 
-func phase0OfferingsToModels(offerings []phase0NativeOffering) []ModelDef {
+func compatibilityOfferingsToModels(offerings []compatibilityNativeOffering) []ModelDef {
 	models := make([]ModelDef, 0, len(offerings))
 	for _, offering := range offerings {
 		if offering.DeploymentID == "" {
 			continue
 		}
 		models = append(models, ModelDef{
-			Provider:        phase0LegacyProviderForDeployment(offering.Provider),
+			Provider:        compatibilityLegacyProviderForDeployment(offering.Provider),
 			ID:              offering.NativeModelID,
 			PromptPrice:     offering.PromptPricePer1M,
 			CompletionPrice: offering.CompletionPricePer1M,
@@ -300,9 +300,9 @@ func phase0OfferingsToModels(offerings []phase0NativeOffering) []ModelDef {
 	return models
 }
 
-func TestPhase0OldNativeModelCostIsModelIDOnly(t *testing.T) {
-	var fixture phase0NativeModelCases
-	if err := json.Unmarshal(readPhase0HermFixture(t, "old_native_model_cases.json"), &fixture); err != nil {
+func TestOldNativeModelCostIsModelIDOnly(t *testing.T) {
+	var fixture compatibilityNativeModelCases
+	if err := json.Unmarshal(readDeploymentAwareCompatibilityFixture(t, "old_native_model_cases.json"), &fixture); err != nil {
 		t.Fatalf("unmarshal native model fixture: %v", err)
 	}
 	if len(fixture.AmbiguousOldNativeModelIDs) == 0 || len(fixture.UnambiguousOldNativeModelIDs) == 0 {
@@ -311,7 +311,7 @@ func TestPhase0OldNativeModelCostIsModelIDOnly(t *testing.T) {
 
 	usage := types.Usage{InputTokens: 1000, OutputTokens: 500}
 	for _, ambiguous := range fixture.AmbiguousOldNativeModelIDs {
-		models := phase0OfferingsToModels(ambiguous.Offerings)
+		models := compatibilityOfferingsToModels(ambiguous.Offerings)
 		if len(models) < 2 {
 			t.Fatalf("ambiguous case %q produced %d models, want at least 2", ambiguous.ModelID, len(models))
 		}
@@ -323,7 +323,7 @@ func TestPhase0OldNativeModelCostIsModelIDOnly(t *testing.T) {
 	}
 
 	for _, unambiguous := range fixture.UnambiguousOldNativeModelIDs {
-		models := phase0OfferingsToModels(unambiguous.Offerings)
+		models := compatibilityOfferingsToModels(unambiguous.Offerings)
 		if len(models) != 1 {
 			t.Fatalf("unambiguous case %q produced %d models, want 1", unambiguous.ModelID, len(models))
 		}
@@ -335,7 +335,7 @@ func TestPhase0OldNativeModelCostIsModelIDOnly(t *testing.T) {
 	}
 }
 
-func TestPhase0AzureMappingsFixtureIsFutureShapeOnly(t *testing.T) {
+func TestAzureMappingsFixtureIsFutureShapeOnly(t *testing.T) {
 	var raw struct {
 		ConfigVersion int    `json:"config_version"`
 		ActiveModel   string `json:"active_model"`
@@ -343,7 +343,7 @@ func TestPhase0AzureMappingsFixtureIsFutureShapeOnly(t *testing.T) {
 			ModelMappings map[string]string `json:"model_mappings"`
 		} `json:"deployments"`
 	}
-	data := readPhase0HermFixture(t, "azure_mappings_config_v2_draft.json")
+	data := readDeploymentAwareCompatibilityFixture(t, "azure_mappings_config_v2_draft.json")
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("unmarshal azure fixture: %v", err)
 	}

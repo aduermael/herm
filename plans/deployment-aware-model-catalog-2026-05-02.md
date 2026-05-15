@@ -234,22 +234,29 @@ Phase validation commands:
 
 - Herm: `go test ./...`
 - Langdag: `(cd external/langdag && go test ./...)`
-- Phase 0 targeted smoke: `go test ./cmd/herm -run 'TestPhase0' -count=1`
-- Phase 0 targeted langdag smoke: `(cd external/langdag && go test ./internal/models ./internal/conversation ./internal/storage/sqlite -run 'TestPhase0' -count=1)`
+- Compatibility targeted smoke: `go test ./cmd/herm -run 'Test(Old|Smart|ModelPicker|Ollama|OpenRouter|Azure)' -count=1`
+- Compatibility targeted langdag smoke: `(cd external/langdag && go test ./internal/models ./internal/conversation ./internal/storage/sqlite -run 'Test.*(Old|Compatibility|Legacy)' -count=1)`
 
 ## Phase 1: Define catalog, config, routing, pricing, and persistence contracts
-- [ ] 1a: Document the provider/API protocol/deployment/model/offering vocabulary in langdag docs and map current langdag provider variant names to the new concepts.
-- [ ] 1b: Define the exact `CatalogV1` Go structs and JSON schema, including stable ID rules, provenance, aliases, stale/freshness metadata, tri-state capability metadata, tri-state pricing metadata, and compatibility loading for old provider-keyed catalog caches.
-- [ ] 1c: Define provider, API protocol, deployment, canonical model, and offering examples for all confirmed v1 deployments: Anthropic direct/Bedrock/Vertex, OpenAI direct/Azure, Gemini direct/Vertex, Grok direct, OpenRouter, and Ollama local.
-- [ ] 1d: Define the deployment/adapter binding table: `deployment_id`, `provider_id`, `api_protocol_id`, adapter constructor, credential requirements, native model ID source, and whether native IDs are catalog-known, discovered, or user-configured.
-- [ ] 1e: Define Herm config v2 structs, global-only deployment credentials, deployment-scoped `model_mappings`, env var fallback behavior, old flat credential field loading, and project/global merge rules.
-- [ ] 1f: Define routing structs and validation rules for `routing.default`, `routing.providers`, and `routing.models`, including override precedence, no implicit cascade from overrides to default, weighted stages, retries, missing deployments, and unavailable deployments.
-- [ ] 1g: Define canonical-model migration rules for old `active_model` and `exploration_model` values: canonical match, unique native/offering match, ambiguous match diagnostic, and smart-default fallback.
-- [ ] 1h: Define usage and cost structs, including common usage fields, extensible usage dimensions, provider-returned exact cost metadata, structured cost result status, missing dimensions, free/zero pricing, partial pricing, unknown pricing, currency, and display rules.
-- [ ] 1i: Audit supported provider APIs to determine which can return exact per-response billable cost versus only usage counters; record source-of-truth behavior per deployment.
-- [ ] 1j: Define typed assistant-node metadata structs for model resolution, normalized usage, pricing snapshot, and optional provider-returned exact cost. Use the existing node `metadata` column first.
-- [ ] 1k: Define model picker semantics: one canonical-model row, provider owner column, exact/range/partial/unknown price display, hidden route diagnostics, and behavior with one configured deployment.
-- [ ] 1l: Add schema and resolver golden tests for catalog validation, catalog compile/indexing, old catalog compatibility, old config migration, routing selection, and cost-result status.
+- [x] 1a: Document the provider/API protocol/deployment/model/offering vocabulary in langdag docs and map current langdag provider variant names to the new concepts.
+- [x] 1b: Define the exact `CatalogV1` Go structs and JSON schema, including stable ID rules, provenance, aliases, stale/freshness metadata, tri-state capability metadata, tri-state pricing metadata, and compatibility loading for old provider-keyed catalog caches.
+- [x] 1c: Define provider, API protocol, deployment, canonical model, and offering examples for all confirmed v1 deployments: Anthropic direct/Bedrock/Vertex, OpenAI direct/Azure, Gemini direct/Vertex, Grok direct, OpenRouter, and Ollama local.
+- [x] 1d: Define the deployment/adapter binding table: `deployment_id`, `provider_id`, `api_protocol_id`, adapter constructor, credential requirements, native model ID source, and whether native IDs are catalog-known, discovered, or user-configured.
+- [x] 1e: Define Herm config v2 structs, global-only deployment credentials, deployment-scoped `model_mappings`, env var fallback behavior, old flat credential field loading, and project/global merge rules.
+- [x] 1f: Define routing structs and validation rules for `routing.default`, `routing.providers`, and `routing.models`, including override precedence, no implicit cascade from overrides to default, weighted stages, retries, missing deployments, and unavailable deployments.
+- [x] 1g: Define canonical-model migration rules for old `active_model` and `exploration_model` values: canonical match, unique native/offering match, ambiguous match diagnostic, and smart-default fallback.
+- [x] 1h: Define usage and cost structs, including common usage fields, extensible usage dimensions, provider-returned exact cost metadata, structured cost result status, missing dimensions, free/zero pricing, partial pricing, unknown pricing, currency, and display rules.
+- [x] 1i: Audit supported provider APIs to determine which can return exact per-response billable cost versus only usage counters; record source-of-truth behavior per deployment.
+- [x] 1j: Define typed assistant-node metadata structs for model resolution, normalized usage, pricing snapshot, and optional provider-returned exact cost. Use the existing node `metadata` column first.
+- [x] 1k: Define model picker semantics: one canonical-model row, provider owner column, exact/range/partial/unknown price display, hidden route diagnostics, and behavior with one configured deployment.
+- [x] 1l: Add schema and resolver golden tests for catalog validation, catalog compile/indexing, old catalog compatibility, old config migration, routing selection, and cost-result status.
+
+Phase validation commands:
+
+- Herm: `go test ./...`
+- Langdag: `(cd external/langdag && go test ./...)`
+- Catalog/config contract smoke: `go test ./cmd/herm -run 'Test(DeploymentAware|RoutingPolicy|StoredModelID|Old|Smart|ModelPicker|Ollama|OpenRouter|Azure|Catalog|Compute|Assistant)' -count=1`
+- Langdag contract smoke: `(cd external/langdag && go test ./internal/models ./types -run 'Test(Catalog|DeploymentBindings|NormalizedUsage|ComputeCost|AssistantNode)' -count=1)`
 
 ## Phase 2: Make langdag's catalog deployment-aware
 - [ ] 2a: Replace `external/langdag/internal/models/catalog.go` and exported catalog aliases in `external/langdag/langdag.go` with the deployment-aware catalog model, removing or replacing old provider-keyed public APIs as needed for Herm.
