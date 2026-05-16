@@ -366,18 +366,19 @@ Phase validation commands:
 - Herm full suite: `go test ./...`
 
 ## Phase 11: Make project active-model overrides authoritative
-- [ ] 11a: Fix project config load, migration, merge, and save paths so project `active_model` and `exploration_model` overrides are preserved and normalized to the matching canonical model when possible, including bare native IDs such as `claude-opus-4-6`.
-- [ ] 11b: Ensure project config cannot introduce deployment credentials, routing policy, or other global-only secret/deployment state, while still using effective global deployments to validate and display model availability.
-- [ ] 11c: Make startup model display, config header/context display, `startAgent`, compact/exploration paths, traces, and saved assistant metadata all use the same resolved effective project/global model IDs.
-- [ ] 11d: When a configured project model is unavailable or ambiguous, surface an explicit diagnostic that names the configured model and the fallback model instead of silently displaying or running another Anthropic default.
-- [ ] 11e: Add tests for project `claude-opus-4-6` resolving to `anthropic/claude-opus-4-6`, invalid project model fallback diagnostics, project save/load round trips, unknown-but-catalog-valid IDs, old bare IDs, global hint display, and no accidental global credential or routing overwrite.
-- [ ] 11f: Update docs or config help text to state that routing/deployments are global-only in v1 and project config may override active/exploration models plus non-secret behavior only.
+- [x] 11a: Fix project config load, migration, merge, and save paths so project `active_model` and `exploration_model` overrides are preserved and normalized to the matching canonical model when possible, including bare native IDs such as `claude-opus-4-6`.
+- [x] 11b: Ensure project config cannot introduce deployment credentials, routing policy, or other global-only secret/deployment state, while still using effective global deployments to validate and display model availability.
+- [x] 11c: Make startup model display, config header/context display, `startAgent`, compact/exploration paths, traces, and saved assistant metadata all use the same resolved effective project/global model IDs.
+- [x] 11d: When a configured project model is unavailable or ambiguous, surface an explicit diagnostic that names the configured model and the fallback model instead of silently displaying or running another Anthropic default.
+- [x] 11e: Add tests for project `claude-opus-4-6` resolving to `anthropic/claude-opus-4-6`, invalid project model fallback diagnostics, project save/load round trips, unknown-but-catalog-valid IDs, old bare IDs, global hint display, and no accidental global credential or routing overwrite.
+- [x] 11f: Update docs or config help text to state that routing/deployments are global-only in v1 and project config may override active/exploration models plus non-secret behavior only.
 
 Phase validation commands:
 
-- Herm project config smoke: `go test ./cmd/herm -run 'Test(ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAwareCompatibility|Phase8)' -count=1`
-- Herm full suite: `go test ./...`
-- Langdag regression check if model migration/catalog fixtures change: `(cd external/langdag && go test ./...)`
+- Herm project config smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAwareCompatibility|Phase8|Phase11)' -count=1` - pass
+- Herm routing/project regression smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRows|Routing|ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAware|Phase11)' -count=1` - pass
+- Herm full suite: `GOCACHE=/private/tmp/herm-gocache go test ./...` - pass
+- Langdag regression check: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass
 
 ---
 

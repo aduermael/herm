@@ -14,6 +14,12 @@ Existing non-secret global settings such as model sort preferences, turn limits,
 personality, history limits, debug mode, and thinking remain top-level config
 fields and are preserved during migration.
 
+Project model overrides may use canonical model IDs or old bare native model
+IDs. Herm normalizes deterministic bare IDs to canonical IDs when it loads or
+saves project config. Unknown or ambiguous project model values remain
+round-trippable; at runtime Herm reports the configured model and the fallback
+model instead of silently running a different default.
+
 Legacy flat credential fields remain readable migration input:
 
 - `anthropic_api_key` migrates to `deployments.anthropic-direct.api_key`.

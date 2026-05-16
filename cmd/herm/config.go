@@ -512,21 +512,50 @@ func preferredDefault(opts preferredDefaultOptions) string {
 	return ""
 }
 
+type configuredModelLookupStatus string
+
+const (
+	configuredModelUsable      configuredModelLookupStatus = "usable"
+	configuredModelUnavailable configuredModelLookupStatus = "unavailable"
+	configuredModelAmbiguous   configuredModelLookupStatus = "ambiguous"
+	configuredModelUnknown     configuredModelLookupStatus = "unknown"
+)
+
+type configuredModelResolution struct {
+	ConfiguredModelID string
+	ResolvedModelID   string
+	Fallback          bool
+	Status            configuredModelLookupStatus
+	Diagnostic        string
+}
+
 // resolveActiveModel returns a valid active model ID. If the current ActiveModel
 // is invalid or its provider has no key, it falls back to the first available
 // model, or empty string if no keys are configured.
 func (c Config) resolveActiveModel(models []ModelDef) string {
+	return c.resolveActiveModelResult(models).ResolvedModelID
+}
+
+func (c Config) resolveActiveModelResult(models []ModelDef) configuredModelResolution {
 	available := c.availableModels(models)
 	if c.ActiveModel != "" {
-		for _, candidate := range modelIDCandidates(c.ActiveModel, defaultCanonicalActiveModel) {
-			if m := findModelByID(findModelByIDOptions{models: available, id: candidate}); m != nil {
-				return m.ID
-			}
+		lookup := c.lookupConfiguredModelID(c.ActiveModel, defaultCanonicalActiveModel, available, models)
+		if lookup.Status == configuredModelUsable {
+			return lookup
 		}
-		if c.trustOfflineOllamaModel(c.ActiveModel, models) {
-			return ollamaCanonicalModelID(c.ActiveModel)
+		fallback := c.defaultActiveModel(available)
+		return configuredModelResolution{
+			ConfiguredModelID: c.ActiveModel,
+			ResolvedModelID:   fallback,
+			Fallback:          true,
+			Status:            lookup.Status,
+			Diagnostic:        configuredModelDiagnostic("active_model", c.ActiveModel, fallback, lookup.Status),
 		}
 	}
+	return configuredModelResolution{ResolvedModelID: c.defaultActiveModel(available)}
+}
+
+func (c Config) defaultActiveModel(available []ModelDef) string {
 	if len(available) == 0 {
 		return ""
 	}
@@ -569,24 +598,129 @@ func ollamaModelProvider(opts ollamaModelProviderOptions) string {
 // When unset, prefers a cheap/fast provider-specific default (e.g. haiku for
 // Anthropic) before falling back to resolveActiveModel.
 func (c Config) resolveExplorationModel(models []ModelDef) string {
+	return c.resolveExplorationModelResult(models).ResolvedModelID
+}
+
+func (c Config) resolveExplorationModelResult(models []ModelDef) configuredModelResolution {
 	if c.ExplorationModel == "" {
 		available := c.availableModels(models)
 		if id := preferredDefault(preferredDefaultOptions{models: available, provider: c.defaultLangdagProvider(), defaults: defaultExplorationModels}); id != "" {
-			return id
+			return configuredModelResolution{ResolvedModelID: id}
 		}
-		return c.resolveActiveModel(models)
+		return configuredModelResolution{ResolvedModelID: c.resolveActiveModel(models)}
 	}
 	available := c.availableModels(models)
-	for _, candidate := range modelIDCandidates(c.ExplorationModel, defaultCanonicalExplorationModel) {
-		if m := findModelByID(findModelByIDOptions{models: available, id: candidate}); m != nil {
-			return m.ID
-		}
-	}
-	if c.trustOfflineOllamaModel(c.ExplorationModel, models) {
-		return ollamaCanonicalModelID(c.ExplorationModel)
+	lookup := c.lookupConfiguredModelID(c.ExplorationModel, defaultCanonicalExplorationModel, available, models)
+	if lookup.Status == configuredModelUsable {
+		return lookup
 	}
 	// Configured but invalid — fall back.
-	return c.resolveActiveModel(models)
+	fallback := c.resolveActiveModel(models)
+	return configuredModelResolution{
+		ConfiguredModelID: c.ExplorationModel,
+		ResolvedModelID:   fallback,
+		Fallback:          true,
+		Status:            lookup.Status,
+		Diagnostic:        configuredModelDiagnostic("exploration_model", c.ExplorationModel, fallback, lookup.Status),
+	}
+}
+
+func (c Config) lookupConfiguredModelID(modelID, smartDefault string, available, models []ModelDef) configuredModelResolution {
+	candidates := modelIDCandidates(modelID, smartDefault)
+	availableMatches := uniqueModelsMatchingCandidates(available, candidates, true)
+	switch len(availableMatches) {
+	case 1:
+		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: availableMatches[0].ID, Status: configuredModelUsable}
+	case 0:
+	default:
+		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
+	}
+	allMatches := uniqueModelsMatchingCandidates(models, candidates, true)
+	switch len(allMatches) {
+	case 1:
+		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelUnavailable}
+	case 0:
+	default:
+		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
+	}
+
+	availableMatches = uniqueModelsMatchingCandidates(available, candidates, false)
+	switch len(availableMatches) {
+	case 1:
+		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: availableMatches[0].ID, Status: configuredModelUsable}
+	case 0:
+	default:
+		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
+	}
+
+	allMatches = uniqueModelsMatchingCandidates(models, candidates, false)
+	switch len(allMatches) {
+	case 1:
+		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelUnavailable}
+	case 0:
+	default:
+		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
+	}
+
+	if c.trustOfflineOllamaModel(modelID, models) {
+		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: ollamaCanonicalModelID(modelID), Status: configuredModelUsable}
+	}
+	return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelUnknown}
+}
+
+func uniqueModelsMatchingCandidates(models []ModelDef, candidates []string, exactOnly bool) []ModelDef {
+	seen := map[string]bool{}
+	var matches []ModelDef
+	for _, candidate := range candidates {
+		for _, model := range modelsMatchingCandidate(models, candidate, exactOnly) {
+			key := model.ID
+			if key == "" {
+				key = model.CanonicalID
+			}
+			if key == "" {
+				key = candidate
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			matches = append(matches, model)
+		}
+	}
+	return matches
+}
+
+func modelsMatchingCandidate(models []ModelDef, candidate string, exactOnly bool) []ModelDef {
+	var matches []ModelDef
+	for _, model := range models {
+		if model.ID == candidate || model.CanonicalID == candidate {
+			matches = append(matches, model)
+			continue
+		}
+		if exactOnly {
+			continue
+		}
+		if modelMatchesID(model, candidate) {
+			matches = append(matches, model)
+		}
+	}
+	return matches
+}
+
+func configuredModelDiagnostic(field, configured, fallback string, status configuredModelLookupStatus) string {
+	reason := "not available"
+	switch status {
+	case configuredModelAmbiguous:
+		reason = "ambiguous"
+	case configuredModelUnavailable:
+		reason = "unavailable"
+	case configuredModelUnknown:
+		reason = "unknown"
+	}
+	if fallback == "" {
+		return fmt.Sprintf("project %s %q is %s; no fallback model is available", field, configured, reason)
+	}
+	return fmt.Sprintf("project %s %q is %s; using fallback model %q", field, configured, reason, fallback)
 }
 
 func (c Config) trustOfflineOllamaModel(modelID string, models []ModelDef) bool {
@@ -628,7 +762,7 @@ func modelIDCandidates(modelID, smartDefault string) []string {
 	if !looksCanonicalModelID(modelID) {
 		migrated := migrateStoredModelIDToCanonical(modelID, defaultModelIDMigrationOfferings(), smartDefault)
 		switch migrated.Status {
-		case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative, ModelIDMigrationAmbiguousNative:
+		case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative:
 			add(migrated.CanonicalModelID)
 		}
 	}
@@ -719,6 +853,64 @@ func configPath() string {
 	return filepath.Join(home, configDir, configFile)
 }
 
+func projectConfigPath(repoRoot string) string {
+	return filepath.Join(repoRoot, configDir, configFile)
+}
+
+func projectConfigScopeAvailable(repoRoot string) bool {
+	if repoRoot == "" {
+		return false
+	}
+	return !sameFilesystemPath(projectConfigPath(repoRoot), configPath())
+}
+
+func sameFilesystemPath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	a = bestEffortRealPath(a)
+	b = bestEffortRealPath(b)
+	if a == b {
+		return true
+	}
+	statA, errA := os.Stat(a)
+	statB, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(statA, statB)
+}
+
+func bestEffortRealPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	path = filepath.Clean(path)
+	if eval, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(eval)
+	}
+
+	current := path
+	var suffix []string
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+		if eval, err := filepath.EvalSymlinks(current); err == nil {
+			realPath := filepath.Clean(eval)
+			for i := len(suffix) - 1; i >= 0; i-- {
+				realPath = filepath.Join(realPath, suffix[i])
+			}
+			return filepath.Clean(realPath)
+		}
+	}
+
+	return path
+}
+
 // ensureConfigDir creates the ~/.herm/ directory if it doesn't exist.
 func ensureConfigDir() error {
 	home, err := os.UserHomeDir()
@@ -795,8 +987,8 @@ func normalizeLoadedConfig(cfg Config) Config {
 	cfg.Deployments = deploymentConfigsForStorage(cfg)
 	cfg.Routing = cloneRoutingPolicy(cfg.Routing)
 	cfg = backfillLegacyConfigFieldsFromDeployments(cfg)
-	cfg.ActiveModel = migrateLoadedModelID(cfg, cfg.ActiveModel, defaultCanonicalActiveModel)
-	cfg.ExplorationModel = migrateLoadedModelID(cfg, cfg.ExplorationModel, defaultCanonicalExplorationModel)
+	cfg.ActiveModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ActiveModel, defaultCanonicalActiveModel, defaultModelIDMigrationOfferings())
+	cfg.ExplorationModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ExplorationModel, defaultCanonicalExplorationModel, defaultModelIDMigrationOfferings())
 	return cfg
 }
 
@@ -812,10 +1004,18 @@ func backfillLegacyConfigFieldsFromDeployments(cfg Config) Config {
 }
 
 func migrateLoadedModelID(cfg Config, modelID, smartDefault string) string {
+	return migrateLoadedModelIDWithOfferings(cfg, modelID, smartDefault, defaultModelIDMigrationOfferings())
+}
+
+func migrateLoadedModelIDWithOfferings(cfg Config, modelID, smartDefault string, offerings []ModelIDMigrationOffering) string {
 	if modelID == "" || looksCanonicalModelID(modelID) {
+		migrated := migrateStoredModelIDToCanonical(modelID, offerings, smartDefault)
+		if migrated.Status == ModelIDMigrationUniqueNative {
+			return migrated.CanonicalModelID
+		}
 		return modelID
 	}
-	migrated := migrateStoredModelIDToCanonical(modelID, defaultModelIDMigrationOfferings(), smartDefault)
+	migrated := migrateStoredModelIDToCanonical(modelID, offerings, smartDefault)
 	switch migrated.Status {
 	case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative, ModelIDMigrationAmbiguousNative:
 		return migrated.CanonicalModelID
@@ -825,6 +1025,20 @@ func migrateLoadedModelID(cfg Config, modelID, smartDefault string) string {
 		}
 		return modelID
 	}
+}
+
+func normalizeConfigForModels(cfg Config, models []ModelDef) Config {
+	offerings := defaultModelIDMigrationOfferings()
+	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
+	cfg.ActiveModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ActiveModel, defaultCanonicalActiveModel, offerings)
+	cfg.ExplorationModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ExplorationModel, defaultCanonicalExplorationModel, offerings)
+	return cfg
+}
+
+func normalizeConfigModelIDForModels(cfg Config, modelID, smartDefault string, models []ModelDef) string {
+	offerings := defaultModelIDMigrationOfferings()
+	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
+	return migrateLoadedModelIDWithOfferings(cfg, modelID, smartDefault, offerings)
 }
 
 // saveConfig writes config to ~/.herm/config.json.
@@ -868,44 +1082,108 @@ func saveConfigTo(opts saveConfigToOptions) error {
 // loadProjectConfig reads project-level overrides from <repoRoot>/.herm/config.json.
 // Returns an empty ProjectConfig if the file doesn't exist or is malformed.
 func loadProjectConfig(repoRoot string) ProjectConfig {
-	if repoRoot == "" {
+	pc, ok := readProjectConfig(repoRoot)
+	if !ok {
 		return ProjectConfig{}
 	}
-	data, err := os.ReadFile(filepath.Join(repoRoot, configDir, configFile))
-	if err != nil {
+	return normalizeProjectConfig(pc)
+}
+
+func loadProjectConfigForModels(repoRoot string, models []ModelDef) ProjectConfig {
+	pc, ok := readProjectConfig(repoRoot)
+	if !ok {
 		return ProjectConfig{}
 	}
-	var pc ProjectConfig
-	if err := json.Unmarshal(data, &pc); err != nil {
+	return normalizeProjectConfigForModels(pc, models)
+}
+
+func loadRawProjectConfig(repoRoot string) ProjectConfig {
+	pc, ok := readProjectConfig(repoRoot)
+	if !ok {
 		return ProjectConfig{}
 	}
-	pc.ActiveModel = migrateProjectModelID(pc.ActiveModel, defaultCanonicalActiveModel)
-	pc.ExplorationModel = migrateProjectModelID(pc.ExplorationModel, defaultCanonicalExplorationModel)
 	return pc
 }
 
+func readProjectConfig(repoRoot string) (ProjectConfig, bool) {
+	if !projectConfigScopeAvailable(repoRoot) {
+		return ProjectConfig{}, false
+	}
+	data, err := os.ReadFile(projectConfigPath(repoRoot))
+	if err != nil {
+		return ProjectConfig{}, false
+	}
+	var pc ProjectConfig
+	if err := json.Unmarshal(data, &pc); err != nil {
+		return ProjectConfig{}, false
+	}
+	return pc, true
+}
+
 func migrateProjectModelID(modelID, smartDefault string) string {
-	return migrateLoadedModelID(Config{}, modelID, smartDefault)
+	return migrateProjectModelIDWithOfferings(modelID, smartDefault, defaultModelIDMigrationOfferings())
+}
+
+func migrateProjectModelIDWithOfferings(modelID, smartDefault string, offerings []ModelIDMigrationOffering) string {
+	if modelID == "" {
+		return modelID
+	}
+	migrated := migrateStoredModelIDToCanonical(modelID, offerings, smartDefault)
+	switch migrated.Status {
+	case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative:
+		return migrated.CanonicalModelID
+	default:
+		return modelID
+	}
+}
+
+func normalizeProjectConfig(pc ProjectConfig) ProjectConfig {
+	return normalizeProjectConfigWithOfferings(pc, defaultModelIDMigrationOfferings())
+}
+
+func normalizeProjectConfigForModels(pc ProjectConfig, models []ModelDef) ProjectConfig {
+	offerings := defaultModelIDMigrationOfferings()
+	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
+	return normalizeProjectConfigWithOfferings(pc, offerings)
+}
+
+func normalizeProjectModelIDForModels(modelID, smartDefault string, models []ModelDef) string {
+	offerings := defaultModelIDMigrationOfferings()
+	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
+	return migrateProjectModelIDWithOfferings(modelID, smartDefault, offerings)
+}
+
+func normalizeProjectConfigWithOfferings(pc ProjectConfig, offerings []ModelIDMigrationOffering) ProjectConfig {
+	pc.ActiveModel = migrateProjectModelIDWithOfferings(pc.ActiveModel, defaultCanonicalActiveModel, offerings)
+	pc.ExplorationModel = migrateProjectModelIDWithOfferings(pc.ExplorationModel, defaultCanonicalExplorationModel, offerings)
+	return pc
 }
 
 // saveProjectConfigOptions is the parameter bundle for saveProjectConfig.
 type saveProjectConfigOptions struct {
 	repoRoot string
 	pc       ProjectConfig
+	models   []ModelDef
 }
 
 // saveProjectConfig writes project-level overrides to <repoRoot>/.herm/config.json.
 func saveProjectConfig(opts saveProjectConfigOptions) error {
 	repoRoot, pc := opts.repoRoot, opts.pc
+	if !projectConfigScopeAvailable(repoRoot) {
+		return fmt.Errorf("project config path is unavailable or collides with global config")
+	}
 	cfgDir := filepath.Join(repoRoot, configDir)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		return fmt.Errorf("creating project config dir: %w", err)
 	}
-	pc.ActiveModel = migrateProjectModelID(pc.ActiveModel, defaultCanonicalActiveModel)
-	pc.ExplorationModel = migrateProjectModelID(pc.ExplorationModel, defaultCanonicalExplorationModel)
+	if opts.models != nil {
+		pc = normalizeProjectConfigForModels(pc, opts.models)
+	} else {
+		pc = normalizeProjectConfig(pc)
+	}
 	data, err := json.MarshalIndent(pc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling project config: %w", err)
 	}
-	return os.WriteFile(filepath.Join(cfgDir, configFile), data, 0o644)
+	return os.WriteFile(projectConfigPath(repoRoot), data, 0o644)
 }

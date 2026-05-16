@@ -96,63 +96,66 @@ type App struct {
 	readByte func() (byte, bool)
 
 	// Chat state
-	sessionID             string
-	messages              []chatMessage
-	globalConfig          Config        // loaded from ~/.herm/config.json
-	projectConfig         ProjectConfig // loaded from <repo>/.herm/config.json
-	config                Config        // merged effective config (globalConfig + projectConfig)
-	repoRoot              string        // git repo root, for project config path
-	pasteCount            int
-	pasteStore            map[int]string
-	attachmentCount       int
-	attachments           map[int]Attachment
-	mode                  appMode
-	models                []ModelDef
-	sweScores             map[string]float64
-	sweLoaded             bool
-	container             *ContainerClient
-	worktreePath          string
-	containerReady        bool
-	containerErr          error
-	containerStatusText   string
-	configReady           bool // true after workspace/project config has been merged
-	shownInitialModel     bool // true after the startup model line has been displayed
-	ollamaFetched         bool // true after the initial Ollama model fetch completes (or was skipped)
-	openRouterFetched     bool // true after initial OpenRouter fetch
-	status                statusInfo
-	projectSnap           *projectSnapshot
-	modelCatalog          *langdag.ModelCatalog
-	langdagClient         *langdag.Client
-	langdagProvider       string
-	agent                 *Agent
-	agentNodeID           string
-	agentRunning          bool
-	awaitingApproval      bool
-	approvalDesc          string
-	approvalSummary       string
-	autocompleteIdx       int
-	streamingText         string
-	pendingToolCall       string
-	needsTextSep          bool
-	sessionCostUSD        float64
-	lastInputTokens       int                         // input tokens from most recent API call (context usage)
-	sessionInputTokens    int                         // cumulative input tokens this session (all agents)
-	sessionOutputTokens   int                         // cumulative output tokens this session (all agents)
-	sessionCacheRead      int                         // cumulative cache read tokens this session
-	sessionLLMCalls       int                         // number of LLM API calls this session (all agents)
-	mainAgentInputTokens  int                         // input tokens from main agent only
-	mainAgentOutputTokens int                         // output tokens from main agent only
-	mainAgentLLMCalls     int                         // LLM calls from main agent only
-	mainAgentToolCount    int                         // tool results from main agent only
-	sessionToolResults    int                         // count of tool results this session
-	sessionToolBytes      int                         // cumulative tool result bytes this session
-	sessionToolStats      map[string][2]int           // tool name → [count, bytes]
-	lastModelID           string                      // last model used, for detecting changes
-	subAgents             map[string]*subAgentDisplay // per-agent display state keyed by AgentID
-	subAgentGroupInserted bool                        // true after a msgSubAgentGroup marker has been added to messages
-	suppressedToolIDs     map[string]bool             // tool IDs whose UI messages should be hidden
-	containerImage        string                      // runtime container image name (not persisted)
-	updateAvailable       string                      // version tag if update is available
+	sessionID               string
+	messages                []chatMessage
+	globalConfig            Config        // loaded from ~/.herm/config.json
+	projectConfig           ProjectConfig // loaded from <repo>/.herm/config.json
+	config                  Config        // merged effective config (globalConfig + projectConfig)
+	repoRoot                string        // git repo root, for project config path
+	pasteCount              int
+	pasteStore              map[int]string
+	attachmentCount         int
+	attachments             map[int]Attachment
+	mode                    appMode
+	models                  []ModelDef
+	sweScores               map[string]float64
+	sweLoaded               bool
+	container               *ContainerClient
+	worktreePath            string
+	containerReady          bool
+	containerErr            error
+	containerStatusText     string
+	configReady             bool // true after workspace/project config has been merged
+	shownInitialModel       bool // true after the startup model line has been displayed
+	lastModelDiagnostics    string
+	ollamaFetched           bool // true after the initial Ollama model fetch completes (or was skipped)
+	openRouterFetched       bool // true after initial OpenRouter fetch
+	status                  statusInfo
+	projectSnap             *projectSnapshot
+	modelCatalog            *langdag.ModelCatalog
+	langdagClient           *langdag.Client
+	langdagProvider         string
+	agent                   *Agent
+	agentNodeID             string
+	agentRunning            bool
+	awaitingApproval        bool
+	approvalDesc            string
+	approvalSummary         string
+	autocompleteIdx         int
+	streamingText           string
+	pendingToolCall         string
+	needsTextSep            bool
+	sessionCostUSD          float64
+	lastInputTokens         int                         // input tokens from most recent API call (context usage)
+	sessionInputTokens      int                         // cumulative input tokens this session (all agents)
+	sessionOutputTokens     int                         // cumulative output tokens this session (all agents)
+	sessionCacheRead        int                         // cumulative cache read tokens this session
+	sessionLLMCalls         int                         // number of LLM API calls this session (all agents)
+	mainAgentInputTokens    int                         // input tokens from main agent only
+	mainAgentOutputTokens   int                         // output tokens from main agent only
+	mainAgentLLMCalls       int                         // LLM calls from main agent only
+	mainAgentToolCount      int                         // tool results from main agent only
+	sessionToolResults      int                         // count of tool results this session
+	sessionToolBytes        int                         // cumulative tool result bytes this session
+	sessionToolStats        map[string][2]int           // tool name → [count, bytes]
+	lastModelID             string                      // last model used, for detecting changes
+	lastModelDisplayLine    string                      // last full model display line, including exploration model
+	lastOllamaOfflineNotice string                      // last Ollama offline warning line, for dedupe
+	subAgents               map[string]*subAgentDisplay // per-agent display state keyed by AgentID
+	subAgentGroupInserted   bool                        // true after a msgSubAgentGroup marker has been added to messages
+	suppressedToolIDs       map[string]bool             // tool IDs whose UI messages should be hidden
+	containerImage          string                      // runtime container image name (not persisted)
+	updateAvailable         string                      // version tag if update is available
 
 	// Tool timer (live elapsed display)
 	toolStartTime time.Time
@@ -747,7 +750,11 @@ func (a *App) handleResult(result any) {
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
+			alreadyShown := a.shownInitialModel
 			a.maybeShowInitialModels()
+			if alreadyShown {
+				a.refreshResolvedModelDisplay()
+			}
 			// Fetch Ollama + OpenRouter models async
 			if a.config.ollamaBaseURL() != "" && !a.ollamaFetched {
 				go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.ollamaBaseURL()) }()
@@ -774,18 +781,8 @@ func (a *App) handleResult(result any) {
 		}
 		alreadyShown := a.shownInitialModel
 		a.maybeShowInitialModels()
-		// Show offline warning if model was already displayed
 		if alreadyShown {
-			activeID := a.config.resolveActiveModel(a.models)
-			if a.config.ollamaBaseURL() != "" && a.isOllamaOffline(activeID) {
-				msg := fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' to continue", a.config.ollamaBaseURL())
-				providers := a.config.configuredProviders()
-				delete(providers, ProviderOllama)
-				if len(providers) > 0 {
-					msg = fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' or switch to another provider (/config)", a.config.ollamaBaseURL())
-				}
-				a.messages = append(a.messages, chatMessage{kind: msgInfo, content: msg})
-			}
+			a.refreshResolvedModelDisplay()
 		}
 	case openRouterModelsMsg:
 		a.openRouterFetched = true
@@ -803,7 +800,11 @@ func (a *App) handleResult(result any) {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
 		}
+		alreadyShown := a.shownInitialModel
 		a.maybeShowInitialModels()
+		if alreadyShown {
+			a.refreshResolvedModelDisplay()
+		}
 	case openPickerMsg:
 		if a.cfgActive {
 			a.doOpenConfigModelPicker(doOpenConfigModelPickerOptions{models: a.models, getCurrentID: msg.getCurrentID, onSelect: msg.onSelect})
@@ -834,10 +835,11 @@ func (a *App) handleResult(result any) {
 	case workspaceMsg:
 		a.worktreePath = msg.worktreePath
 		a.repoRoot = msg.repoRoot
-		if a.repoRoot == "" {
-			a.repoRoot = msg.worktreePath
+		if a.models != nil {
+			a.projectConfig = loadProjectConfigForModels(a.projectConfigRoot(), a.models)
+		} else {
+			a.projectConfig = loadRawProjectConfig(a.projectConfigRoot())
 		}
-		a.projectConfig = loadProjectConfig(a.repoRoot)
 		a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
 		a.configReady = true
 		a.initAppDebugLog()

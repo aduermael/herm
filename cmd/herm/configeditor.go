@@ -276,10 +276,19 @@ func (a *App) enterConfigMode() {
 	a.renderInput()
 }
 
+func (a *App) projectConfigRoot() string {
+	if projectConfigScopeAvailable(a.repoRoot) {
+		return a.repoRoot
+	}
+	return ""
+}
+
 func (a *App) exitConfigMode(save bool) {
 	if save {
-		a.globalConfig = a.cfgDraft
-		a.projectConfig = a.cfgProjectDraft
+		a.globalConfig = normalizeConfigForModels(a.cfgDraft, a.models)
+		a.cfgDraft = a.globalConfig
+		a.projectConfig = normalizeProjectConfigForModels(a.cfgProjectDraft, a.models)
+		a.cfgProjectDraft = a.projectConfig
 		a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
 		// Re-initialize debug log if debug mode changed
 		if a.debugActive() && a.traceCollector == nil {
@@ -297,8 +306,8 @@ func (a *App) exitConfigMode(save bool) {
 			a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Error saving global config: %v", err)})
 			saveErr = true
 		}
-		if a.repoRoot != "" {
-			if err := saveProjectConfig(saveProjectConfigOptions{repoRoot: a.repoRoot, pc: a.projectConfig}); err != nil {
+		if projectRoot := a.projectConfigRoot(); projectRoot != "" {
+			if err := saveProjectConfig(saveProjectConfigOptions{repoRoot: projectRoot, pc: a.projectConfig, models: a.models}); err != nil {
 				a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Error saving project config: %v", err)})
 				saveErr = true
 			}
@@ -314,9 +323,9 @@ func (a *App) exitConfigMode(save bool) {
 			a.openRouterFetched = false // allow re-fetch with new key
 			go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.openRouterAPIKey()) }()
 		}
-		// Show updated model if it changed
+		// Show updated model resolution and project diagnostics.
 		if a.models != nil {
-			a.showModelChange(a.config.resolveActiveModel(a.models))
+			a.refreshResolvedModelDisplay()
 		}
 		// Reinitialize langdag client with updated config
 		go func() {
@@ -502,10 +511,14 @@ func (a *App) resolvedExplorationDisplay(c Config) string {
 
 func (a *App) settingsTabFields() []cfgField {
 	return []cfgField{
-		{label: "Active Model", get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) { c.ActiveModel = v }, picker: func(a *App) {
+		{label: "Active Model", get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) {
+			c.ActiveModel = normalizeConfigModelIDForModels(*c, v, defaultCanonicalActiveModel, a.models)
+		}, picker: func(a *App) {
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) { a.cfgDraft.ActiveModel = id }})
 		}},
-		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) { c.ExplorationModel = v }, picker: func(a *App) {
+		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) {
+			c.ExplorationModel = normalizeConfigModelIDForModels(*c, v, defaultCanonicalExplorationModel, a.models)
+		}, picker: func(a *App) {
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) { a.cfgDraft.ExplorationModel = id }})
 		}},
 		{label: "Paste Collapse", get: func(c Config) string { return strconv.Itoa(c.PasteCollapseMinChars) }, set: func(c *Config, v string) {
@@ -669,18 +682,22 @@ func eligibleDeploymentIDsForConfigModels(cfg Config, models []ModelDef) map[str
 func (a *App) projectTabFields() []cfgField {
 	return []cfgField{
 		{
-			label:      "Active Model",
-			get:        func(_ Config) string { return a.cfgProjectDraft.ActiveModel },
-			set:        func(_ *Config, v string) { a.cfgProjectDraft.ActiveModel = v },
+			label: "Active Model",
+			get:   func(_ Config) string { return a.cfgProjectDraft.ActiveModel },
+			set: func(_ *Config, v string) {
+				a.cfgProjectDraft.ActiveModel = normalizeProjectModelIDForModels(v, defaultCanonicalActiveModel, a.models)
+			},
 			globalHint: func(c Config) string { return c.ActiveModel },
 			picker: func(a *App) {
 				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ActiveModel }, onSelect: func(id string) { a.cfgProjectDraft.ActiveModel = id }})
 			},
 		},
 		{
-			label:      "Exploration Model",
-			get:        func(_ Config) string { return a.cfgProjectDraft.ExplorationModel },
-			set:        func(_ *Config, v string) { a.cfgProjectDraft.ExplorationModel = v },
+			label: "Exploration Model",
+			get:   func(_ Config) string { return a.cfgProjectDraft.ExplorationModel },
+			set: func(_ *Config, v string) {
+				a.cfgProjectDraft.ExplorationModel = normalizeProjectModelIDForModels(v, defaultCanonicalExplorationModel, a.models)
+			},
 			globalHint: func(c Config) string { return a.resolvedExplorationDisplay(c) },
 			picker: func(a *App) {
 				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) { a.cfgProjectDraft.ExplorationModel = id }})
@@ -774,7 +791,7 @@ func (a *App) buildConfigRows() []string {
 		}
 	}
 	// No-project message for Project tab
-	if a.cfgTab == 3 && a.repoRoot == "" {
+	if a.cfgTab == 3 && a.projectConfigRoot() == "" {
 		rows = append(rows, "\033[2mNo project detected (not in a git repository)\033[0m")
 		rows = append(rows, "\033[2m←/→=tab  Esc=close  Ctrl+S=save & close\033[0m")
 		return rows
@@ -991,7 +1008,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		}
 
 	case ch == '\r': // Enter - toggle, picker, or start editing current field
-		if a.cfgTab == 3 && a.repoRoot == "" {
+		if a.cfgTab == 3 && a.projectConfigRoot() == "" {
 			break // Project tab non-editable without a repo
 		}
 		fields := a.cfgCurrentFields()
@@ -1011,7 +1028,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		a.renderInput()
 
 	case ch == 127 || ch == 0x08: // Backspace - clear current project field (unset → fall back to global)
-		if a.cfgTab == 3 && a.repoRoot != "" {
+		if a.cfgTab == 3 && a.projectConfigRoot() != "" {
 			fields := a.cfgCurrentFields()
 			if len(fields) > 0 && a.cfgCursor < len(fields) {
 				f := fields[a.cfgCursor]

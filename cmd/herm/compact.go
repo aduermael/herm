@@ -130,6 +130,8 @@ func compactConversation(ctx context.Context, opts compactConversationOptions) (
 			TokensCacheCreation: n.TokensCacheCreation,
 			TokensReasoning:     n.TokensReasoning,
 			LatencyMs:           n.LatencyMs,
+			StopReason:          n.StopReason,
+			Metadata:            append(json.RawMessage(nil), n.Metadata...),
 			CreatedAt:           time.Now(),
 		}
 		if err := storage.CreateNode(ctx, copied); err != nil {

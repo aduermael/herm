@@ -360,7 +360,7 @@ func cloneBoolPtr(value *bool) *bool {
 }
 
 func defaultModelIDMigrationOfferings() []ModelIDMigrationOffering {
-	return []ModelIDMigrationOffering{
+	offerings := []ModelIDMigrationOffering{
 		{CanonicalModelID: "anthropic/claude-sonnet-4-20250514", DeploymentID: "anthropic-direct", NativeModelID: "claude-sonnet-4-20250514"},
 		{CanonicalModelID: "anthropic/claude-sonnet-4-6", DeploymentID: "anthropic-direct", NativeModelID: "claude-sonnet-4-6"},
 		{CanonicalModelID: "anthropic/claude-haiku-4-5", DeploymentID: "anthropic-direct", NativeModelID: "claude-haiku-4-5"},
@@ -372,6 +372,8 @@ func defaultModelIDMigrationOfferings() []ModelIDMigrationOffering {
 		{CanonicalModelID: "xai/grok-4-1-fast-non-reasoning", DeploymentID: "grok-direct", NativeModelID: "grok-4-1-fast-non-reasoning"},
 		{CanonicalModelID: "z-ai/glm-4.5-air:free", DeploymentID: "openrouter", NativeModelID: "z-ai/glm-4.5-air:free"},
 	}
+	offerings = append(offerings, embeddedCatalogModelIDMigrationOfferings()...)
+	return uniqueModelIDMigrationOfferings(offerings)
 }
 
 func (r RoutingPolicy) routeFor(canonicalModelID, providerID string) ([]RoutingStage, RouteSource, bool) {
@@ -549,9 +551,6 @@ type ModelIDMigrationResult struct {
 
 func migrateStoredModelIDToCanonical(savedModelID string, offerings []ModelIDMigrationOffering, smartDefault string) ModelIDMigrationResult {
 	if savedModelID != "" {
-		if looksCanonicalModelID(savedModelID) {
-			return ModelIDMigrationResult{CanonicalModelID: savedModelID, Status: ModelIDMigrationCanonicalMatch}
-		}
 		canonicalSeen := map[string]bool{}
 		for _, offering := range offerings {
 			canonicalSeen[offering.CanonicalModelID] = true
@@ -571,7 +570,10 @@ func migrateStoredModelIDToCanonical(savedModelID string, offerings []ModelIDMig
 				break
 			}
 		}
-		if uniqueCanonical != "" {
+		if canonicalSeen[savedModelID] {
+			return ModelIDMigrationResult{CanonicalModelID: savedModelID, Status: ModelIDMigrationCanonicalMatch}
+		}
+		if uniqueCanonical != "" && uniqueCanonical != savedModelID {
 			return ModelIDMigrationResult{CanonicalModelID: uniqueCanonical, Status: ModelIDMigrationUniqueNative}
 		}
 		if len(matches) > 1 {
@@ -581,8 +583,11 @@ func migrateStoredModelIDToCanonical(savedModelID string, offerings []ModelIDMig
 				Diagnostic:       "saved native model ID matches multiple canonical models",
 			}
 		}
-		if canonicalSeen[savedModelID] {
+		if looksCanonicalModelID(savedModelID) {
 			return ModelIDMigrationResult{CanonicalModelID: savedModelID, Status: ModelIDMigrationCanonicalMatch}
+		}
+		if uniqueCanonical != "" {
+			return ModelIDMigrationResult{CanonicalModelID: uniqueCanonical, Status: ModelIDMigrationUniqueNative}
 		}
 	}
 	return ModelIDMigrationResult{

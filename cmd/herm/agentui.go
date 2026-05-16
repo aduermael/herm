@@ -63,7 +63,7 @@ func formatToolDefinitions(opts formatToolDefinitionsOptions) string {
 
 // showModelChange displays an info message when the active model changes.
 func (a *App) showModelChange(modelID string) {
-	if modelID == "" || modelID == a.lastModelID {
+	if modelID == "" {
 		return
 	}
 	explorationID := a.config.resolveExplorationModel(a.models)
@@ -75,17 +75,79 @@ func (a *App) showModelChange(modelID string) {
 	if explorationID != "" && explorationID != modelID {
 		line += "  exploration: " + explorationID
 	}
+	if line == a.lastModelDisplayLine {
+		return
+	}
 	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: line})
 	if offline {
-		msg := fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' to continue", a.config.ollamaBaseURL())
-		providers := a.config.configuredProviders()
-		delete(providers, ProviderOllama)
-		if len(providers) > 0 {
-			msg = fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' or switch to another provider (/config)", a.config.ollamaBaseURL())
-		}
-		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: msg})
+		a.showOllamaOfflineNotice()
+	} else {
+		a.lastOllamaOfflineNotice = ""
 	}
 	a.lastModelID = modelID
+	a.lastModelDisplayLine = line
+}
+
+func (a *App) showOllamaOfflineNotice() {
+	msg := fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' to continue", a.config.ollamaBaseURL())
+	providers := a.config.configuredProviders()
+	delete(providers, ProviderOllama)
+	if len(providers) > 0 {
+		msg = fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' or switch to another provider (/config)", a.config.ollamaBaseURL())
+	}
+	if msg == a.lastOllamaOfflineNotice {
+		return
+	}
+	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: msg})
+	a.lastOllamaOfflineNotice = msg
+}
+
+func (a *App) normalizeProjectConfigWithCurrentModels() {
+	if a.models == nil {
+		return
+	}
+	normalized := normalizeProjectConfigForModels(a.projectConfig, a.models)
+	if normalized == a.projectConfig {
+		return
+	}
+	a.projectConfig = normalized
+	a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
+}
+
+func (a *App) showProjectModelDiagnostics() {
+	diagnostics := a.projectModelDiagnostics()
+	signature := strings.Join(diagnostics, "\n")
+	if signature == "" {
+		a.lastModelDiagnostics = ""
+		return
+	}
+	if signature == a.lastModelDiagnostics {
+		return
+	}
+	a.lastModelDiagnostics = signature
+	for _, diagnostic := range diagnostics {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "\033[33m⚠\033[34;3m " + diagnostic})
+	}
+}
+
+func (a *App) projectModelDiagnostics() []string {
+	if !a.configReady || a.models == nil {
+		return nil
+	}
+	var diagnostics []string
+	if a.projectConfig.ActiveModel != "" {
+		result := a.config.resolveActiveModelResult(a.models)
+		if result.Fallback && result.Diagnostic != "" {
+			diagnostics = append(diagnostics, result.Diagnostic)
+		}
+	}
+	if a.projectConfig.ExplorationModel != "" {
+		result := a.config.resolveExplorationModelResult(a.models)
+		if result.Fallback && result.Diagnostic != "" {
+			diagnostics = append(diagnostics, result.Diagnostic)
+		}
+	}
+	return diagnostics
 }
 
 // maybeShowInitialModels shows the startup model line once both the model
@@ -94,12 +156,25 @@ func (a *App) maybeShowInitialModels() {
 	if a.shownInitialModel || !a.configReady || a.models == nil {
 		return
 	}
+	a.normalizeProjectConfigWithCurrentModels()
 	a.shownInitialModel = true
 	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "v" + Version + " (container: " + hermImageTag + ")"})
+	a.showProjectModelDiagnostics()
+	a.showModelChange(a.config.resolveActiveModel(a.models))
+}
+
+func (a *App) refreshResolvedModelDisplay() {
+	if !a.configReady || a.models == nil {
+		return
+	}
+	a.normalizeProjectConfigWithCurrentModels()
+	a.showProjectModelDiagnostics()
 	a.showModelChange(a.config.resolveActiveModel(a.models))
 }
 
 func (a *App) startAgent(userMessage string) {
+	a.normalizeProjectConfigWithCurrentModels()
+	a.showProjectModelDiagnostics()
 	// Move previous attachment files to past/ so /attachments only has current-message files.
 	if dir := a.attachmentDir(); dir != "" {
 		if entries, err := os.ReadDir(dir); err == nil {

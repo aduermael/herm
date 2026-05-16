@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"langdag.com/langdag"
@@ -236,6 +237,105 @@ func modelNativeIDs(model *langdag.ModelV1, deployments []ModelDeploymentDef) []
 		add(deployment.NativeModelID)
 	}
 	return ids
+}
+
+var (
+	embeddedModelIDMigrationOfferingsOnce sync.Once
+	embeddedModelIDMigrationOfferings     []ModelIDMigrationOffering
+)
+
+func embeddedCatalogModelIDMigrationOfferings() []ModelIDMigrationOffering {
+	embeddedModelIDMigrationOfferingsOnce.Do(func() {
+		catalog, err := langdag.DefaultModelCatalog()
+		if err != nil {
+			return
+		}
+		embeddedModelIDMigrationOfferings = modelIDMigrationOfferingsFromCatalog(catalog)
+	})
+	return append([]ModelIDMigrationOffering(nil), embeddedModelIDMigrationOfferings...)
+}
+
+func modelIDMigrationOfferingsFromCatalog(catalog *langdag.ModelCatalog) []ModelIDMigrationOffering {
+	if catalog == nil {
+		return nil
+	}
+	var offerings []ModelIDMigrationOffering
+	add := func(canonicalID, deploymentID, nativeID string) {
+		if canonicalID == "" || nativeID == "" {
+			return
+		}
+		offerings = append(offerings, ModelIDMigrationOffering{
+			CanonicalModelID: canonicalID,
+			DeploymentID:     deploymentID,
+			NativeModelID:    nativeID,
+		})
+	}
+	for _, offering := range catalog.Offerings {
+		add(offering.CanonicalModelID, offering.DeploymentID, offering.NativeModelID)
+	}
+	for canonicalID, model := range catalog.Models {
+		if model == nil {
+			continue
+		}
+		if canonicalID == "" {
+			canonicalID = model.ID
+		}
+		for _, alias := range model.Aliases {
+			add(canonicalID, "", alias)
+		}
+	}
+	for alias, canonicalID := range catalog.Aliases {
+		add(canonicalID, "", alias)
+	}
+	return uniqueModelIDMigrationOfferings(offerings)
+}
+
+func modelIDMigrationOfferingsFromModels(models []ModelDef) []ModelIDMigrationOffering {
+	var offerings []ModelIDMigrationOffering
+	add := func(canonicalID, deploymentID, nativeID string) {
+		if canonicalID == "" || nativeID == "" {
+			return
+		}
+		offerings = append(offerings, ModelIDMigrationOffering{
+			CanonicalModelID: canonicalID,
+			DeploymentID:     deploymentID,
+			NativeModelID:    nativeID,
+		})
+	}
+	for _, model := range models {
+		canonicalID := model.CanonicalID
+		if canonicalID == "" && looksCanonicalModelID(model.ID) {
+			canonicalID = model.ID
+		}
+		if canonicalID == "" {
+			continue
+		}
+		if model.ID != "" && model.ID != canonicalID {
+			add(canonicalID, "", model.ID)
+		}
+		for _, nativeID := range model.NativeModelIDs {
+			add(canonicalID, "", nativeID)
+		}
+		for _, deployment := range model.Deployments {
+			add(canonicalID, deployment.DeploymentID, deployment.NativeModelID)
+			add(canonicalID, deployment.DeploymentID, deployment.OfferingID)
+		}
+	}
+	return uniqueModelIDMigrationOfferings(offerings)
+}
+
+func uniqueModelIDMigrationOfferings(offerings []ModelIDMigrationOffering) []ModelIDMigrationOffering {
+	seen := map[string]bool{}
+	var unique []ModelIDMigrationOffering
+	for _, offering := range offerings {
+		key := offering.CanonicalModelID + "\x00" + offering.DeploymentID + "\x00" + offering.NativeModelID
+		if offering.CanonicalModelID == "" || offering.NativeModelID == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		unique = append(unique, offering)
+	}
+	return unique
 }
 
 func catalogPricingSnapshot(pricing langdag.PricingV1) types.PricingSnapshot {
