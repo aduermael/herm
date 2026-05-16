@@ -533,7 +533,7 @@ func TestDeploymentTabClearsBackfilledLegacyCredential(t *testing.T) {
 	}
 }
 
-func TestRoutingTabVisibilityAndSetters(t *testing.T) {
+func TestRoutingTabIsReadOnlyPreview(t *testing.T) {
 	models := []ModelDef{{
 		Provider:      ProviderOpenAI,
 		OwnerProvider: ProviderOpenAI,
@@ -551,11 +551,14 @@ func TestRoutingTabVisibilityAndSetters(t *testing.T) {
 		models: models,
 	}
 	if fields := one.routingTabFields(); len(fields) != 0 {
-		t.Fatalf("one deployment should not expose routing fields: %+v", fields)
+		t.Fatalf("routing tab should not expose route edit fields: %+v", fields)
 	}
 	rows := one.buildConfigRows()
-	if !rowsContain(rows, "Routing controls appear after two eligible deployments") {
-		t.Fatalf("one-deployment routing message missing: %v", rows)
+	if !rowsContain(rows, "No routing policy is configured") {
+		t.Fatalf("empty routing explanation missing: %v", rows)
+	}
+	if rowsContain(rows, "Route syntax:") {
+		t.Fatalf("routing mini-language help should not be shown: %v", rows)
 	}
 
 	two := &App{
@@ -570,34 +573,19 @@ func TestRoutingTabVisibilityAndSetters(t *testing.T) {
 		models: models,
 	}
 	fields := two.routingTabFields()
-	if len(fields) == 0 {
-		t.Fatalf("two deployments should expose routing fields")
-	}
-	fields[0].set(&two.cfgDraft, "openai-direct:70,openrouter:30@2")
-	if two.cfgDraft.Routing == nil || two.cfgDraft.Routing.Default[0].Retries != 2 {
-		t.Fatalf("routing field did not set default route: %+v", two.cfgDraft.Routing)
+	if len(fields) != 0 {
+		t.Fatalf("two deployments should still use read-only routing preview, got fields: %+v", fields)
 	}
 
-	two.cfgDraft.Routing.Models = map[string][]RoutingStage{
+	two.cfgDraft.Routing = &RoutingPolicy{Models: map[string][]RoutingStage{
 		"anthropic/claude-sonnet-4-20250514": {{Deployments: []DeploymentChoice{{DeploymentID: "openrouter", Weight: 100}}}},
-	}
+	}}
 	if !two.routingControlsVisible(two.cfgDraft) {
-		t.Fatalf("existing routing should keep routing controls visible")
+		t.Fatalf("existing routing should still be recognized as routing-aware")
 	}
-	fields = two.routingTabFields()
-	foundExistingModelRoute := false
-	for _, field := range fields {
-		if strings.Contains(field.label, "anthropic/claude-sonnet-4-20250514") {
-			foundExistingModelRoute = true
-		}
-	}
-	if !foundExistingModelRoute {
-		t.Fatalf("existing model route should remain editable: %+v", fields)
-	}
-
-	fields[0].set(&two.cfgDraft, "openai-direct:not-a-number")
-	if len(two.messages) == 0 || two.messages[len(two.messages)-1].kind != msgError {
-		t.Fatalf("invalid routing edit should surface an error message")
+	rows = two.buildConfigRows()
+	if !rowsContain(rows, "Model anthropic/claude-sonnet-4-20250514") {
+		t.Fatalf("existing model route should be summarized: %v", rows)
 	}
 }
 

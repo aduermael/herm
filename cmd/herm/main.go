@@ -187,15 +187,16 @@ type App struct {
 	menuActiveID     string     // active model ID for re-sorting
 
 	// Config editor state
-	cfgActive       bool
-	cfgTab          int
-	cfgCursor       int
-	cfgTabCursor    [4]int // remembered cursor per config tab
-	cfgEditing      bool
-	cfgEditBuf      []rune
-	cfgEditCursor   int
-	cfgDraft        Config
-	cfgProjectDraft ProjectConfig
+	cfgActive        bool
+	cfgTab           int
+	cfgCursor        int
+	cfgTabCursor     [4]int // remembered cursor per config tab
+	cfgEditing       bool
+	cfgEditBuf       []rune
+	cfgEditCursor    int
+	cfgDraft         Config
+	cfgProjectDraft  ProjectConfig
+	configJSONEditor func(string) error // injectable for tests; nil uses $VISUAL/$EDITOR
 
 	// Text prompt overlay (e.g. "Enter worktree name:")
 	promptLabel    string

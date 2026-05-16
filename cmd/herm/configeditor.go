@@ -563,38 +563,7 @@ func (a *App) settingsTabFields() []cfgField {
 }
 
 func (a *App) routingTabFields() []cfgField {
-	if !a.routingControlsVisible(a.cfgDraft) {
-		return nil
-	}
-	fields := []cfgField{
-		a.routingStagesField("Default Route", routingScopeDefault, ""),
-		a.routingStagesField("Anthropic Route", routingScopeProvider, "anthropic"),
-		a.routingStagesField("OpenAI Route", routingScopeProvider, "openai"),
-		a.routingStagesField("Google Route", routingScopeProvider, "google"),
-		a.routingStagesField("xAI Route", routingScopeProvider, "xai"),
-		a.routingStagesField("OpenRouter Route", routingScopeProvider, "openrouter"),
-		a.routingStagesField("Ollama Route", routingScopeProvider, "ollama"),
-	}
-	modelIDs := map[string]bool{}
-	if a.cfgDraft.Routing != nil {
-		for modelID := range a.cfgDraft.Routing.Models {
-			modelIDs[modelID] = true
-		}
-	}
-	for _, modelID := range []string{a.cfgDraft.ActiveModel, a.cfgDraft.ExplorationModel} {
-		modelIDs[modelID] = true
-	}
-	sortedModelIDs := make([]string, 0, len(modelIDs))
-	for modelID := range modelIDs {
-		if looksCanonicalModelID(modelID) {
-			sortedModelIDs = append(sortedModelIDs, modelID)
-		}
-	}
-	sort.Strings(sortedModelIDs)
-	for _, modelID := range sortedModelIDs {
-		fields = append(fields, a.routingStagesField("Model Route "+modelID, routingScopeModel, modelID))
-	}
-	return fields
+	return nil
 }
 
 type routingScope string
@@ -804,12 +773,6 @@ func (a *App) buildConfigRows() []string {
 			rows = append(rows, fmt.Sprintf("\033[2mEffective provider: %s\033[0m", provider))
 		}
 	}
-	if a.cfgTab == 1 && !a.routingControlsVisible(a.cfgDraft) {
-		rows = append(rows, "\033[2mRouting controls appear after two eligible deployments are configured.\033[0m")
-		rows = append(rows, "\033[2m←/→=tab  Esc=close  Ctrl+S=save & close\033[0m")
-		return rows
-	}
-
 	// No-project message for Project tab
 	if a.cfgTab == 3 && a.repoRoot == "" {
 		rows = append(rows, "\033[2mNo project detected (not in a git repository)\033[0m")
@@ -845,6 +808,10 @@ func (a *App) buildConfigRows() []string {
 		rows = append(rows, fmt.Sprintf("\033[2m(%d->%d / %d)\033[0m", first, last, total))
 		rows = append(rows, "\033[2m←/→ sort column  Tab flip order  Enter select  Esc close\033[0m")
 		return rows
+	}
+
+	if a.cfgTab == 1 {
+		rows = append(rows, a.routingTabReadOnlyRows()...)
 	}
 
 	// Fields
@@ -904,7 +871,7 @@ func (a *App) buildConfigRows() []string {
 	if a.cfgTab == 1 && a.cfgDraft.Routing != nil {
 		diagnostics := routingDiagnosticsForConfigModels(a.cfgDraft, a.models)
 		for i, diagnostic := range diagnostics {
-			if i >= 4 {
+			if i >= routingDiagnosticsMaxRows {
 				rows = append(rows, fmt.Sprintf("\033[33m%d more routing diagnostics\033[0m", len(diagnostics)-i))
 				break
 			}
@@ -918,7 +885,7 @@ func (a *App) buildConfigRows() []string {
 	} else if a.cfgTab == 3 {
 		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Backspace=unset  Esc=close  Ctrl+S=save & close\033[0m")
 	} else if a.cfgTab == 1 {
-		rows = append(rows, "\033[2mRoute syntax: deployment:weight,deployment:weight@retries | next@retries\033[0m")
+		rows = append(rows, "\033[2m←/→=tab  Esc=close  Ctrl+S=save & close  Ctrl+E=edit global JSON\033[0m")
 	} else {
 		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Esc=close  Ctrl+S=save & close\033[0m")
 	}
@@ -1057,6 +1024,10 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 
 	case ch == 0x13: // Ctrl+S - save and close
 		a.exitConfigMode(true)
+
+	case ch == 0x05 && a.cfgTab == 1: // Ctrl+E - edit global config JSON
+		a.openRoutingGlobalConfigEditor()
+		a.renderFull()
 
 	case ch == 3 || ch == 4: // Ctrl+C/D - exit without saving
 		a.exitConfigMode(false)

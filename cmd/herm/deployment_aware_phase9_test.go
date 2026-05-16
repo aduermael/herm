@@ -16,7 +16,7 @@ func TestBuildConfigRowsRoutingReadOnlyPreviewContract(t *testing.T) {
 	expectRowsContainAll(t, rows,
 		"Routing is global",
 		"Model routes override provider routes; provider routes override the default route.",
-		"Default: stage 1 tries openai-direct (70%) and openrouter (30%), retries 2; stage 2 tries openrouter (100%), retries 1.",
+		"Default: stage 1 tries openai-direct (weight 70) and openrouter (weight 30), retries 2; stage 2 tries openrouter (weight 100), retries 1.",
 		"routing JSON",
 		`"default": [`,
 		`"providers": {`,

@@ -352,12 +352,12 @@ Phase validation commands:
 - Herm full suite: `go test ./...`
 
 ## Phase 10: Replace routing form controls with a concise JSON-first view
-- [ ] 10a: Remove the normal Routing tab's custom per-route editing fields and route mini-language from the primary UI; keep routing setup positioned as an advanced global-only feature.
-- [ ] 10b: Render a deterministic plain-English explanation from the current routing policy, covering precedence, default/provider/model overrides, fallback stages, weighted choices, retries, and the empty-routing case without implying that most users need to configure it.
-- [ ] 10c: Render only the `routing` JSON object as pretty JSON, never secrets or deployment credentials, with a stable max line count and an ellipsis or remaining-line indicator when the preview is too tall.
-- [ ] 10d: Add an advanced key on the Routing tab that opens the global config JSON file for editing, handles unsaved drafts deliberately, reloads valid edits, and reports invalid JSON without clobbering the existing in-memory config.
-- [ ] 10e: Keep existing routing diagnostics visible below the explanation and preview, capped so they do not dominate the config screen.
-- [ ] 10f: Add tests for empty routing, simple default routing, provider/model override summaries, multi-stage fallback summaries, weighted/retry display, preview truncation, diagnostics, editor key dispatch, editor failure, and malformed JSON reload behavior.
+- [x] 10a: Remove the normal Routing tab's custom per-route editing fields and route mini-language from the primary UI; keep routing setup positioned as an advanced global-only feature.
+- [x] 10b: Render a deterministic plain-English explanation from the current routing policy, covering precedence, default/provider/model overrides, fallback stages, weighted choices, retries, and the empty-routing case without implying that most users need to configure it.
+- [x] 10c: Render only the `routing` JSON object as pretty JSON, never secrets or deployment credentials, with a stable max line count and an ellipsis or remaining-line indicator when the preview is too tall.
+- [x] 10d: Add an advanced key on the Routing tab that opens the global config JSON file for editing, handles unsaved drafts deliberately, reloads valid edits, and reports invalid JSON without clobbering the existing in-memory config.
+- [x] 10e: Keep existing routing diagnostics visible below the explanation and preview, capped so they do not dominate the config screen.
+- [x] 10f: Add tests for empty routing, simple default routing, provider/model override summaries, multi-stage fallback summaries, weighted/retry display, preview truncation, diagnostics, editor key dispatch, editor failure, and malformed JSON reload behavior.
 
 Phase validation commands:
 
