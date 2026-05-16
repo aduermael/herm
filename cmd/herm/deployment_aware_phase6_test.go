@@ -144,6 +144,86 @@ func TestPhase6AvailabilityUsesOpenRouterAndAzureDeployments(t *testing.T) {
 	}
 }
 
+func TestPhase7AvailabilityHonorsAuthoritativeRoutingWithoutHidingMixedRoutes(t *testing.T) {
+	model := ModelDef{
+		Provider:      ProviderOpenAI,
+		OwnerProvider: ProviderOpenAI,
+		ID:            "openai/gpt-4.1-2025-04-14",
+		Deployments: []ModelDeploymentDef{
+			{DeploymentID: "openai-direct"},
+			{DeploymentID: "openrouter"},
+		},
+	}
+	cfg := Config{
+		Deployments: map[string]DeploymentConfig{
+			"openai-direct": {APIKey: "sk-openai"},
+			"openrouter":    {APIKey: "sk-or"},
+		},
+		Routing: &RoutingPolicy{
+			Models: map[string][]RoutingStage{
+				model.ID: {{
+					Deployments: []DeploymentChoice{
+						{DeploymentID: "openai-azure", Weight: 100},
+						{DeploymentID: "openrouter", Weight: 100},
+					},
+				}},
+			},
+		},
+	}
+
+	available := cfg.availableModels([]ModelDef{model})
+	if len(available) != 1 {
+		t.Fatalf("mixed route should keep callable model visible: %+v", available)
+	}
+	if len(available[0].Deployments) != 1 || available[0].Deployments[0].DeploymentID != "openrouter" {
+		t.Fatalf("available route deployments = %+v", available[0].Deployments)
+	}
+	if len(available[0].RouteDiagnostics) == 0 {
+		t.Fatalf("expected diagnostic for unavailable openai-azure route")
+	}
+
+	cfg.Routing.Models[model.ID] = []RoutingStage{{Deployments: []DeploymentChoice{{DeploymentID: "openai-azure", Weight: 100}}}}
+	if available := cfg.availableModels([]ModelDef{model}); len(available) != 0 {
+		t.Fatalf("authoritative model override with no eligible deployments should hide model: %+v", available)
+	}
+}
+
+func TestPhase7RoutingValidationIndexCapturesAzureMappingAvailability(t *testing.T) {
+	model := ModelDef{
+		Provider:      ProviderOpenAI,
+		OwnerProvider: ProviderOpenAI,
+		ID:            "openai/gpt-4.1-2025-04-14",
+		Deployments: []ModelDeploymentDef{{
+			DeploymentID:    "openai-azure",
+			MappingRequired: true,
+		}},
+	}
+	cfg := Config{Deployments: map[string]DeploymentConfig{
+		"openai-azure": {APIKey: "sk", Endpoint: "https://example.openai.azure.com", APIVersion: "2024-08-01-preview"},
+	}}
+
+	index := routingValidationIndexForConfigModels(cfg, []ModelDef{model})
+	if index.EligibleDeploymentsByModel[model.ID]["openai-azure"] {
+		t.Fatalf("Azure deployment should not be eligible without model mapping")
+	}
+	if !index.MissingMappingsByModel[model.ID]["openai-azure"] {
+		t.Fatalf("missing Azure mapping not recorded: %+v", index.MissingMappingsByModel)
+	}
+
+	cfg.Deployments["openai-azure"] = DeploymentConfig{
+		APIKey:     "sk",
+		Endpoint:   "https://example.openai.azure.com",
+		APIVersion: "2024-08-01-preview",
+		ModelMappings: map[string]string{
+			model.ID: "my-gpt-4-1-prod",
+		},
+	}
+	index = routingValidationIndexForConfigModels(cfg, []ModelDef{model})
+	if !index.EligibleDeploymentsByModel[model.ID]["openai-azure"] {
+		t.Fatalf("Azure deployment should be eligible with model mapping: %+v", index.EligibleDeploymentsByModel)
+	}
+}
+
 func TestPhase6EnvOnlyDeploymentConfiguresAvailability(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-env")
 	cfg := Config{}
@@ -217,7 +297,7 @@ func TestPhase6ConfigRowsShowCanonicalOpenRouterSelection(t *testing.T) {
 		}},
 	}
 	cfg := Config{OpenRouterAPIKey: "sk-or", ActiveModel: model.ID}
-	app := &App{cfgDraft: cfg, models: []ModelDef{model}, cfgTab: 1, width: 100}
+	app := &App{cfgDraft: cfg, models: []ModelDef{model}, cfgTab: 2, width: 100}
 	rows := strings.Join(app.buildConfigRows(), "\n")
 	if !strings.Contains(rows, model.ID) {
 		t.Fatalf("config rows should show canonical OpenRouter selection, got:\n%s", rows)

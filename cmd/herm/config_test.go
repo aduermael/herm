@@ -39,7 +39,7 @@ func TestLoadConfigCreatesDefault(t *testing.T) {
 func TestLoadConfigRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 
-	original := Config{PasteCollapseMinChars: 10}
+	original := Config{ConfigVersion: hermConfigVersionDeploymentAware, PasteCollapseMinChars: 10}
 	if err := saveConfigTo(saveConfigToOptions{dir: dir, cfg: original}); err != nil {
 		t.Fatalf("saveConfigTo: %v", err)
 	}
@@ -226,6 +226,72 @@ func TestSaveConfigCreatesDir(t *testing.T) {
 	}
 }
 
+func TestSaveConfigWritesDeploymentAwareShape(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		OpenRouterAPIKey: "sk-or-legacy",
+		Deployments: map[string]DeploymentConfig{
+			"openrouter":   {APIKey: "sk-or-v2", BaseURL: "https://openrouter.example"},
+			"openai-azure": {APIKey: "az", Endpoint: "https://example.openai.azure.com", APIVersion: "2024-08-01-preview", ModelMappings: map[string]string{"openai/gpt-4.1-2025-04-14": "prod"}},
+		},
+		Routing: &RoutingPolicy{
+			Default: []RoutingStage{{Deployments: []DeploymentChoice{{DeploymentID: "openrouter", Weight: 100}}, Retries: 1}},
+		},
+	}
+	if err := saveConfigTo(saveConfigToOptions{dir: dir, cfg: cfg}); err != nil {
+		t.Fatalf("saveConfigTo: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, configDir, configFile))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if raw["config_version"].(float64) != hermConfigVersionDeploymentAware {
+		t.Fatalf("config_version = %v", raw["config_version"])
+	}
+	if _, ok := raw["openrouter_api_key"]; ok {
+		t.Fatalf("saved config should not contain legacy openrouter_api_key: %s", data)
+	}
+	deployments := raw["deployments"].(map[string]any)
+	openrouter := deployments["openrouter"].(map[string]any)
+	if got := openrouter["api_key"]; got != "sk-or-v2" {
+		t.Fatalf("v2 deployment should win over legacy flat key, got %v", got)
+	}
+
+	loaded, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+	if loaded.OpenRouterAPIKey != "sk-or-v2" || loaded.Deployments["openrouter"].BaseURL != "https://openrouter.example" {
+		t.Fatalf("loaded config did not preserve v2 deployment and backfill runtime field: %+v", loaded)
+	}
+}
+
+func TestSaveConfigPreservesUnknownCanonicalModels(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		ActiveModel:      "openai/newly-refreshed-model",
+		ExplorationModel: "z-ai/new-openrouter-only:free",
+		Deployments: map[string]DeploymentConfig{
+			"openrouter": {APIKey: "sk-or"},
+		},
+	}
+	if err := saveConfigTo(saveConfigToOptions{dir: dir, cfg: cfg}); err != nil {
+		t.Fatalf("saveConfigTo: %v", err)
+	}
+	loaded, err := loadConfigFrom(dir)
+	if err != nil {
+		t.Fatalf("loadConfigFrom: %v", err)
+	}
+	if loaded.ActiveModel != cfg.ActiveModel || loaded.ExplorationModel != cfg.ExplorationModel {
+		t.Fatalf("canonical model IDs should survive save/load, got active=%q exploration=%q", loaded.ActiveModel, loaded.ExplorationModel)
+	}
+}
+
 // ─── Project config tests ───
 
 func TestLoadProjectConfigMissingFile(t *testing.T) {
@@ -360,7 +426,7 @@ func TestMergeConfigsAllOverridden(t *testing.T) {
 // ─── Config UI tests ───
 
 func TestCfgTabNamesStructure(t *testing.T) {
-	want := []string{"API Keys", "Global", "Project"}
+	want := []string{"Deployments", "Routing", "Global", "Project"}
 	if !reflect.DeepEqual(cfgTabNames, want) {
 		t.Errorf("cfgTabNames = %v, want %v", cfgTabNames, want)
 	}
@@ -427,6 +493,114 @@ func TestProjectTabFieldGetSet(t *testing.T) {
 	}
 }
 
+func TestDeploymentTabFieldsWriteDeploymentConfig(t *testing.T) {
+	var cfg Config
+	cfgAPIKeyFields[1].set(&cfg, "sk-openai")
+	cfgAPIKeyFields[6].set(&cfg, "api.openai.example")
+	cfgAPIKeyFields[10].set(&cfg, "openai/gpt-4.1-2025-04-14=my-gpt-4-1-prod")
+
+	if got := cfg.Deployments["openai-direct"].APIKey; got != "sk-openai" {
+		t.Fatalf("openai-direct api_key = %q", got)
+	}
+	if got := cfg.Deployments["openai-direct"].BaseURL; got != "http://api.openai.example" {
+		t.Fatalf("openai-direct base_url = %q", got)
+	}
+	if got := cfg.Deployments["openai-azure"].ModelMappings["openai/gpt-4.1-2025-04-14"]; got != "my-gpt-4-1-prod" {
+		t.Fatalf("azure mapping = %q", got)
+	}
+	if cfg.OpenAIAPIKey != "sk-openai" {
+		t.Fatalf("deployment tab should update runtime legacy mirror, got %q", cfg.OpenAIAPIKey)
+	}
+}
+
+func TestDeploymentTabClearsBackfilledLegacyCredential(t *testing.T) {
+	cfg := normalizeLoadedConfig(Config{Deployments: map[string]DeploymentConfig{
+		"openai-direct": {APIKey: "sk-openai"},
+	}})
+	if cfg.OpenAIAPIKey == "" {
+		t.Fatalf("expected runtime legacy mirror to be backfilled")
+	}
+
+	cfgAPIKeyFields[1].set(&cfg, "")
+	if cfg.OpenAIAPIKey != "" {
+		t.Fatalf("clearing deployment field should clear legacy runtime mirror")
+	}
+	if cfg.deploymentConfigs()["openai-direct"].APIKey != "" {
+		t.Fatalf("cleared deployment should not be rehydrated from legacy field")
+	}
+	if _, ok := deploymentConfigsForStorage(cfg)["openai-direct"]; ok {
+		t.Fatalf("cleared deployment should not be written to storage")
+	}
+}
+
+func TestRoutingTabVisibilityAndSetters(t *testing.T) {
+	models := []ModelDef{{
+		Provider:      ProviderOpenAI,
+		OwnerProvider: ProviderOpenAI,
+		ID:            "openai/gpt-4.1-2025-04-14",
+		Deployments: []ModelDeploymentDef{
+			{DeploymentID: "openai-direct"},
+			{DeploymentID: "openrouter"},
+		},
+	}}
+	one := &App{
+		cfgTab: 1,
+		cfgDraft: Config{Deployments: map[string]DeploymentConfig{
+			"openai-direct": {APIKey: "sk"},
+		}},
+		models: models,
+	}
+	if fields := one.routingTabFields(); len(fields) != 0 {
+		t.Fatalf("one deployment should not expose routing fields: %+v", fields)
+	}
+	rows := one.buildConfigRows()
+	if !rowsContain(rows, "Routing controls appear after two eligible deployments") {
+		t.Fatalf("one-deployment routing message missing: %v", rows)
+	}
+
+	two := &App{
+		cfgTab: 1,
+		cfgDraft: Config{
+			ActiveModel: "openai/gpt-4.1-2025-04-14",
+			Deployments: map[string]DeploymentConfig{
+				"openai-direct": {APIKey: "sk"},
+				"openrouter":    {APIKey: "sk-or"},
+			},
+		},
+		models: models,
+	}
+	fields := two.routingTabFields()
+	if len(fields) == 0 {
+		t.Fatalf("two deployments should expose routing fields")
+	}
+	fields[0].set(&two.cfgDraft, "openai-direct:70,openrouter:30@2")
+	if two.cfgDraft.Routing == nil || two.cfgDraft.Routing.Default[0].Retries != 2 {
+		t.Fatalf("routing field did not set default route: %+v", two.cfgDraft.Routing)
+	}
+
+	two.cfgDraft.Routing.Models = map[string][]RoutingStage{
+		"anthropic/claude-sonnet-4-20250514": {{Deployments: []DeploymentChoice{{DeploymentID: "openrouter", Weight: 100}}}},
+	}
+	if !two.routingControlsVisible(two.cfgDraft) {
+		t.Fatalf("existing routing should keep routing controls visible")
+	}
+	fields = two.routingTabFields()
+	foundExistingModelRoute := false
+	for _, field := range fields {
+		if strings.Contains(field.label, "anthropic/claude-sonnet-4-20250514") {
+			foundExistingModelRoute = true
+		}
+	}
+	if !foundExistingModelRoute {
+		t.Fatalf("existing model route should remain editable: %+v", fields)
+	}
+
+	fields[0].set(&two.cfgDraft, "openai-direct:not-a-number")
+	if len(two.messages) == 0 || two.messages[len(two.messages)-1].kind != msgError {
+		t.Fatalf("invalid routing edit should surface an error message")
+	}
+}
+
 func TestProjectTabSubAgentClearsOnEmpty(t *testing.T) {
 	a := &App{cfgProjectDraft: ProjectConfig{SubAgentMaxTurns: 10}}
 	fields := a.projectTabFields()
@@ -438,7 +612,7 @@ func TestProjectTabSubAgentClearsOnEmpty(t *testing.T) {
 
 func TestBuildConfigRowsNoProject(t *testing.T) {
 	a := &App{
-		cfgTab:   2,  // Project tab
+		cfgTab:   3,  // Project tab
 		repoRoot: "", // no repo
 	}
 	rows := a.buildConfigRows()
@@ -456,7 +630,7 @@ func TestBuildConfigRowsNoProject(t *testing.T) {
 
 func TestBuildConfigRowsGlobalHint(t *testing.T) {
 	a := &App{
-		cfgTab:          2, // Project tab
+		cfgTab:          3, // Project tab
 		repoRoot:        "/some/repo",
 		cfgDraft:        Config{ActiveModel: "global-model", Personality: "friendly"},
 		cfgProjectDraft: ProjectConfig{}, // no overrides
@@ -482,7 +656,7 @@ func TestBuildConfigRowsGlobalHint(t *testing.T) {
 
 func TestBuildConfigRowsProjectOverrideShown(t *testing.T) {
 	a := &App{
-		cfgTab:          2,
+		cfgTab:          3,
 		repoRoot:        "/some/repo",
 		cfgDraft:        Config{ActiveModel: "global-model"},
 		cfgProjectDraft: ProjectConfig{ActiveModel: "project-model"},
@@ -991,7 +1165,7 @@ func TestPickerStubHasCleanID(t *testing.T) {
 // --- Ollama URL normalization tests ---
 
 func TestOllamaURLNormalization(t *testing.T) {
-	field := cfgAPIKeyFields[len(cfgAPIKeyFields)-1] // Ollama URL is the last field
+	field := cfgAPIKeyFields[5] // Ollama Base URL
 
 	cases := []struct {
 		input string
@@ -1008,8 +1182,8 @@ func TestOllamaURLNormalization(t *testing.T) {
 	for _, tc := range cases {
 		var cfg Config
 		field.set(&cfg, tc.input)
-		if cfg.OllamaBaseURL != tc.want {
-			t.Errorf("set(%q): OllamaBaseURL = %q, want %q", tc.input, cfg.OllamaBaseURL, tc.want)
+		if got := cfg.deploymentConfigs()["ollama-local"].BaseURL; got != tc.want {
+			t.Errorf("set(%q): Ollama BaseURL = %q, want %q", tc.input, got, tc.want)
 		}
 	}
 }
@@ -1058,6 +1232,15 @@ func TestEffectiveThinking(t *testing.T) {
 	if c.effectiveThinking() {
 		t.Error("Thinking=false should return false")
 	}
+}
+
+func rowsContain(rows []string, needle string) bool {
+	for _, row := range rows {
+		if strings.Contains(row, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestConfigThinkingRoundTrip(t *testing.T) {

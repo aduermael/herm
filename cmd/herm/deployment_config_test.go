@@ -89,6 +89,52 @@ func TestDeploymentAwareConfigMigratesLegacyFlatCredentials(t *testing.T) {
 	}
 }
 
+func TestDeploymentAwareConfigPreservesV2DeploymentsRoutingAndLetsV2Win(t *testing.T) {
+	legacy := Config{
+		OpenAIAPIKey: "legacy-openai",
+		Deployments: map[string]DeploymentConfig{
+			"openai-direct": {
+				APIKey:  "v2-openai",
+				BaseURL: "https://api.openai.example",
+			},
+			"openai-azure": {
+				APIKey:     "azure-key",
+				Endpoint:   "https://example.openai.azure.com",
+				APIVersion: "2024-08-01-preview",
+				ModelMappings: map[string]string{
+					"openai/gpt-4.1-2025-04-14": "my-gpt-4-1-prod",
+				},
+			},
+			"anthropic-bedrock": {Region: "us-east-1"},
+			"gemini-vertex":     {ProjectID: "project", Region: "us-central1"},
+		},
+		Routing: &RoutingPolicy{
+			Default: []RoutingStage{{Deployments: []DeploymentChoice{{DeploymentID: "openai-direct", Weight: 100}}, Retries: 1}},
+		},
+	}
+
+	migrated := deploymentAwareConfigFromLegacyConfig(legacy)
+	if got := migrated.Deployments["openai-direct"].APIKey; got != "v2-openai" {
+		t.Fatalf("v2 deployment API key should win over legacy flat field, got %q", got)
+	}
+	if got := migrated.Deployments["openai-direct"].BaseURL; got != "https://api.openai.example" {
+		t.Fatalf("base URL not preserved: %q", got)
+	}
+	if got := migrated.Deployments["openai-azure"].ModelMappings["openai/gpt-4.1-2025-04-14"]; got != "my-gpt-4-1-prod" {
+		t.Fatalf("Azure mapping not preserved: %q", got)
+	}
+	if migrated.Routing == nil || migrated.Routing.Default[0].Retries != 1 {
+		t.Fatalf("routing not preserved: %+v", migrated.Routing)
+	}
+	data, err := json.Marshal(migrated)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if containsJSONKey(data, "openai_api_key") {
+		t.Fatalf("deployment-aware config JSON should not contain legacy flat key: %s", data)
+	}
+}
+
 func TestDeploymentAwareProjectConfigCannotOverrideDeploymentsOrRouting(t *testing.T) {
 	global := DeploymentAwareConfig{
 		ConfigVersion:    hermConfigVersionDeploymentAware,
@@ -218,6 +264,88 @@ func TestRoutingPolicyReportsValidationDiagnostics(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("diagnostics = %+v, want %+v\nfull diagnostics: %+v", got, want, diagnostics)
+	}
+}
+
+func TestRoutingPolicyReportsMissingModelMapping(t *testing.T) {
+	policy := RoutingPolicy{
+		Models: map[string][]RoutingStage{
+			"openai/gpt-4.1-2025-04-14": {{
+				Deployments: []DeploymentChoice{{DeploymentID: "openai-azure", Weight: 100}},
+			}},
+		},
+	}
+
+	diagnostics := policy.validate(RoutingValidationIndex{
+		KnownDeployments:     map[string]bool{"openai-azure": true},
+		AvailableDeployments: map[string]bool{"openai-azure": true},
+		EligibleDeploymentsByModel: map[string]map[string]bool{
+			"openai/gpt-4.1-2025-04-14": {},
+		},
+		MissingMappingsByModel: map[string]map[string]bool{
+			"openai/gpt-4.1-2025-04-14": {"openai-azure": true},
+		},
+	})
+	got := diagnosticPathCodes(diagnostics)
+	want := []string{
+		"routing.models.openai/gpt-4.1-2025-04-14[0].deployments:no_eligible_deployments",
+		"routing.models.openai/gpt-4.1-2025-04-14[0].deployments[0].deployment_id:missing_model_mapping",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("diagnostics = %+v, want %+v\nfull diagnostics: %+v", got, want, diagnostics)
+	}
+}
+
+func TestRoutingDiagnosticsReportProviderOverrideIneligibleDeployments(t *testing.T) {
+	cfg := Config{
+		Deployments: map[string]DeploymentConfig{
+			"anthropic-direct": {APIKey: "sk-ant"},
+		},
+		Routing: &RoutingPolicy{
+			Providers: map[string][]RoutingStage{
+				"openai": {{Deployments: []DeploymentChoice{{DeploymentID: "anthropic-direct", Weight: 100}}}},
+			},
+		},
+	}
+	models := []ModelDef{{
+		Provider:      ProviderOpenAI,
+		OwnerProvider: ProviderOpenAI,
+		ID:            "openai/gpt-4.1-2025-04-14",
+		Deployments: []ModelDeploymentDef{{
+			DeploymentID: "openai-direct",
+		}},
+	}}
+
+	diagnostics := routingDiagnosticsForConfigModels(cfg, models)
+	got := diagnosticPathCodes(diagnostics)
+	want := []string{
+		"routing.effective.provider.openai/gpt-4.1-2025-04-14[0].deployments:no_eligible_deployments",
+		"routing.effective.provider.openai/gpt-4.1-2025-04-14[0].deployments[0].deployment_id:ineligible_deployment",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("diagnostics = %+v, want %+v\nfull diagnostics: %+v", got, want, diagnostics)
+	}
+}
+
+func TestRoutingStagesParseAndFormatWeightsRetries(t *testing.T) {
+	stages, err := parseRoutingStages("openai-direct:70,openai-azure:30@2 | openrouter@1")
+	if err != nil {
+		t.Fatalf("parseRoutingStages: %v", err)
+	}
+	if len(stages) != 2 {
+		t.Fatalf("stages len = %d", len(stages))
+	}
+	if stages[0].Retries != 2 || stages[0].Deployments[0].Weight != 70 || stages[0].Deployments[1].DeploymentID != "openai-azure" {
+		t.Fatalf("first stage = %+v", stages[0])
+	}
+	if stages[1].Retries != 1 || stages[1].Deployments[0].Weight != 100 {
+		t.Fatalf("second stage = %+v", stages[1])
+	}
+	if got := formatRoutingStages(stages); got != "openai-direct:70,openai-azure:30@2 | openrouter:100@1" {
+		t.Fatalf("formatRoutingStages = %q", got)
+	}
+	if _, err := parseRoutingStages("openai-direct:not-a-number"); err == nil {
+		t.Fatalf("expected invalid weight error")
 	}
 }
 

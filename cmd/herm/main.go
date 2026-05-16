@@ -190,7 +190,7 @@ type App struct {
 	cfgActive       bool
 	cfgTab          int
 	cfgCursor       int
-	cfgTabCursor    [3]int // remembered cursor per config tab (API Keys/Global/Project)
+	cfgTabCursor    [4]int // remembered cursor per config tab
 	cfgEditing      bool
 	cfgEditBuf      []rune
 	cfgEditCursor   int
@@ -748,11 +748,11 @@ func (a *App) handleResult(result any) {
 			}
 			a.maybeShowInitialModels()
 			// Fetch Ollama + OpenRouter models async
-			if a.config.OllamaBaseURL != "" && !a.ollamaFetched {
-				go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.OllamaBaseURL) }()
+			if a.config.ollamaBaseURL() != "" && !a.ollamaFetched {
+				go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.ollamaBaseURL()) }()
 			}
-			if a.config.OpenRouterAPIKey != "" && !a.openRouterFetched {
-				go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.OpenRouterAPIKey) }()
+			if a.config.openRouterAPIKey() != "" && !a.openRouterFetched {
+				go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.openRouterAPIKey()) }()
 			}
 		}
 	case ollamaModelsMsg:
@@ -776,12 +776,12 @@ func (a *App) handleResult(result any) {
 		// Show offline warning if model was already displayed
 		if alreadyShown {
 			activeID := a.config.resolveActiveModel(a.models)
-			if a.config.OllamaBaseURL != "" && a.isOllamaOffline(activeID) {
-				msg := fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' to continue", a.config.OllamaBaseURL)
+			if a.config.ollamaBaseURL() != "" && a.isOllamaOffline(activeID) {
+				msg := fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' to continue", a.config.ollamaBaseURL())
 				providers := a.config.configuredProviders()
 				delete(providers, ProviderOllama)
 				if len(providers) > 0 {
-					msg = fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' or switch to another provider (/config)", a.config.OllamaBaseURL)
+					msg = fmt.Sprintf("\033[33m⚠\033[34;3m Ollama unreachable at \033[36m%s\033[34;3m — run '\033[32;3mollama serve\033[34;3m' or switch to another provider (/config)", a.config.ollamaBaseURL())
 				}
 				a.messages = append(a.messages, chatMessage{kind: msgInfo, content: msg})
 			}

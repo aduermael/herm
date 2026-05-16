@@ -102,17 +102,27 @@ func (c Config) availableModels(models []ModelDef) []ModelDef {
 		}
 		filtered := model
 		filtered.Deployments = nil
+		filtered.RouteDiagnostics = nil
 		for _, deployment := range model.Deployments {
 			if !configuredDeployments[deployment.DeploymentID] {
 				continue
 			}
 			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
+				filtered.RouteDiagnostics = append(filtered.RouteDiagnostics, fmt.Sprintf("%s missing model_mappings[%s]", deployment.DeploymentID, model.ID))
 				continue
 			}
 			filtered.Deployments = append(filtered.Deployments, deployment)
 		}
 		if len(filtered.Deployments) == 0 {
 			continue
+		}
+		if c.Routing != nil && !routingPolicyIsEmpty(c.Routing) {
+			routed, diagnostics, ok := routeAwareDeploymentsForModel(*c.Routing, filtered, configuredDeployments)
+			filtered.RouteDiagnostics = append(filtered.RouteDiagnostics, diagnostics...)
+			if !ok {
+				continue
+			}
+			filtered.Deployments = routed
 		}
 		price := summarizeModelPricing(filtered.Deployments)
 		filtered.PromptPrice = price.promptPrice
@@ -129,6 +139,147 @@ func (c Config) availableModels(models []ModelDef) []ModelDef {
 	return available
 }
 
+func routeAwareDeploymentsForModel(policy RoutingPolicy, model ModelDef, configuredDeployments map[string]bool) ([]ModelDeploymentDef, []string, bool) {
+	providerID := model.OwnerProvider
+	if providerID == "" {
+		providerID = model.Provider
+	}
+	stages, source, ok := policy.routeFor(model.ID, providerID)
+	if !ok {
+		return nil, []string{"routing has no default/provider/model route for " + model.ID}, false
+	}
+	var diagnostics []string
+	var routed []ModelDeploymentDef
+	seen := map[string]bool{}
+	for _, stage := range stages {
+		for _, choice := range stage.Deployments {
+			if choice.DeploymentID == "" || choice.Weight <= 0 {
+				continue
+			}
+			if !configuredDeployments[choice.DeploymentID] {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s route uses unavailable deployment %s", source, choice.DeploymentID))
+				continue
+			}
+			matched := false
+			for _, deployment := range model.Deployments {
+				if deployment.DeploymentID != choice.DeploymentID {
+					continue
+				}
+				matched = true
+				key := deployment.DeploymentID + "\x00" + deployment.NativeModelID + "\x00" + deployment.OfferingID
+				if !seen[key] {
+					seen[key] = true
+					routed = append(routed, deployment)
+				}
+			}
+			if !matched {
+				diagnostics = append(diagnostics, fmt.Sprintf("%s route deployment %s cannot serve %s", source, choice.DeploymentID, model.ID))
+			}
+		}
+	}
+	if len(routed) == 0 {
+		diagnostics = append(diagnostics, fmt.Sprintf("%s route has no eligible deployment for %s", source, model.ID))
+		return nil, diagnostics, false
+	}
+	return routed, diagnostics, true
+}
+
+func routingPolicyIsEmpty(policy *RoutingPolicy) bool {
+	return policy == nil || len(policy.Default) == 0 && len(policy.Providers) == 0 && len(policy.Models) == 0
+}
+
+func routingValidationIndexForConfigModels(cfg Config, models []ModelDef) RoutingValidationIndex {
+	configuredDeployments := cfg.configuredDeploymentIDs()
+	deploymentConfigs := cfg.deploymentConfigs()
+	eligibleByModel := map[string]map[string]bool{}
+	missingMappingsByModel := map[string]map[string]bool{}
+	knownProviders := knownCanonicalProviderIDs()
+	for _, model := range models {
+		if model.OwnerProvider != "" {
+			knownProviders[canonicalProviderID(model.OwnerProvider)] = true
+		}
+		if model.Provider != "" {
+			knownProviders[canonicalProviderID(model.Provider)] = true
+		}
+		if model.ID == "" {
+			continue
+		}
+		if eligibleByModel[model.ID] == nil {
+			eligibleByModel[model.ID] = map[string]bool{}
+		}
+		for _, deployment := range model.Deployments {
+			if !configuredDeployments[deployment.DeploymentID] {
+				continue
+			}
+			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
+				if missingMappingsByModel[model.ID] == nil {
+					missingMappingsByModel[model.ID] = map[string]bool{}
+				}
+				missingMappingsByModel[model.ID][deployment.DeploymentID] = true
+				continue
+			}
+			eligibleByModel[model.ID][deployment.DeploymentID] = true
+		}
+	}
+	return RoutingValidationIndex{
+		KnownProviders:             knownProviders,
+		KnownDeployments:           knownDeploymentIDs(),
+		AvailableDeployments:       configuredDeployments,
+		EligibleDeploymentsByModel: eligibleByModel,
+		MissingMappingsByModel:     missingMappingsByModel,
+	}
+}
+
+func routingDiagnosticsForConfigModels(cfg Config, models []ModelDef) []RoutingDiagnostic {
+	if cfg.Routing == nil {
+		return nil
+	}
+	index := routingValidationIndexForConfigModels(cfg, models)
+	diagnostics := cfg.Routing.validate(index)
+	for _, model := range models {
+		if model.ID == "" {
+			continue
+		}
+		providerID := model.OwnerProvider
+		if providerID == "" {
+			providerID = model.Provider
+		}
+		stages, source, ok := cfg.Routing.routeFor(model.ID, providerID)
+		if !ok {
+			diagnostics = append(diagnostics, RoutingDiagnostic{
+				Path:    "routing.effective." + model.ID,
+				Code:    "no_effective_route",
+				Message: "routing policy has no default, provider, or model route for this canonical model",
+			})
+			continue
+		}
+		if source == RouteSourceModel {
+			continue
+		}
+		path := fmt.Sprintf("routing.effective.%s.%s", source, model.ID)
+		diagnostics = append(diagnostics, validateRoutingStages(path, model.ID, stages, index)...)
+	}
+	return uniqueRoutingDiagnostics(diagnostics)
+}
+
+func uniqueRoutingDiagnostics(diagnostics []RoutingDiagnostic) []RoutingDiagnostic {
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	sortRoutingDiagnostics(diagnostics)
+	seen := map[string]bool{}
+	unique := make([]RoutingDiagnostic, 0, len(diagnostics))
+	for _, diagnostic := range diagnostics {
+		key := diagnostic.Path + "\x00" + diagnostic.Code + "\x00" + diagnostic.Message
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		unique = append(unique, diagnostic)
+	}
+	return unique
+}
+
 func (c Config) deploymentConfigs() map[string]DeploymentConfig {
 	out := map[string]DeploymentConfig{}
 	for deploymentID := range knownDeploymentIDs() {
@@ -139,27 +290,7 @@ func (c Config) deploymentConfigs() map[string]DeploymentConfig {
 	}
 	mergeDeploymentConfig := func(id string, deployment DeploymentConfig) {
 		current := out[id]
-		if current.APIKey == "" {
-			current.APIKey = deployment.APIKey
-		}
-		if current.BaseURL == "" {
-			current.BaseURL = deployment.BaseURL
-		}
-		if current.Endpoint == "" {
-			current.Endpoint = deployment.Endpoint
-		}
-		if current.APIVersion == "" {
-			current.APIVersion = deployment.APIVersion
-		}
-		if current.ProjectID == "" {
-			current.ProjectID = deployment.ProjectID
-		}
-		if current.Region == "" {
-			current.Region = deployment.Region
-		}
-		if current.ModelMappings == nil {
-			current.ModelMappings = cloneStringMap(deployment.ModelMappings)
-		}
+		mergeDeploymentConfigFields(&current, deployment)
 		out[id] = current
 	}
 	if c.AnthropicAPIKey != "" {
@@ -197,6 +328,19 @@ func cloneStringMap(values map[string]string) map[string]string {
 		clone[key] = value
 	}
 	return clone
+}
+
+func (c Config) deploymentConfig(deploymentID string) DeploymentConfig {
+	deployment := c.deploymentConfigs()[deploymentID]
+	return deploymentWithEnvFallbacks(deploymentID, deployment)
+}
+
+func (c Config) openRouterAPIKey() string {
+	return c.deploymentConfig("openrouter").APIKey
+}
+
+func (c Config) ollamaBaseURL() string {
+	return c.deploymentConfig("ollama-local").BaseURL
 }
 
 func (c Config) configuredDeploymentIDs() map[string]bool {
@@ -464,7 +608,7 @@ func configuredProviderForModelID(cfg Config, models []ModelDef, modelID string)
 	if model := findModelByID(findModelByIDOptions{models: models, id: modelID}); model != nil {
 		return configuredProviderForModel(cfg, *model)
 	}
-	return ollamaModelProvider(ollamaModelProviderOptions{modelID: modelID, models: models, ollamaURL: cfg.OllamaBaseURL})
+	return ollamaModelProvider(ollamaModelProviderOptions{modelID: modelID, models: models, ollamaURL: cfg.ollamaBaseURL()})
 }
 
 func modelIDCandidates(modelID, smartDefault string) []string {
@@ -562,6 +706,7 @@ var defaultContainerImage = "aduermael/herm:" + hermImageTag
 
 func defaultConfig() Config {
 	return Config{
+		ConfigVersion:         hermConfigVersionDeploymentAware,
 		PasteCollapseMinChars: 200,
 	}
 }
@@ -646,8 +791,23 @@ func loadConfigFrom(dir string) (Config, error) {
 }
 
 func normalizeLoadedConfig(cfg Config) Config {
+	cfg.ConfigVersion = hermConfigVersionDeploymentAware
+	cfg.Deployments = deploymentConfigsForStorage(cfg)
+	cfg.Routing = cloneRoutingPolicy(cfg.Routing)
+	cfg = backfillLegacyConfigFieldsFromDeployments(cfg)
 	cfg.ActiveModel = migrateLoadedModelID(cfg, cfg.ActiveModel, defaultCanonicalActiveModel)
 	cfg.ExplorationModel = migrateLoadedModelID(cfg, cfg.ExplorationModel, defaultCanonicalExplorationModel)
+	return cfg
+}
+
+func backfillLegacyConfigFieldsFromDeployments(cfg Config) Config {
+	deployments := cfg.deploymentConfigs()
+	cfg.AnthropicAPIKey = deployments["anthropic-direct"].APIKey
+	cfg.OpenAIAPIKey = deployments["openai-direct"].APIKey
+	cfg.GrokAPIKey = deployments["grok-direct"].APIKey
+	cfg.OpenRouterAPIKey = deployments["openrouter"].APIKey
+	cfg.GeminiAPIKey = deployments["gemini-direct"].APIKey
+	cfg.OllamaBaseURL = deployments["ollama-local"].BaseURL
 	return cfg
 }
 
@@ -674,7 +834,7 @@ func saveConfig(cfg Config) error {
 	}
 
 	cfg = normalizeLoadedConfig(cfg)
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := json.MarshalIndent(deploymentAwareConfigFromLegacyConfig(cfg), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
@@ -697,7 +857,7 @@ func saveConfigTo(opts saveConfigToOptions) error {
 	}
 
 	cfg = normalizeLoadedConfig(cfg)
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	data, err := json.MarshalIndent(deploymentAwareConfigFromLegacyConfig(cfg), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}

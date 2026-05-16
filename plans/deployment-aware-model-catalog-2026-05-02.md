@@ -308,12 +308,12 @@ Phase validation commands:
 - [x] 6g: Add Herm tests for canonical picker rows, old active/exploration migration, smart defaults, OpenRouter-only availability, Ollama offline behavior, Azure mappings, route-dependent price ranges, exact provider-cost display, and old-node history cost fallback.
 
 ## Phase 7: Add deployment configuration and global routing UX
-- [ ] 7a: Extend Herm config to read/write config v2 with global deployment credentials, non-secret deployment parameters, deployment-scoped `model_mappings`, and global routing policy.
-- [ ] 7b: Preserve legacy flat credential fields as readable input for migration, but write new deployment config shape on save.
-- [ ] 7c: Add a deployment config surface that starts simple for one configured deployment and reveals global fallback/routing controls only after multiple eligible deployments exist.
-- [ ] 7d: Add global routing config UI for default, provider-level, and model-level route stages, weighted deployment choices, and retry count per stage.
-- [ ] 7e: Validate routing config against currently configured deployments and canonical model availability, gracefully flagging unavailable deployments without hiding canonical models that remain callable through another deployment.
-- [ ] 7f: Add tests for one-deployment UI behavior, two-deployment routing controls, provider/model override behavior, no cascade to default from overrides, weighted-stage parsing, retry validation, Azure mapping validation, and availability changing when deployment credentials are added or removed.
+- [x] 7a: Extend Herm config to read/write config v2 with global deployment credentials, non-secret deployment parameters, deployment-scoped `model_mappings`, and global routing policy.
+- [x] 7b: Preserve legacy flat credential fields as readable input for migration, but write new deployment config shape on save.
+- [x] 7c: Add a deployment config surface that starts simple for one configured deployment and reveals global fallback/routing controls only after multiple eligible deployments exist.
+- [x] 7d: Add global routing config UI for default, provider-level, and model-level route stages, weighted deployment choices, and retry count per stage.
+- [x] 7e: Validate routing config against currently configured deployments and canonical model availability, gracefully flagging unavailable deployments without hiding canonical models that remain callable through another deployment.
+- [x] 7f: Add tests for one-deployment UI behavior, two-deployment routing controls, provider/model override behavior, no cascade to default from overrides, weighted-stage parsing, retry validation, Azure mapping validation, and availability changing when deployment credentials are added or removed.
 
 ## Phase 8: End-to-end rollout and docs
 - [ ] 8a: Add langdag integration tests that exercise dynamic catalog refresh, canonical-model targeting, deployment resolution, provider fallback, retry, exact cost when mocked, pricing snapshot persistence, and metadata persistence with mock providers.

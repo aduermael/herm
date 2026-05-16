@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ func maskKey(key string) string {
 
 // ─── Config editor ───
 
-var cfgTabNames = []string{"API Keys", "Global", "Project"}
+var cfgTabNames = []string{"Deployments", "Routing", "Global", "Project"}
 
 type cfgField struct {
 	label      string
@@ -60,18 +61,156 @@ type cfgField struct {
 }
 
 var cfgAPIKeyFields = []cfgField{
-	{label: "Anthropic", get: func(c Config) string { return c.AnthropicAPIKey }, display: func(c Config) string { return maskKey(c.AnthropicAPIKey) }, set: func(c *Config, v string) { c.AnthropicAPIKey = v }},
-	{label: "OpenAI", get: func(c Config) string { return c.OpenAIAPIKey }, display: func(c Config) string { return maskKey(c.OpenAIAPIKey) }, set: func(c *Config, v string) { c.OpenAIAPIKey = v }},
-	{label: "Grok", get: func(c Config) string { return c.GrokAPIKey }, display: func(c Config) string { return maskKey(c.GrokAPIKey) }, set: func(c *Config, v string) { c.GrokAPIKey = v }},
-	{label: "OpenRouter", get: func(c Config) string { return c.OpenRouterAPIKey }, display: func(c Config) string { return maskKey(c.OpenRouterAPIKey) }, set: func(c *Config, v string) { c.OpenRouterAPIKey = v }},
-	{label: "Gemini", get: func(c Config) string { return c.GeminiAPIKey }, display: func(c Config) string { return maskKey(c.GeminiAPIKey) }, set: func(c *Config, v string) { c.GeminiAPIKey = v }},
-	{label: "Ollama URL", get: func(c Config) string { return c.OllamaBaseURL }, set: func(c *Config, v string) {
-		v = strings.TrimSpace(v)
-		if v != "" && !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
-			v = "http://" + v
+	deploymentTextField("Anthropic Direct API Key", "anthropic-direct", "api_key", true, false),
+	deploymentTextField("OpenAI Direct API Key", "openai-direct", "api_key", true, false),
+	deploymentTextField("Grok Direct API Key", "grok-direct", "api_key", true, false),
+	deploymentTextField("OpenRouter API Key", "openrouter", "api_key", true, false),
+	deploymentTextField("Gemini Direct API Key", "gemini-direct", "api_key", true, false),
+	deploymentTextField("Ollama Base URL", "ollama-local", "base_url", false, true),
+	deploymentTextField("OpenAI Direct Base URL", "openai-direct", "base_url", false, true),
+	deploymentTextField("Azure OpenAI API Key", "openai-azure", "api_key", true, false),
+	deploymentTextField("Azure OpenAI Endpoint", "openai-azure", "endpoint", false, true),
+	deploymentTextField("Azure OpenAI API Version", "openai-azure", "api_version", false, false),
+	deploymentModelMappingsField("Azure Model Mappings", "openai-azure"),
+	deploymentTextField("Anthropic Bedrock Region", "anthropic-bedrock", "region", false, false),
+	deploymentTextField("Anthropic Vertex Project", "anthropic-vertex", "project_id", false, false),
+	deploymentTextField("Anthropic Vertex Region", "anthropic-vertex", "region", false, false),
+	deploymentTextField("Gemini Vertex Project", "gemini-vertex", "project_id", false, false),
+	deploymentTextField("Gemini Vertex Region", "gemini-vertex", "region", false, false),
+	deploymentTextField("Grok Base URL", "grok-direct", "base_url", false, true),
+	deploymentTextField("OpenRouter Base URL", "openrouter", "base_url", false, true),
+}
+
+func deploymentTextField(label, deploymentID, field string, secret, normalizeURL bool) cfgField {
+	get := func(c Config) string {
+		return deploymentFieldValue(c.deploymentConfigs()[deploymentID], field)
+	}
+	display := func(c Config) string {
+		value := get(c)
+		if secret {
+			return maskKey(value)
 		}
-		c.OllamaBaseURL = v
-	}},
+		return value
+	}
+	return cfgField{
+		label: label,
+		get:   get,
+		display: func(c Config) string {
+			if secret {
+				return display(c)
+			}
+			return get(c)
+		},
+		set: func(c *Config, v string) {
+			v = strings.TrimSpace(v)
+			if normalizeURL && v != "" && !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+				v = "http://" + v
+			}
+			setConfigDeploymentField(c, deploymentID, field, v)
+		},
+	}
+}
+
+func deploymentModelMappingsField(label, deploymentID string) cfgField {
+	return cfgField{
+		label:   label,
+		get:     func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
+		display: func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
+		set: func(c *Config, v string) {
+			mappings := parseStringMap(v)
+			ensureDeploymentConfig(c, deploymentID)
+			deployment := c.Deployments[deploymentID]
+			deployment.ModelMappings = mappings
+			setConfigDeployment(c, deploymentID, deployment)
+		},
+	}
+}
+
+func ensureDeploymentConfig(c *Config, deploymentID string) {
+	if c.Deployments == nil {
+		c.Deployments = map[string]DeploymentConfig{}
+	}
+	if _, ok := c.Deployments[deploymentID]; !ok {
+		c.Deployments[deploymentID] = DeploymentConfig{}
+	}
+}
+
+func setConfigDeployment(c *Config, deploymentID string, deployment DeploymentConfig) {
+	if deploymentConfigIsEmpty(deployment) {
+		delete(c.Deployments, deploymentID)
+		if len(c.Deployments) == 0 {
+			c.Deployments = nil
+		}
+		return
+	}
+	ensureDeploymentConfig(c, deploymentID)
+	c.Deployments[deploymentID] = deployment
+}
+
+func setConfigDeploymentField(c *Config, deploymentID, field, value string) {
+	ensureDeploymentConfig(c, deploymentID)
+	deployment := c.Deployments[deploymentID]
+	setDeploymentFieldValue(&deployment, field, value)
+	setConfigDeployment(c, deploymentID, deployment)
+	setLegacyDeploymentField(c, deploymentID, field, value)
+}
+
+func setLegacyDeploymentField(c *Config, deploymentID, field, value string) {
+	switch {
+	case deploymentID == "anthropic-direct" && field == "api_key":
+		c.AnthropicAPIKey = value
+	case deploymentID == "openai-direct" && field == "api_key":
+		c.OpenAIAPIKey = value
+	case deploymentID == "grok-direct" && field == "api_key":
+		c.GrokAPIKey = value
+	case deploymentID == "openrouter" && field == "api_key":
+		c.OpenRouterAPIKey = value
+	case deploymentID == "gemini-direct" && field == "api_key":
+		c.GeminiAPIKey = value
+	case deploymentID == "ollama-local" && field == "base_url":
+		c.OllamaBaseURL = value
+	}
+}
+
+func formatStringMap(values map[string]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+values[key])
+	}
+	return strings.Join(parts, ",")
+}
+
+func parseStringMap(value string) map[string]string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	value = strings.ReplaceAll(value, ";", ",")
+	parts := strings.Split(value, ",")
+	out := map[string]string{}
+	for _, part := range parts {
+		key, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			key, val, ok = strings.Cut(strings.TrimSpace(part), ":")
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		if ok && key != "" && val != "" {
+			out[key] = val
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func apiKeyRowForProvider(provider string) int {
@@ -127,7 +266,7 @@ func (a *App) preferredAPIKeyCursor(cfg Config) int {
 func (a *App) enterConfigMode() {
 	a.cfgActive = true
 	a.cfgTab = 0
-	a.cfgTabCursor = [3]int{a.preferredAPIKeyCursor(a.config), 0, 0}
+	a.cfgTabCursor = [4]int{a.preferredAPIKeyCursor(a.config), 0, 0, 0}
 	a.cfgCursor = a.cfgTabCursor[a.cfgTab]
 	a.cfgEditing = false
 	a.cfgEditBuf = nil
@@ -168,12 +307,12 @@ func (a *App) exitConfigMode(save bool) {
 			a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Config saved."})
 		}
 		// Refresh models including Ollama and OpenRouter if configured
-		if a.config.OllamaBaseURL != "" {
-			go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.OllamaBaseURL) }()
+		if a.config.ollamaBaseURL() != "" {
+			go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.ollamaBaseURL()) }()
 		}
-		if a.config.OpenRouterAPIKey != "" {
+		if a.config.openRouterAPIKey() != "" {
 			a.openRouterFetched = false // allow re-fetch with new key
-			go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.OpenRouterAPIKey) }()
+			go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.openRouterAPIKey()) }()
 		}
 		// Show updated model if it changed
 		if a.models != nil {
@@ -209,9 +348,9 @@ func (a *App) openConfigModelPicker(opts openConfigModelPickerOptions) {
 	}
 	// If the draft URL differs from the saved URL, fetch Ollama models async
 	// before opening the picker so we don't block the UI.
-	if a.cfgDraft.OllamaBaseURL != "" && a.config.OllamaBaseURL != a.cfgDraft.OllamaBaseURL {
+	if a.cfgDraft.ollamaBaseURL() != "" && a.config.ollamaBaseURL() != a.cfgDraft.ollamaBaseURL() {
 		go func() {
-			msg := fetchOllamaModelsCmd(a.cfgDraft.OllamaBaseURL)
+			msg := fetchOllamaModelsCmd(a.cfgDraft.ollamaBaseURL())
 			a.resultCh <- msg
 			// Open the picker after the result is handled; send a follow-up
 			// signal via a dedicated picker-open message.
@@ -221,9 +360,9 @@ func (a *App) openConfigModelPicker(opts openConfigModelPickerOptions) {
 	}
 	// If the draft OpenRouter key differs from the saved key, fetch fresh models
 	// async before opening the picker.
-	if a.cfgDraft.OpenRouterAPIKey != "" && a.config.OpenRouterAPIKey != a.cfgDraft.OpenRouterAPIKey {
+	if a.cfgDraft.openRouterAPIKey() != "" && a.config.openRouterAPIKey() != a.cfgDraft.openRouterAPIKey() {
 		go func() {
-			msg := fetchOpenRouterModelsCmd(a.cfgDraft.OpenRouterAPIKey)
+			msg := fetchOpenRouterModelsCmd(a.cfgDraft.openRouterAPIKey())
 			a.resultCh <- msg
 			a.resultCh <- openPickerMsg{getCurrentID: getCurrentID, onSelect: onSelect}
 		}()
@@ -246,7 +385,7 @@ func (a *App) doOpenConfigModelPicker(opts doOpenConfigModelPickerOptions) {
 
 	// If Ollama is configured but offline, inject a stub for the saved model
 	// so the picker still opens and the user can see their current selection.
-	if a.cfgDraft.OllamaBaseURL != "" {
+	if a.cfgDraft.ollamaBaseURL() != "" {
 		ollamaInList := false
 		for _, m := range available {
 			if m.Provider == ProviderOllama {
@@ -271,7 +410,7 @@ func (a *App) doOpenConfigModelPicker(opts doOpenConfigModelPickerOptions) {
 
 	// If OpenRouter is configured but models haven't loaded yet (e.g. bad key or
 	// network error), inject a stub so the picker still shows the saved selection.
-	if a.cfgDraft.OpenRouterAPIKey != "" {
+	if a.cfgDraft.openRouterAPIKey() != "" {
 		savedID := getCurrentID()
 		if savedID == "" {
 			savedID = a.cfgDraft.ActiveModel
@@ -342,8 +481,10 @@ func (a *App) cfgCurrentFields() []cfgField {
 	case 0:
 		return cfgAPIKeyFields
 	case 1:
-		return a.settingsTabFields()
+		return a.routingTabFields()
 	case 2:
+		return a.settingsTabFields()
+	case 3:
 		return a.projectTabFields()
 	}
 	return nil
@@ -419,6 +560,141 @@ func (a *App) settingsTabFields() []cfgField {
 			}
 		}},
 	}
+}
+
+func (a *App) routingTabFields() []cfgField {
+	if !a.routingControlsVisible(a.cfgDraft) {
+		return nil
+	}
+	fields := []cfgField{
+		a.routingStagesField("Default Route", routingScopeDefault, ""),
+		a.routingStagesField("Anthropic Route", routingScopeProvider, "anthropic"),
+		a.routingStagesField("OpenAI Route", routingScopeProvider, "openai"),
+		a.routingStagesField("Google Route", routingScopeProvider, "google"),
+		a.routingStagesField("xAI Route", routingScopeProvider, "xai"),
+		a.routingStagesField("OpenRouter Route", routingScopeProvider, "openrouter"),
+		a.routingStagesField("Ollama Route", routingScopeProvider, "ollama"),
+	}
+	modelIDs := map[string]bool{}
+	if a.cfgDraft.Routing != nil {
+		for modelID := range a.cfgDraft.Routing.Models {
+			modelIDs[modelID] = true
+		}
+	}
+	for _, modelID := range []string{a.cfgDraft.ActiveModel, a.cfgDraft.ExplorationModel} {
+		modelIDs[modelID] = true
+	}
+	sortedModelIDs := make([]string, 0, len(modelIDs))
+	for modelID := range modelIDs {
+		if looksCanonicalModelID(modelID) {
+			sortedModelIDs = append(sortedModelIDs, modelID)
+		}
+	}
+	sort.Strings(sortedModelIDs)
+	for _, modelID := range sortedModelIDs {
+		fields = append(fields, a.routingStagesField("Model Route "+modelID, routingScopeModel, modelID))
+	}
+	return fields
+}
+
+type routingScope string
+
+const (
+	routingScopeDefault  routingScope = "default"
+	routingScopeProvider routingScope = "provider"
+	routingScopeModel    routingScope = "model"
+)
+
+func (a *App) routingStagesField(label string, scope routingScope, key string) cfgField {
+	return cfgField{
+		label: label,
+		get: func(c Config) string {
+			if c.Routing == nil {
+				return ""
+			}
+			return formatRoutingStages(getRoutingStages(c.Routing, scope, key))
+		},
+		set: func(c *Config, v string) {
+			stages, err := parseRoutingStages(v)
+			if err != nil {
+				a.messages = append(a.messages, chatMessage{kind: msgError, content: "Invalid routing: " + err.Error()})
+				return
+			}
+			setRoutingStages(c, scope, key, stages)
+		},
+	}
+}
+
+func getRoutingStages(policy *RoutingPolicy, scope routingScope, key string) []RoutingStage {
+	if policy == nil {
+		return nil
+	}
+	switch scope {
+	case routingScopeDefault:
+		return policy.Default
+	case routingScopeProvider:
+		return policy.Providers[key]
+	case routingScopeModel:
+		return policy.Models[key]
+	default:
+		return nil
+	}
+}
+
+func setRoutingStages(c *Config, scope routingScope, key string, stages []RoutingStage) {
+	if c.Routing == nil {
+		c.Routing = &RoutingPolicy{}
+	}
+	switch scope {
+	case routingScopeDefault:
+		c.Routing.Default = stages
+	case routingScopeProvider:
+		if len(stages) == 0 {
+			delete(c.Routing.Providers, key)
+		} else {
+			if c.Routing.Providers == nil {
+				c.Routing.Providers = map[string][]RoutingStage{}
+			}
+			c.Routing.Providers[key] = stages
+		}
+	case routingScopeModel:
+		if len(stages) == 0 {
+			delete(c.Routing.Models, key)
+		} else {
+			if c.Routing.Models == nil {
+				c.Routing.Models = map[string][]RoutingStage{}
+			}
+			c.Routing.Models[key] = stages
+		}
+	}
+	c.Routing = cloneRoutingPolicy(c.Routing)
+}
+
+func (a *App) routingControlsVisible(cfg Config) bool {
+	return len(eligibleDeploymentIDsForConfigModels(cfg, a.models)) >= 2 || !routingPolicyIsEmpty(cfg.Routing)
+}
+
+func eligibleDeploymentIDsForConfigModels(cfg Config, models []ModelDef) map[string]bool {
+	configured := cfg.configuredDeploymentIDs()
+	deploymentConfigs := cfg.deploymentConfigs()
+	eligible := map[string]bool{}
+	for _, model := range models {
+		for _, deployment := range model.Deployments {
+			if !configured[deployment.DeploymentID] {
+				continue
+			}
+			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
+				continue
+			}
+			eligible[deployment.DeploymentID] = true
+		}
+	}
+	if len(models) == 0 {
+		for deploymentID := range configured {
+			eligible[deploymentID] = true
+		}
+	}
+	return eligible
 }
 
 func (a *App) projectTabFields() []cfgField {
@@ -504,7 +780,7 @@ func (a *App) buildConfigRows() []string {
 	var rows []string
 	configured := a.cfgDraft.configuredProviders()
 	hasProvider := len(configured) > 0
-	isProjectTab := a.cfgTab == 2
+	isProjectTab := a.cfgTab == 3
 
 	// Tab bar
 	var tabParts []string
@@ -528,9 +804,14 @@ func (a *App) buildConfigRows() []string {
 			rows = append(rows, fmt.Sprintf("\033[2mEffective provider: %s\033[0m", provider))
 		}
 	}
+	if a.cfgTab == 1 && !a.routingControlsVisible(a.cfgDraft) {
+		rows = append(rows, "\033[2mRouting controls appear after two eligible deployments are configured.\033[0m")
+		rows = append(rows, "\033[2m←/→=tab  Esc=close  Ctrl+S=save & close\033[0m")
+		return rows
+	}
 
 	// No-project message for Project tab
-	if a.cfgTab == 2 && a.repoRoot == "" {
+	if a.cfgTab == 3 && a.repoRoot == "" {
 		rows = append(rows, "\033[2mNo project detected (not in a git repository)\033[0m")
 		rows = append(rows, "\033[2m←/→=tab  Esc=close  Ctrl+S=save & close\033[0m")
 		return rows
@@ -590,7 +871,7 @@ func (a *App) buildConfigRows() []string {
 			}
 			// If the value is an Ollama model and Ollama is offline, show indicator.
 			// Only applies to model picker fields, not API key or other fields.
-			if val != "" && f.picker != nil && a.cfgDraft.OllamaBaseURL != "" && a.isOllamaOffline(val) {
+			if val != "" && f.picker != nil && a.cfgDraft.ollamaBaseURL() != "" && a.isOllamaOffline(val) {
 				val = val + " \033[33m(offline)\033[0m"
 			}
 			if val == "" {
@@ -620,11 +901,24 @@ func (a *App) buildConfigRows() []string {
 		}
 	}
 
+	if a.cfgTab == 1 && a.cfgDraft.Routing != nil {
+		diagnostics := routingDiagnosticsForConfigModels(a.cfgDraft, a.models)
+		for i, diagnostic := range diagnostics {
+			if i >= 4 {
+				rows = append(rows, fmt.Sprintf("\033[33m%d more routing diagnostics\033[0m", len(diagnostics)-i))
+				break
+			}
+			rows = append(rows, fmt.Sprintf("\033[33m%s: %s\033[0m", diagnostic.Path, diagnostic.Message))
+		}
+	}
+
 	// Help line
 	if a.cfgEditing {
 		rows = append(rows, "\033[2mEnter=confirm  Esc=cancel\033[0m")
-	} else if a.cfgTab == 2 {
+	} else if a.cfgTab == 3 {
 		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Backspace=unset  Esc=close  Ctrl+S=save & close\033[0m")
+	} else if a.cfgTab == 1 {
+		rows = append(rows, "\033[2mRoute syntax: deployment:weight,deployment:weight@retries | next@retries\033[0m")
 	} else {
 		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Esc=close  Ctrl+S=save & close\033[0m")
 	}
@@ -730,7 +1024,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		}
 
 	case ch == '\r': // Enter - toggle, picker, or start editing current field
-		if a.cfgTab == 2 && a.repoRoot == "" {
+		if a.cfgTab == 3 && a.repoRoot == "" {
 			break // Project tab non-editable without a repo
 		}
 		fields := a.cfgCurrentFields()
@@ -750,7 +1044,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		a.renderInput()
 
 	case ch == 127 || ch == 0x08: // Backspace - clear current project field (unset → fall back to global)
-		if a.cfgTab == 2 && a.repoRoot != "" {
+		if a.cfgTab == 3 && a.repoRoot != "" {
 			fields := a.cfgCurrentFields()
 			if len(fields) > 0 && a.cfgCursor < len(fields) {
 				f := fields[a.cfgCursor]

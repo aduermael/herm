@@ -91,9 +91,9 @@ func (a *App) handleCommand(input string) {
 		// otherwise Global tab. Cursor starts on Active Model.
 		a.enterConfigMode()
 		if a.repoRoot != "" {
-			a.cfgTab = 2 // Project tab
+			a.cfgTab = 3 // Project tab
 		} else {
-			a.cfgTab = 1 // Global tab
+			a.cfgTab = 2 // Global tab
 		}
 		a.cfgCursor = 0 // Active Model is the first field
 		a.renderInput()

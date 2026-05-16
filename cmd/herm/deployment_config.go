@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -153,8 +154,14 @@ func migrateDeploymentAwareConfigFromLegacyConfig(opts DeploymentAwareConfigMigr
 	if explorationDefault == "" {
 		explorationDefault = activeDefault
 	}
-	active := migrateStoredModelIDToCanonical(cfg.ActiveModel, offerings, activeDefault)
-	exploration := migrateStoredModelIDToCanonical(cfg.ExplorationModel, offerings, explorationDefault)
+	active := ModelIDMigrationResult{}
+	if cfg.ActiveModel != "" {
+		active = migrateStoredModelIDToCanonical(cfg.ActiveModel, offerings, activeDefault)
+	}
+	exploration := ModelIDMigrationResult{}
+	if cfg.ExplorationModel != "" {
+		exploration = migrateStoredModelIDToCanonical(cfg.ExplorationModel, offerings, explorationDefault)
+	}
 	result := DeploymentAwareConfig{
 		ConfigVersion:         hermConfigVersionDeploymentAware,
 		PasteCollapseMinChars: cfg.PasteCollapseMinChars,
@@ -173,29 +180,129 @@ func migrateDeploymentAwareConfigFromLegacyConfig(opts DeploymentAwareConfigMigr
 		GitCoAuthor:           cloneBoolPtr(cfg.GitCoAuthor),
 		DebugMode:             cfg.DebugMode,
 		Thinking:              cloneBoolPtr(cfg.Thinking),
+		Routing:               cloneRoutingPolicy(cfg.Routing),
 	}
-	if cfg.AnthropicAPIKey != "" {
-		result.Deployments["anthropic-direct"] = DeploymentConfig{APIKey: cfg.AnthropicAPIKey}
-	}
-	if cfg.OpenAIAPIKey != "" {
-		result.Deployments["openai-direct"] = DeploymentConfig{APIKey: cfg.OpenAIAPIKey}
-	}
-	if cfg.GrokAPIKey != "" {
-		result.Deployments["grok-direct"] = DeploymentConfig{APIKey: cfg.GrokAPIKey}
-	}
-	if cfg.OpenRouterAPIKey != "" {
-		result.Deployments["openrouter"] = DeploymentConfig{APIKey: cfg.OpenRouterAPIKey}
-	}
-	if cfg.GeminiAPIKey != "" {
-		result.Deployments["gemini-direct"] = DeploymentConfig{APIKey: cfg.GeminiAPIKey}
-	}
-	if cfg.OllamaBaseURL != "" {
-		result.Deployments["ollama-local"] = DeploymentConfig{BaseURL: cfg.OllamaBaseURL}
-	}
+	result.Deployments = deploymentConfigsForStorage(cfg)
 	if len(result.Deployments) == 0 {
 		result.Deployments = nil
 	}
 	return DeploymentAwareConfigMigrationResult{Config: result, ActiveModel: active, ExplorationModel: exploration}
+}
+
+func deploymentConfigsForStorage(cfg Config) map[string]DeploymentConfig {
+	out := map[string]DeploymentConfig{}
+	for id, deployment := range cfg.Deployments {
+		if !deploymentConfigIsEmpty(deployment) {
+			out[id] = cloneDeploymentConfig(deployment)
+		}
+	}
+	merge := func(id string, deployment DeploymentConfig) {
+		current := out[id]
+		mergeDeploymentConfigFields(&current, deployment)
+		if !deploymentConfigIsEmpty(current) {
+			out[id] = current
+		}
+	}
+	if cfg.AnthropicAPIKey != "" {
+		merge("anthropic-direct", DeploymentConfig{APIKey: cfg.AnthropicAPIKey})
+	}
+	if cfg.OpenAIAPIKey != "" {
+		merge("openai-direct", DeploymentConfig{APIKey: cfg.OpenAIAPIKey})
+	}
+	if cfg.GrokAPIKey != "" {
+		merge("grok-direct", DeploymentConfig{APIKey: cfg.GrokAPIKey})
+	}
+	if cfg.OpenRouterAPIKey != "" {
+		merge("openrouter", DeploymentConfig{APIKey: cfg.OpenRouterAPIKey})
+	}
+	if cfg.GeminiAPIKey != "" {
+		merge("gemini-direct", DeploymentConfig{APIKey: cfg.GeminiAPIKey})
+	}
+	if cfg.OllamaBaseURL != "" {
+		merge("ollama-local", DeploymentConfig{BaseURL: cfg.OllamaBaseURL})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeDeploymentConfigFields(current *DeploymentConfig, incoming DeploymentConfig) {
+	if current.APIKey == "" {
+		current.APIKey = incoming.APIKey
+	}
+	if current.BaseURL == "" {
+		current.BaseURL = incoming.BaseURL
+	}
+	if current.Endpoint == "" {
+		current.Endpoint = incoming.Endpoint
+	}
+	if current.APIVersion == "" {
+		current.APIVersion = incoming.APIVersion
+	}
+	if current.ProjectID == "" {
+		current.ProjectID = incoming.ProjectID
+	}
+	if current.Region == "" {
+		current.Region = incoming.Region
+	}
+	if len(current.ModelMappings) == 0 {
+		current.ModelMappings = cloneStringMap(incoming.ModelMappings)
+	}
+}
+
+func deploymentConfigIsEmpty(deployment DeploymentConfig) bool {
+	return deployment.APIKey == "" &&
+		deployment.BaseURL == "" &&
+		deployment.Endpoint == "" &&
+		deployment.APIVersion == "" &&
+		deployment.ProjectID == "" &&
+		deployment.Region == "" &&
+		len(deployment.ModelMappings) == 0
+}
+
+func cloneRoutingPolicy(policy *RoutingPolicy) *RoutingPolicy {
+	if policy == nil {
+		return nil
+	}
+	clone := &RoutingPolicy{
+		Default:   cloneRoutingStages(policy.Default),
+		Providers: map[string][]RoutingStage{},
+		Models:    map[string][]RoutingStage{},
+	}
+	for providerID, stages := range policy.Providers {
+		clone.Providers[providerID] = cloneRoutingStages(stages)
+	}
+	for modelID, stages := range policy.Models {
+		clone.Models[modelID] = cloneRoutingStages(stages)
+	}
+	if len(clone.Default) == 0 {
+		clone.Default = nil
+	}
+	if len(clone.Providers) == 0 {
+		clone.Providers = nil
+	}
+	if len(clone.Models) == 0 {
+		clone.Models = nil
+	}
+	if len(clone.Default) == 0 && len(clone.Providers) == 0 && len(clone.Models) == 0 {
+		return nil
+	}
+	return clone
+}
+
+func cloneRoutingStages(stages []RoutingStage) []RoutingStage {
+	if len(stages) == 0 {
+		return nil
+	}
+	clone := make([]RoutingStage, len(stages))
+	for i, stage := range stages {
+		clone[i] = RoutingStage{
+			Deployments: append([]DeploymentChoice(nil), stage.Deployments...),
+			Retries:     stage.Retries,
+		}
+	}
+	return clone
 }
 
 func mergeDeploymentAwareProjectConfig(global DeploymentAwareConfig, project ProjectConfig) DeploymentAwareConfig {
@@ -295,6 +402,7 @@ type RoutingValidationIndex struct {
 	KnownDeployments           map[string]bool
 	AvailableDeployments       map[string]bool
 	EligibleDeploymentsByModel map[string]map[string]bool
+	MissingMappingsByModel     map[string]map[string]bool
 }
 
 func (r RoutingPolicy) validate(index RoutingValidationIndex) []RoutingDiagnostic {
@@ -302,90 +410,9 @@ func (r RoutingPolicy) validate(index RoutingValidationIndex) []RoutingDiagnosti
 	if len(knownProviders) == 0 {
 		knownProviders = knownCanonicalProviderIDs()
 	}
-	knownDeployments := index.KnownDeployments
-	if len(knownDeployments) == 0 {
-		knownDeployments = knownDeploymentIDs()
-	}
-	availableDeployments := index.AvailableDeployments
 	var diagnostics []RoutingDiagnostic
-	validateStages := func(path string, canonicalModelID string, stages []RoutingStage) {
-		if len(stages) == 0 {
-			diagnostics = append(diagnostics, RoutingDiagnostic{
-				Path:    path,
-				Code:    "empty_override",
-				Message: "route override is authoritative and contains no stages",
-			})
-			return
-		}
-		for i, stage := range stages {
-			stagePath := fmt.Sprintf("%s[%d]", path, i)
-			eligibleCount := 0
-			if stage.Retries < 0 {
-				diagnostics = append(diagnostics, RoutingDiagnostic{
-					Path:    stagePath + ".retries",
-					Code:    "negative_retries",
-					Message: "retries must be zero or greater",
-				})
-			}
-			if len(stage.Deployments) == 0 {
-				diagnostics = append(diagnostics, RoutingDiagnostic{
-					Path:    stagePath + ".deployments",
-					Code:    "empty_stage",
-					Message: "route stage must include at least one deployment choice",
-				})
-				continue
-			}
-			for j, choice := range stage.Deployments {
-				choicePath := fmt.Sprintf("%s.deployments[%d]", stagePath, j)
-				if choice.DeploymentID == "" {
-					diagnostics = append(diagnostics, RoutingDiagnostic{
-						Path:    choicePath + ".deployment_id",
-						Code:    "missing_deployment_id",
-						Message: "deployment_id is required",
-					})
-				} else if !knownDeployments[choice.DeploymentID] {
-					diagnostics = append(diagnostics, RoutingDiagnostic{
-						Path:    choicePath + ".deployment_id",
-						Code:    "unknown_deployment",
-						Message: "deployment is not present in the catalog",
-					})
-				} else if availableDeployments != nil && !availableDeployments[choice.DeploymentID] {
-					diagnostics = append(diagnostics, RoutingDiagnostic{
-						Path:    choicePath + ".deployment_id",
-						Code:    "unavailable_deployment",
-						Message: "deployment is configured in routing but is not locally available",
-					})
-				}
-				if choice.Weight <= 0 {
-					diagnostics = append(diagnostics, RoutingDiagnostic{
-						Path:    choicePath + ".weight",
-						Code:    "non_positive_weight",
-						Message: "weight must be greater than zero",
-					})
-				}
-				if choice.DeploymentID != "" && knownDeployments[choice.DeploymentID] && (availableDeployments == nil || availableDeployments[choice.DeploymentID]) && choice.Weight > 0 {
-					if canonicalModelID == "" || deploymentCanServeModel(canonicalModelID, choice.DeploymentID, index.EligibleDeploymentsByModel) {
-						eligibleCount++
-					} else {
-						diagnostics = append(diagnostics, RoutingDiagnostic{
-							Path:    choicePath + ".deployment_id",
-							Code:    "ineligible_deployment",
-							Message: "deployment cannot serve this canonical model",
-						})
-					}
-				}
-			}
-			if canonicalModelID != "" && len(stage.Deployments) > 0 && eligibleCount == 0 {
-				diagnostics = append(diagnostics, RoutingDiagnostic{
-					Path:    stagePath + ".deployments",
-					Code:    "no_eligible_deployments",
-					Message: "route stage has no deployment choices that can serve this canonical model",
-				})
-			}
-		}
-	}
 	if r.Default != nil {
-		validateStages("routing.default", "", r.Default)
+		diagnostics = append(diagnostics, validateRoutingStages("routing.default", "", r.Default, index)...)
 	}
 	for providerID, stages := range r.Providers {
 		canonical := canonicalProviderID(providerID)
@@ -397,16 +424,105 @@ func (r RoutingPolicy) validate(index RoutingValidationIndex) []RoutingDiagnosti
 			diagnostics = append(diagnostics, RoutingDiagnostic{Path: "routing.providers." + providerID, Code: "unknown_provider", Message: "provider route key is not a known catalog provider"})
 			continue
 		}
-		validateStages("routing.providers."+providerID, "", stages)
+		diagnostics = append(diagnostics, validateRoutingStages("routing.providers."+providerID, "", stages, index)...)
 	}
 	for canonicalModelID, stages := range r.Models {
 		if !looksCanonicalModelID(canonicalModelID) {
 			diagnostics = append(diagnostics, RoutingDiagnostic{Path: "routing.models." + canonicalModelID, Code: "invalid_canonical_model_id", Message: "model route key must be an owner-qualified canonical model id"})
 			continue
 		}
-		validateStages("routing.models."+canonicalModelID, canonicalModelID, stages)
+		diagnostics = append(diagnostics, validateRoutingStages("routing.models."+canonicalModelID, canonicalModelID, stages, index)...)
 	}
 	sortRoutingDiagnostics(diagnostics)
+	return diagnostics
+}
+
+func validateRoutingStages(path string, canonicalModelID string, stages []RoutingStage, index RoutingValidationIndex) []RoutingDiagnostic {
+	knownDeployments := index.KnownDeployments
+	if len(knownDeployments) == 0 {
+		knownDeployments = knownDeploymentIDs()
+	}
+	availableDeployments := index.AvailableDeployments
+	var diagnostics []RoutingDiagnostic
+	if len(stages) == 0 {
+		return []RoutingDiagnostic{{
+			Path:    path,
+			Code:    "empty_override",
+			Message: "route override is authoritative and contains no stages",
+		}}
+	}
+	for i, stage := range stages {
+		stagePath := fmt.Sprintf("%s[%d]", path, i)
+		eligibleCount := 0
+		if stage.Retries < 0 {
+			diagnostics = append(diagnostics, RoutingDiagnostic{
+				Path:    stagePath + ".retries",
+				Code:    "negative_retries",
+				Message: "retries must be zero or greater",
+			})
+		}
+		if len(stage.Deployments) == 0 {
+			diagnostics = append(diagnostics, RoutingDiagnostic{
+				Path:    stagePath + ".deployments",
+				Code:    "empty_stage",
+				Message: "route stage must include at least one deployment choice",
+			})
+			continue
+		}
+		for j, choice := range stage.Deployments {
+			choicePath := fmt.Sprintf("%s.deployments[%d]", stagePath, j)
+			if choice.DeploymentID == "" {
+				diagnostics = append(diagnostics, RoutingDiagnostic{
+					Path:    choicePath + ".deployment_id",
+					Code:    "missing_deployment_id",
+					Message: "deployment_id is required",
+				})
+			} else if !knownDeployments[choice.DeploymentID] {
+				diagnostics = append(diagnostics, RoutingDiagnostic{
+					Path:    choicePath + ".deployment_id",
+					Code:    "unknown_deployment",
+					Message: "deployment is not present in the catalog",
+				})
+			} else if availableDeployments != nil && !availableDeployments[choice.DeploymentID] {
+				diagnostics = append(diagnostics, RoutingDiagnostic{
+					Path:    choicePath + ".deployment_id",
+					Code:    "unavailable_deployment",
+					Message: "deployment is configured in routing but is not locally available",
+				})
+			}
+			if choice.Weight <= 0 {
+				diagnostics = append(diagnostics, RoutingDiagnostic{
+					Path:    choicePath + ".weight",
+					Code:    "non_positive_weight",
+					Message: "weight must be greater than zero",
+				})
+			}
+			if choice.DeploymentID != "" && knownDeployments[choice.DeploymentID] && (availableDeployments == nil || availableDeployments[choice.DeploymentID]) && choice.Weight > 0 {
+				if canonicalModelID == "" || deploymentCanServeModel(canonicalModelID, choice.DeploymentID, index.EligibleDeploymentsByModel) {
+					eligibleCount++
+				} else if deploymentNeedsModelMapping(canonicalModelID, choice.DeploymentID, index.MissingMappingsByModel) {
+					diagnostics = append(diagnostics, RoutingDiagnostic{
+						Path:    choicePath + ".deployment_id",
+						Code:    "missing_model_mapping",
+						Message: "deployment requires model_mappings for this canonical model",
+					})
+				} else {
+					diagnostics = append(diagnostics, RoutingDiagnostic{
+						Path:    choicePath + ".deployment_id",
+						Code:    "ineligible_deployment",
+						Message: "deployment cannot serve this canonical model",
+					})
+				}
+			}
+		}
+		if canonicalModelID != "" && len(stage.Deployments) > 0 && eligibleCount == 0 {
+			diagnostics = append(diagnostics, RoutingDiagnostic{
+				Path:    stagePath + ".deployments",
+				Code:    "no_eligible_deployments",
+				Message: "route stage has no deployment choices that can serve this canonical model",
+			})
+		}
+	}
 	return diagnostics
 }
 
@@ -433,12 +549,12 @@ type ModelIDMigrationResult struct {
 
 func migrateStoredModelIDToCanonical(savedModelID string, offerings []ModelIDMigrationOffering, smartDefault string) ModelIDMigrationResult {
 	if savedModelID != "" {
+		if looksCanonicalModelID(savedModelID) {
+			return ModelIDMigrationResult{CanonicalModelID: savedModelID, Status: ModelIDMigrationCanonicalMatch}
+		}
 		canonicalSeen := map[string]bool{}
 		for _, offering := range offerings {
 			canonicalSeen[offering.CanonicalModelID] = true
-			if offering.CanonicalModelID == savedModelID {
-				return ModelIDMigrationResult{CanonicalModelID: savedModelID, Status: ModelIDMigrationCanonicalMatch}
-			}
 		}
 		matches := make([]ModelIDMigrationOffering, 0, 1)
 		for _, offering := range offerings {
@@ -530,6 +646,14 @@ func deploymentCanServeModel(canonicalModelID, deploymentID string, eligibleDepl
 	return eligible[deploymentID]
 }
 
+func deploymentNeedsModelMapping(canonicalModelID, deploymentID string, missingMappingsByModel map[string]map[string]bool) bool {
+	missing := missingMappingsByModel[canonicalModelID]
+	if missing == nil {
+		return false
+	}
+	return missing[deploymentID]
+}
+
 func sortRoutingDiagnostics(diagnostics []RoutingDiagnostic) {
 	sort.Slice(diagnostics, func(i, j int) bool {
 		if diagnostics[i].Path == diagnostics[j].Path {
@@ -537,4 +661,85 @@ func sortRoutingDiagnostics(diagnostics []RoutingDiagnostic) {
 		}
 		return diagnostics[i].Path < diagnostics[j].Path
 	})
+}
+
+func formatRoutingStages(stages []RoutingStage) string {
+	if len(stages) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		choices := make([]string, 0, len(stage.Deployments))
+		for _, choice := range stage.Deployments {
+			if choice.DeploymentID == "" {
+				continue
+			}
+			weight := choice.Weight
+			if weight == 0 {
+				weight = 100
+			}
+			choices = append(choices, fmt.Sprintf("%s:%d", choice.DeploymentID, weight))
+		}
+		if len(choices) == 0 {
+			continue
+		}
+		part := strings.Join(choices, ",")
+		if stage.Retries > 0 {
+			part += fmt.Sprintf("@%d", stage.Retries)
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, " | ")
+}
+
+func parseRoutingStages(value string) ([]RoutingStage, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	rawStages := strings.Split(value, "|")
+	stages := make([]RoutingStage, 0, len(rawStages))
+	for _, rawStage := range rawStages {
+		rawStage = strings.TrimSpace(rawStage)
+		if rawStage == "" {
+			continue
+		}
+		retries := 0
+		if idx := strings.LastIndex(rawStage, "@"); idx >= 0 {
+			rawRetries := strings.TrimSpace(rawStage[idx+1:])
+			n, err := strconv.Atoi(rawRetries)
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("invalid retry count %q", rawRetries)
+			}
+			retries = n
+			rawStage = strings.TrimSpace(rawStage[:idx])
+		}
+		rawChoices := strings.Split(rawStage, ",")
+		stage := RoutingStage{Retries: retries}
+		for _, rawChoice := range rawChoices {
+			rawChoice = strings.TrimSpace(rawChoice)
+			if rawChoice == "" {
+				continue
+			}
+			deploymentID := rawChoice
+			weight := 100
+			if id, rawWeight, ok := strings.Cut(rawChoice, ":"); ok {
+				deploymentID = strings.TrimSpace(id)
+				n, err := strconv.Atoi(strings.TrimSpace(rawWeight))
+				if err != nil {
+					return nil, fmt.Errorf("invalid weight %q", rawWeight)
+				}
+				weight = n
+			}
+			if deploymentID == "" {
+				return nil, fmt.Errorf("deployment_id is required")
+			}
+			stage.Deployments = append(stage.Deployments, DeploymentChoice{DeploymentID: deploymentID, Weight: weight})
+		}
+		if len(stage.Deployments) == 0 {
+			continue
+		}
+		stages = append(stages, stage)
+	}
+	return stages, nil
 }
