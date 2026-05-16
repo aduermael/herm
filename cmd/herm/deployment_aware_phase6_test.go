@@ -202,7 +202,7 @@ func TestPhase7RoutingValidationIndexCapturesAzureMappingAvailability(t *testing
 		"openai-azure": {APIKey: "sk", Endpoint: "https://example.openai.azure.com", APIVersion: "2024-08-01-preview"},
 	}}
 
-	index := routingValidationIndexForConfigModels(cfg, []ModelDef{model})
+	index := routingValidationIndexForConfigModels(configModelsOptions{cfg: cfg, models: []ModelDef{model}})
 	if index.EligibleDeploymentsByModel[model.ID]["openai-azure"] {
 		t.Fatalf("Azure deployment should not be eligible without model mapping")
 	}
@@ -218,7 +218,7 @@ func TestPhase7RoutingValidationIndexCapturesAzureMappingAvailability(t *testing
 			model.ID: "my-gpt-4-1-prod",
 		},
 	}
-	index = routingValidationIndexForConfigModels(cfg, []ModelDef{model})
+	index = routingValidationIndexForConfigModels(configModelsOptions{cfg: cfg, models: []ModelDef{model}})
 	if !index.EligibleDeploymentsByModel[model.ID]["openai-azure"] {
 		t.Fatalf("Azure deployment should be eligible with model mapping: %+v", index.EligibleDeploymentsByModel)
 	}
@@ -276,7 +276,7 @@ func TestPhase6ConfiguredProviderUsesEligibleDeployment(t *testing.T) {
 			"openai-azure": {APIKey: "az", Endpoint: "https://example.openai.azure.com", APIVersion: "2024-08-01-preview"},
 		},
 	}
-	if got := configuredProviderForModel(cfg, model); got != ProviderOpenRouter {
+	if got := configuredProviderForModel(configuredProviderForModelOptions{cfg: cfg, model: model}); got != ProviderOpenRouter {
 		t.Fatalf("configuredProviderForModel = %q, want openrouter for eligible route", got)
 	}
 }
@@ -383,7 +383,7 @@ func TestPhase6OpenRouterDynamicMergeAvoidsDuplicateCanonicalRows(t *testing.T) 
 		}},
 		NativeModelIDs: []string{"openai/gpt-phase6"},
 	}}
-	merged := mergeDynamicModels(base, dynamic)
+	merged := mergeDynamicModels(mergeDynamicModelsOptions{base: base, dynamic: dynamic})
 	var count int
 	for _, model := range merged {
 		if model.ID == "openai/gpt-phase6" {
@@ -531,7 +531,7 @@ func TestPhase6StructuredUnknownCostIsAuthoritative(t *testing.T) {
 		t.Fatalf("structured unknown pricing should not fall back to current catalog estimate: %+v", cost)
 	}
 	fallback := types.CostResult{Status: types.CostStatusKnown, Total: 0.01}
-	preferred := preferStructuredCost(cost, fallback)
+	preferred := preferStructuredCost(structuredCostPreference{metadataCost: cost, fallbackCost: fallback})
 	if preferred.Status != types.CostStatusUnknown {
 		t.Fatalf("preferStructuredCost should keep authoritative structured unknown, got %+v", preferred)
 	}

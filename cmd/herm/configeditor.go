@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,27 +22,17 @@ func (a *App) isOllamaOffline(modelID string) bool {
 	}
 	// Check if it's in the live list as an Ollama model.
 	for _, m := range a.models {
-		if modelMatchesID(m, modelID) && m.Provider == ProviderOllama {
+		if modelMatchesID(modelMatchesIDOptions{model: m, id: modelID}) && m.Provider == ProviderOllama {
 			return false // online and present
 		}
 	}
 	// Not in live list — treat as offline if it's not a known catalog model either.
 	for _, m := range a.models {
-		if modelMatchesID(m, modelID) {
+		if modelMatchesID(modelMatchesIDOptions{model: m, id: modelID}) {
 			return false // it's a different provider's model
 		}
 	}
 	return true // unknown to catalog → assume offline Ollama model
-}
-
-func maskKey(key string) string {
-	if key == "" {
-		return "(not set)"
-	}
-	if len(key) <= 8 {
-		return "****"
-	}
-	return key[:4] + "..." + key[len(key)-4:]
 }
 
 // ─── Config editor ───
@@ -60,178 +49,6 @@ type cfgField struct {
 	picker     func(*App)          // if non-nil, Enter opens a picker (e.g. model selector) instead of editor
 }
 
-var cfgAPIKeyFields = []cfgField{
-	deploymentTextField("Anthropic Direct API Key", "anthropic-direct", "api_key", true, false),
-	deploymentTextField("OpenAI Direct API Key", "openai-direct", "api_key", true, false),
-	deploymentTextField("Grok Direct API Key", "grok-direct", "api_key", true, false),
-	deploymentTextField("OpenRouter API Key", "openrouter", "api_key", true, false),
-	deploymentTextField("Gemini Direct API Key", "gemini-direct", "api_key", true, false),
-	deploymentTextField("Ollama Base URL", "ollama-local", "base_url", false, true),
-	deploymentTextField("OpenAI Direct Base URL", "openai-direct", "base_url", false, true),
-	deploymentTextField("Azure OpenAI API Key", "openai-azure", "api_key", true, false),
-	deploymentTextField("Azure OpenAI Endpoint", "openai-azure", "endpoint", false, true),
-	deploymentTextField("Azure OpenAI API Version", "openai-azure", "api_version", false, false),
-	deploymentModelMappingsField("Azure Model Mappings", "openai-azure"),
-	deploymentTextField("Anthropic Bedrock Region", "anthropic-bedrock", "region", false, false),
-	deploymentTextField("Anthropic Vertex Project", "anthropic-vertex", "project_id", false, false),
-	deploymentTextField("Anthropic Vertex Region", "anthropic-vertex", "region", false, false),
-	deploymentTextField("Gemini Vertex Project", "gemini-vertex", "project_id", false, false),
-	deploymentTextField("Gemini Vertex Region", "gemini-vertex", "region", false, false),
-	deploymentTextField("Grok Base URL", "grok-direct", "base_url", false, true),
-	deploymentTextField("OpenRouter Base URL", "openrouter", "base_url", false, true),
-}
-
-func deploymentTextField(label, deploymentID, field string, secret, normalizeURL bool) cfgField {
-	get := func(c Config) string {
-		return deploymentFieldValue(c.deploymentConfigs()[deploymentID], field)
-	}
-	display := func(c Config) string {
-		value := get(c)
-		if secret {
-			return maskKey(value)
-		}
-		return value
-	}
-	return cfgField{
-		label: label,
-		get:   get,
-		display: func(c Config) string {
-			if secret {
-				return display(c)
-			}
-			return get(c)
-		},
-		set: func(c *Config, v string) {
-			v = strings.TrimSpace(v)
-			if normalizeURL && v != "" && !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
-				v = "http://" + v
-			}
-			setConfigDeploymentField(c, deploymentID, field, v)
-		},
-	}
-}
-
-func deploymentModelMappingsField(label, deploymentID string) cfgField {
-	return cfgField{
-		label:   label,
-		get:     func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
-		display: func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
-		set: func(c *Config, v string) {
-			mappings := parseStringMap(v)
-			ensureDeploymentConfig(c, deploymentID)
-			deployment := c.Deployments[deploymentID]
-			deployment.ModelMappings = mappings
-			setConfigDeployment(c, deploymentID, deployment)
-		},
-	}
-}
-
-func ensureDeploymentConfig(c *Config, deploymentID string) {
-	if c.Deployments == nil {
-		c.Deployments = map[string]DeploymentConfig{}
-	}
-	if _, ok := c.Deployments[deploymentID]; !ok {
-		c.Deployments[deploymentID] = DeploymentConfig{}
-	}
-}
-
-func setConfigDeployment(c *Config, deploymentID string, deployment DeploymentConfig) {
-	if deploymentConfigIsEmpty(deployment) {
-		delete(c.Deployments, deploymentID)
-		if len(c.Deployments) == 0 {
-			c.Deployments = nil
-		}
-		return
-	}
-	ensureDeploymentConfig(c, deploymentID)
-	c.Deployments[deploymentID] = deployment
-}
-
-func setConfigDeploymentField(c *Config, deploymentID, field, value string) {
-	ensureDeploymentConfig(c, deploymentID)
-	deployment := c.Deployments[deploymentID]
-	setDeploymentFieldValue(&deployment, field, value)
-	setConfigDeployment(c, deploymentID, deployment)
-	setLegacyDeploymentField(c, deploymentID, field, value)
-}
-
-func setLegacyDeploymentField(c *Config, deploymentID, field, value string) {
-	switch {
-	case deploymentID == "anthropic-direct" && field == "api_key":
-		c.AnthropicAPIKey = value
-	case deploymentID == "openai-direct" && field == "api_key":
-		c.OpenAIAPIKey = value
-	case deploymentID == "grok-direct" && field == "api_key":
-		c.GrokAPIKey = value
-	case deploymentID == "openrouter" && field == "api_key":
-		c.OpenRouterAPIKey = value
-	case deploymentID == "gemini-direct" && field == "api_key":
-		c.GeminiAPIKey = value
-	case deploymentID == "ollama-local" && field == "base_url":
-		c.OllamaBaseURL = value
-	}
-}
-
-func formatStringMap(values map[string]string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	parts := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts = append(parts, key+"="+values[key])
-	}
-	return strings.Join(parts, ",")
-}
-
-func parseStringMap(value string) map[string]string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	value = strings.ReplaceAll(value, ";", ",")
-	parts := strings.Split(value, ",")
-	out := map[string]string{}
-	for _, part := range parts {
-		key, val, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok {
-			key, val, ok = strings.Cut(strings.TrimSpace(part), ":")
-		}
-		key = strings.TrimSpace(key)
-		val = strings.TrimSpace(val)
-		if ok && key != "" && val != "" {
-			out[key] = val
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func apiKeyRowForProvider(provider string) int {
-	switch provider {
-	case ProviderAnthropic:
-		return 0
-	case ProviderOpenAI:
-		return 1
-	case ProviderGrok:
-		return 2
-	case ProviderOpenRouter:
-		return 3
-	case ProviderGemini:
-		return 4
-	case ProviderOllama:
-		return 5
-	default:
-		return 0
-	}
-}
-
 // effectiveProviderForConfig returns the provider implied by the effective
 // active model. Falls back to the default configured provider when no active
 // model can be resolved.
@@ -239,10 +56,14 @@ func (a *App) effectiveProviderForConfig(cfg Config) (provider string, modelID s
 	modelID = cfg.resolveActiveModel(a.models)
 	if modelID != "" {
 		if model := findModelByID(findModelByIDOptions{models: a.models, id: modelID}); model != nil {
-			return configuredProviderForModel(cfg, *model), modelID
+			return configuredProviderForModel(configuredProviderForModelOptions{cfg: cfg, model: *model}), modelID
 		}
 		// For unknown model IDs, keep the existing offline-Ollama assumption.
-		return configuredProviderForModelID(cfg, a.models, modelID), modelID
+		return configuredProviderForModelID(configuredProviderForModelIDOptions{
+			cfg:     cfg,
+			models:  a.models,
+			modelID: modelID,
+		}), modelID
 	}
 	return cfg.defaultLangdagProvider(), ""
 }
@@ -285,9 +106,9 @@ func (a *App) projectConfigRoot() string {
 
 func (a *App) exitConfigMode(save bool) {
 	if save {
-		a.globalConfig = normalizeConfigForModels(a.cfgDraft, a.models)
+		a.globalConfig = normalizeConfigForModels(configModelsOptions{cfg: a.cfgDraft, models: a.models})
 		a.cfgDraft = a.globalConfig
-		a.projectConfig = normalizeProjectConfigForModels(a.cfgProjectDraft, a.models)
+		a.projectConfig = normalizeProjectConfigForModels(normalizeProjectConfigForModelsOptions{pc: a.cfgProjectDraft, models: a.models})
 		a.cfgProjectDraft = a.projectConfig
 		a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
 		// Re-initialize debug log if debug mode changed
@@ -424,7 +245,7 @@ func (a *App) doOpenConfigModelPicker(opts doOpenConfigModelPickerOptions) {
 		if savedID == "" {
 			savedID = a.cfgDraft.ActiveModel
 		}
-		if savedID != "" && !modelListContainsID(available, savedID) {
+		if savedID != "" && !modelListContainsID(modelListContainsIDOptions{models: available, id: savedID}) {
 			available = append(available, ModelDef{
 				Provider:      ProviderOpenRouter,
 				ID:            savedID,
@@ -450,7 +271,7 @@ func (a *App) doOpenConfigModelPicker(opts doOpenConfigModelPickerOptions) {
 
 	activeIdx := 0
 	for i, m := range a.menuModels {
-		if modelMatchesID(m, activeID) {
+		if modelMatchesID(modelMatchesIDOptions{model: m, id: activeID}) {
 			activeIdx = i
 			break
 		}
@@ -512,12 +333,12 @@ func (a *App) resolvedExplorationDisplay(c Config) string {
 func (a *App) settingsTabFields() []cfgField {
 	return []cfgField{
 		{label: "Active Model", get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) {
-			c.ActiveModel = normalizeConfigModelIDForModels(*c, v, defaultCanonicalActiveModel, a.models)
+			c.ActiveModel = normalizeConfigModelIDForModels(normalizeConfigModelIDForModelsOptions{cfg: *c, modelID: v, smartDefault: defaultCanonicalActiveModel, models: a.models})
 		}, picker: func(a *App) {
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) { a.cfgDraft.ActiveModel = id }})
 		}},
 		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) {
-			c.ExplorationModel = normalizeConfigModelIDForModels(*c, v, defaultCanonicalExplorationModel, a.models)
+			c.ExplorationModel = normalizeConfigModelIDForModels(normalizeConfigModelIDForModelsOptions{cfg: *c, modelID: v, smartDefault: defaultCanonicalExplorationModel, models: a.models})
 		}, picker: func(a *App) {
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) { a.cfgDraft.ExplorationModel = id }})
 		}},
@@ -575,117 +396,13 @@ func (a *App) settingsTabFields() []cfgField {
 	}
 }
 
-func (a *App) routingTabFields() []cfgField {
-	return nil
-}
-
-type routingScope string
-
-const (
-	routingScopeDefault  routingScope = "default"
-	routingScopeProvider routingScope = "provider"
-	routingScopeModel    routingScope = "model"
-)
-
-func (a *App) routingStagesField(label string, scope routingScope, key string) cfgField {
-	return cfgField{
-		label: label,
-		get: func(c Config) string {
-			if c.Routing == nil {
-				return ""
-			}
-			return formatRoutingStages(getRoutingStages(c.Routing, scope, key))
-		},
-		set: func(c *Config, v string) {
-			stages, err := parseRoutingStages(v)
-			if err != nil {
-				a.messages = append(a.messages, chatMessage{kind: msgError, content: "Invalid routing: " + err.Error()})
-				return
-			}
-			setRoutingStages(c, scope, key, stages)
-		},
-	}
-}
-
-func getRoutingStages(policy *RoutingPolicy, scope routingScope, key string) []RoutingStage {
-	if policy == nil {
-		return nil
-	}
-	switch scope {
-	case routingScopeDefault:
-		return policy.Default
-	case routingScopeProvider:
-		return policy.Providers[key]
-	case routingScopeModel:
-		return policy.Models[key]
-	default:
-		return nil
-	}
-}
-
-func setRoutingStages(c *Config, scope routingScope, key string, stages []RoutingStage) {
-	if c.Routing == nil {
-		c.Routing = &RoutingPolicy{}
-	}
-	switch scope {
-	case routingScopeDefault:
-		c.Routing.Default = stages
-	case routingScopeProvider:
-		if len(stages) == 0 {
-			delete(c.Routing.Providers, key)
-		} else {
-			if c.Routing.Providers == nil {
-				c.Routing.Providers = map[string][]RoutingStage{}
-			}
-			c.Routing.Providers[key] = stages
-		}
-	case routingScopeModel:
-		if len(stages) == 0 {
-			delete(c.Routing.Models, key)
-		} else {
-			if c.Routing.Models == nil {
-				c.Routing.Models = map[string][]RoutingStage{}
-			}
-			c.Routing.Models[key] = stages
-		}
-	}
-	c.Routing = cloneRoutingPolicy(c.Routing)
-}
-
-func (a *App) routingControlsVisible(cfg Config) bool {
-	return len(eligibleDeploymentIDsForConfigModels(cfg, a.models)) >= 2 || !routingPolicyIsEmpty(cfg.Routing)
-}
-
-func eligibleDeploymentIDsForConfigModels(cfg Config, models []ModelDef) map[string]bool {
-	configured := cfg.configuredDeploymentIDs()
-	deploymentConfigs := cfg.deploymentConfigs()
-	eligible := map[string]bool{}
-	for _, model := range models {
-		for _, deployment := range model.Deployments {
-			if !configured[deployment.DeploymentID] {
-				continue
-			}
-			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
-				continue
-			}
-			eligible[deployment.DeploymentID] = true
-		}
-	}
-	if len(models) == 0 {
-		for deploymentID := range configured {
-			eligible[deploymentID] = true
-		}
-	}
-	return eligible
-}
-
 func (a *App) projectTabFields() []cfgField {
 	return []cfgField{
 		{
 			label: "Active Model",
 			get:   func(_ Config) string { return a.cfgProjectDraft.ActiveModel },
 			set: func(_ *Config, v string) {
-				a.cfgProjectDraft.ActiveModel = normalizeProjectModelIDForModels(v, defaultCanonicalActiveModel, a.models)
+				a.cfgProjectDraft.ActiveModel = normalizeProjectModelIDForModels(normalizeProjectModelIDForModelsOptions{modelID: v, smartDefault: defaultCanonicalActiveModel, models: a.models})
 			},
 			globalHint: func(c Config) string { return c.ActiveModel },
 			picker: func(a *App) {
@@ -696,7 +413,7 @@ func (a *App) projectTabFields() []cfgField {
 			label: "Exploration Model",
 			get:   func(_ Config) string { return a.cfgProjectDraft.ExplorationModel },
 			set: func(_ *Config, v string) {
-				a.cfgProjectDraft.ExplorationModel = normalizeProjectModelIDForModels(v, defaultCanonicalExplorationModel, a.models)
+				a.cfgProjectDraft.ExplorationModel = normalizeProjectModelIDForModels(normalizeProjectModelIDForModelsOptions{modelID: v, smartDefault: defaultCanonicalExplorationModel, models: a.models})
 			},
 			globalHint: func(c Config) string { return a.resolvedExplorationDisplay(c) },
 			picker: func(a *App) {
@@ -846,7 +563,11 @@ func (a *App) buildConfigRows() []string {
 				val = f.get(a.cfgDraft)
 			}
 			if f.picker != nil && val != "" {
-				p := configuredProviderForModelID(a.cfgDraft, a.models, val)
+				p := configuredProviderForModelID(configuredProviderForModelIDOptions{
+					cfg:     a.cfgDraft,
+					models:  a.models,
+					modelID: val,
+				})
 				// Hide model values when no providers are configured, or when this
 				// model's provider is not currently configured.
 				if !isProjectTab && (!hasProvider || p == "" || !configured[p]) {
@@ -864,7 +585,11 @@ func (a *App) buildConfigRows() []string {
 				} else if f.globalHint != nil {
 					hint := f.globalHint(a.cfgDraft)
 					if f.picker != nil && !isProjectTab {
-						p := configuredProviderForModelID(a.cfgDraft, a.models, hint)
+						p := configuredProviderForModelID(configuredProviderForModelIDOptions{
+							cfg:     a.cfgDraft,
+							models:  a.models,
+							modelID: hint,
+						})
 						if hint == "" || p == "" || !configured[p] {
 							hint = "not set"
 						}
@@ -886,7 +611,7 @@ func (a *App) buildConfigRows() []string {
 	}
 
 	if a.cfgTab == 1 && a.cfgDraft.Routing != nil {
-		diagnostics := routingDiagnosticsForConfigModels(a.cfgDraft, a.models)
+		diagnostics := routingDiagnosticsForConfigModels(configModelsOptions{cfg: a.cfgDraft, models: a.models})
 		for i, diagnostic := range diagnostics {
 			if i >= routingDiagnosticsMaxRows {
 				rows = append(rows, fmt.Sprintf("\033[33m%d more routing diagnostics\033[0m", len(diagnostics)-i))

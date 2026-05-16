@@ -1,3 +1,5 @@
+// deployment_config.go defines deployment-aware config migration, routing
+// validation, and canonical model ID normalization helpers.
 package main
 
 import (
@@ -156,11 +158,19 @@ func migrateDeploymentAwareConfigFromLegacyConfig(opts DeploymentAwareConfigMigr
 	}
 	active := ModelIDMigrationResult{}
 	if cfg.ActiveModel != "" {
-		active = migrateStoredModelIDToCanonical(cfg.ActiveModel, offerings, activeDefault)
+		active = migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+			savedModelID: cfg.ActiveModel,
+			offerings:    offerings,
+			smartDefault: activeDefault,
+		})
 	}
 	exploration := ModelIDMigrationResult{}
 	if cfg.ExplorationModel != "" {
-		exploration = migrateStoredModelIDToCanonical(cfg.ExplorationModel, offerings, explorationDefault)
+		exploration = migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+			savedModelID: cfg.ExplorationModel,
+			offerings:    offerings,
+			smartDefault: explorationDefault,
+		})
 	}
 	result := DeploymentAwareConfig{
 		ConfigVersion:         hermConfigVersionDeploymentAware,
@@ -198,7 +208,10 @@ func deploymentConfigsForStorage(cfg Config) map[string]DeploymentConfig {
 	}
 	merge := func(id string, deployment DeploymentConfig) {
 		current := out[id]
-		mergeDeploymentConfigFields(&current, deployment)
+		mergeDeploymentConfigFields(mergeDeploymentConfigFieldsOptions{
+			current:  &current,
+			incoming: deployment,
+		})
 		if !deploymentConfigIsEmpty(current) {
 			out[id] = current
 		}
@@ -227,7 +240,14 @@ func deploymentConfigsForStorage(cfg Config) map[string]DeploymentConfig {
 	return out
 }
 
-func mergeDeploymentConfigFields(current *DeploymentConfig, incoming DeploymentConfig) {
+type mergeDeploymentConfigFieldsOptions struct {
+	current  *DeploymentConfig
+	incoming DeploymentConfig
+}
+
+func mergeDeploymentConfigFields(opts mergeDeploymentConfigFieldsOptions) {
+	current := opts.current
+	incoming := opts.incoming
 	if current.APIKey == "" {
 		current.APIKey = incoming.APIKey
 	}
@@ -305,8 +325,14 @@ func cloneRoutingStages(stages []RoutingStage) []RoutingStage {
 	return clone
 }
 
-func mergeDeploymentAwareProjectConfig(global DeploymentAwareConfig, project ProjectConfig) DeploymentAwareConfig {
-	merged := global
+type mergeDeploymentAwareProjectConfigOptions struct {
+	global  DeploymentAwareConfig
+	project ProjectConfig
+}
+
+func mergeDeploymentAwareProjectConfig(opts mergeDeploymentAwareProjectConfigOptions) DeploymentAwareConfig {
+	merged := opts.global
+	project := opts.project
 	if project.ActiveModel != "" {
 		merged.ActiveModel = project.ActiveModel
 	}
@@ -376,8 +402,14 @@ func defaultModelIDMigrationOfferings() []ModelIDMigrationOffering {
 	return uniqueModelIDMigrationOfferings(offerings)
 }
 
-func (r RoutingPolicy) routeFor(canonicalModelID, providerID string) ([]RoutingStage, RouteSource, bool) {
-	providerID = canonicalProviderID(providerID)
+type routeForOptions struct {
+	canonicalModelID string
+	providerID       string
+}
+
+func (r RoutingPolicy) routeFor(opts routeForOptions) ([]RoutingStage, RouteSource, bool) {
+	canonicalModelID := opts.canonicalModelID
+	providerID := canonicalProviderID(opts.providerID)
 	if r.Models != nil {
 		if stages, ok := r.Models[canonicalModelID]; ok {
 			return stages, RouteSourceModel, true
@@ -414,7 +446,11 @@ func (r RoutingPolicy) validate(index RoutingValidationIndex) []RoutingDiagnosti
 	}
 	var diagnostics []RoutingDiagnostic
 	if r.Default != nil {
-		diagnostics = append(diagnostics, validateRoutingStages("routing.default", "", r.Default, index)...)
+		diagnostics = append(diagnostics, validateRoutingStages(validateRoutingStagesOptions{
+			path:   "routing.default",
+			stages: r.Default,
+			index:  index,
+		})...)
 	}
 	for providerID, stages := range r.Providers {
 		canonical := canonicalProviderID(providerID)
@@ -426,20 +462,40 @@ func (r RoutingPolicy) validate(index RoutingValidationIndex) []RoutingDiagnosti
 			diagnostics = append(diagnostics, RoutingDiagnostic{Path: "routing.providers." + providerID, Code: "unknown_provider", Message: "provider route key is not a known catalog provider"})
 			continue
 		}
-		diagnostics = append(diagnostics, validateRoutingStages("routing.providers."+providerID, "", stages, index)...)
+		diagnostics = append(diagnostics, validateRoutingStages(validateRoutingStagesOptions{
+			path:   "routing.providers." + providerID,
+			stages: stages,
+			index:  index,
+		})...)
 	}
 	for canonicalModelID, stages := range r.Models {
 		if !looksCanonicalModelID(canonicalModelID) {
 			diagnostics = append(diagnostics, RoutingDiagnostic{Path: "routing.models." + canonicalModelID, Code: "invalid_canonical_model_id", Message: "model route key must be an owner-qualified canonical model id"})
 			continue
 		}
-		diagnostics = append(diagnostics, validateRoutingStages("routing.models."+canonicalModelID, canonicalModelID, stages, index)...)
+		diagnostics = append(diagnostics, validateRoutingStages(validateRoutingStagesOptions{
+			path:             "routing.models." + canonicalModelID,
+			canonicalModelID: canonicalModelID,
+			stages:           stages,
+			index:            index,
+		})...)
 	}
 	sortRoutingDiagnostics(diagnostics)
 	return diagnostics
 }
 
-func validateRoutingStages(path string, canonicalModelID string, stages []RoutingStage, index RoutingValidationIndex) []RoutingDiagnostic {
+type validateRoutingStagesOptions struct {
+	path             string
+	canonicalModelID string
+	stages           []RoutingStage
+	index            RoutingValidationIndex
+}
+
+func validateRoutingStages(opts validateRoutingStagesOptions) []RoutingDiagnostic {
+	path := opts.path
+	canonicalModelID := opts.canonicalModelID
+	stages := opts.stages
+	index := opts.index
 	knownDeployments := index.KnownDeployments
 	if len(knownDeployments) == 0 {
 		knownDeployments = knownDeploymentIDs()
@@ -500,9 +556,17 @@ func validateRoutingStages(path string, canonicalModelID string, stages []Routin
 				})
 			}
 			if choice.DeploymentID != "" && knownDeployments[choice.DeploymentID] && (availableDeployments == nil || availableDeployments[choice.DeploymentID]) && choice.Weight > 0 {
-				if canonicalModelID == "" || deploymentCanServeModel(canonicalModelID, choice.DeploymentID, index.EligibleDeploymentsByModel) {
+				if canonicalModelID == "" || deploymentCanServeModel(deploymentCanServeModelOptions{
+					canonicalModelID:           canonicalModelID,
+					deploymentID:               choice.DeploymentID,
+					eligibleDeploymentsByModel: index.EligibleDeploymentsByModel,
+				}) {
 					eligibleCount++
-				} else if deploymentNeedsModelMapping(canonicalModelID, choice.DeploymentID, index.MissingMappingsByModel) {
+				} else if deploymentNeedsModelMapping(deploymentNeedsModelMappingOptions{
+					canonicalModelID:       canonicalModelID,
+					deploymentID:           choice.DeploymentID,
+					missingMappingsByModel: index.MissingMappingsByModel,
+				}) {
 					diagnostics = append(diagnostics, RoutingDiagnostic{
 						Path:    choicePath + ".deployment_id",
 						Code:    "missing_model_mapping",
@@ -549,7 +613,16 @@ type ModelIDMigrationResult struct {
 	Diagnostic       string
 }
 
-func migrateStoredModelIDToCanonical(savedModelID string, offerings []ModelIDMigrationOffering, smartDefault string) ModelIDMigrationResult {
+type migrateStoredModelIDToCanonicalOptions struct {
+	savedModelID string
+	offerings    []ModelIDMigrationOffering
+	smartDefault string
+}
+
+func migrateStoredModelIDToCanonical(opts migrateStoredModelIDToCanonicalOptions) ModelIDMigrationResult {
+	savedModelID := opts.savedModelID
+	offerings := opts.offerings
+	smartDefault := opts.smartDefault
 	if savedModelID != "" {
 		canonicalSeen := map[string]bool{}
 		for _, offering := range offerings {
@@ -640,23 +713,36 @@ func knownDeploymentIDs() map[string]bool {
 	}
 }
 
-func deploymentCanServeModel(canonicalModelID, deploymentID string, eligibleDeploymentsByModel map[string]map[string]bool) bool {
+type deploymentCanServeModelOptions struct {
+	canonicalModelID           string
+	deploymentID               string
+	eligibleDeploymentsByModel map[string]map[string]bool
+}
+
+func deploymentCanServeModel(opts deploymentCanServeModelOptions) bool {
+	eligibleDeploymentsByModel := opts.eligibleDeploymentsByModel
 	if len(eligibleDeploymentsByModel) == 0 {
 		return true
 	}
-	eligible := eligibleDeploymentsByModel[canonicalModelID]
+	eligible := eligibleDeploymentsByModel[opts.canonicalModelID]
 	if eligible == nil {
 		return false
 	}
-	return eligible[deploymentID]
+	return eligible[opts.deploymentID]
 }
 
-func deploymentNeedsModelMapping(canonicalModelID, deploymentID string, missingMappingsByModel map[string]map[string]bool) bool {
-	missing := missingMappingsByModel[canonicalModelID]
+type deploymentNeedsModelMappingOptions struct {
+	canonicalModelID       string
+	deploymentID           string
+	missingMappingsByModel map[string]map[string]bool
+}
+
+func deploymentNeedsModelMapping(opts deploymentNeedsModelMappingOptions) bool {
+	missing := opts.missingMappingsByModel[opts.canonicalModelID]
 	if missing == nil {
 		return false
 	}
-	return missing[deploymentID]
+	return missing[opts.deploymentID]
 }
 
 func sortRoutingDiagnostics(diagnostics []RoutingDiagnostic) {

@@ -350,7 +350,10 @@ func TestModelsFromCatalogPreservingDynamicKeepsFetchedProviders(t *testing.T) {
 		{Provider: ProviderOpenAI, ID: "old-catalog-row"},
 	}
 
-	models := modelsFromCatalogPreservingDynamic(catalog, current)
+	models := modelsFromCatalogPreservingDynamic(modelsFromCatalogPreservingDynamicOptions{
+		catalog: catalog,
+		current: current,
+	})
 	if findModelByID(findModelByIDOptions{models: models, id: "claude-opus-4-6"}) == nil {
 		t.Fatal("catalog model missing")
 	}

@@ -158,7 +158,10 @@ func TestDeploymentAwareProjectConfigCannotOverrideDeploymentsOrRouting(t *testi
 		Thinking:         &projectThinking,
 	}
 
-	merged := mergeDeploymentAwareProjectConfig(global, project)
+	merged := mergeDeploymentAwareProjectConfig(mergeDeploymentAwareProjectConfigOptions{
+		global:  global,
+		project: project,
+	})
 	if merged.ActiveModel != project.ActiveModel || merged.ExplorationModel != project.ExplorationModel {
 		t.Fatalf("project model overrides not applied: %+v", merged)
 	}
@@ -184,7 +187,10 @@ func TestRoutingPolicySelectsMostSpecificAuthoritativeRoute(t *testing.T) {
 		},
 	}
 
-	stages, source, ok := policy.routeFor("openai/gpt-4.1-2025-04-14", "openai")
+	stages, source, ok := policy.routeFor(routeForOptions{
+		canonicalModelID: "openai/gpt-4.1-2025-04-14",
+		providerID:       "openai",
+	})
 	if !ok || source != RouteSourceModel {
 		t.Fatalf("model route source = %q/%v", source, ok)
 	}
@@ -192,7 +198,10 @@ func TestRoutingPolicySelectsMostSpecificAuthoritativeRoute(t *testing.T) {
 		t.Fatalf("model route should not cascade to provider/default stages: %+v", stages)
 	}
 
-	stages, source, ok = policy.routeFor("openai/gpt-4.1-mini-2025-04-14", "openai")
+	stages, source, ok = policy.routeFor(routeForOptions{
+		canonicalModelID: "openai/gpt-4.1-mini-2025-04-14",
+		providerID:       "openai",
+	})
 	if !ok || source != RouteSourceProvider {
 		t.Fatalf("provider route source = %q/%v", source, ok)
 	}
@@ -205,12 +214,18 @@ func TestRoutingPolicySelectsMostSpecificAuthoritativeRoute(t *testing.T) {
 			"gemini": {{Deployments: []DeploymentChoice{{DeploymentID: "gemini-direct", Weight: 100}}}},
 		},
 	}
-	stages, source, ok = aliasPolicy.routeFor("google/gemini-2.5-pro", "google")
+	stages, source, ok = aliasPolicy.routeFor(routeForOptions{
+		canonicalModelID: "google/gemini-2.5-pro",
+		providerID:       "google",
+	})
 	if !ok || source != RouteSourceProvider || stages[0].Deployments[0].DeploymentID != "gemini-direct" {
 		t.Fatalf("legacy provider route alias did not resolve for canonical provider: source=%q ok=%v stages=%+v", source, ok, stages)
 	}
 
-	stages, source, ok = policy.routeFor("anthropic/claude-sonnet-4-20250514", "anthropic")
+	stages, source, ok = policy.routeFor(routeForOptions{
+		canonicalModelID: "anthropic/claude-sonnet-4-20250514",
+		providerID:       "anthropic",
+	})
 	if !ok || source != RouteSourceDefault {
 		t.Fatalf("default route source = %q/%v", source, ok)
 	}
@@ -316,7 +331,7 @@ func TestRoutingDiagnosticsReportProviderOverrideIneligibleDeployments(t *testin
 		}},
 	}}
 
-	diagnostics := routingDiagnosticsForConfigModels(cfg, models)
+	diagnostics := routingDiagnosticsForConfigModels(configModelsOptions{cfg: cfg, models: models})
 	got := diagnosticPathCodes(diagnostics)
 	want := []string{
 		"routing.effective.provider.openai/gpt-4.1-2025-04-14[0].deployments:no_eligible_deployments",
@@ -357,22 +372,38 @@ func TestStoredModelIDMigrationRules(t *testing.T) {
 		{CanonicalModelID: "openrouter/anthropic/claude-sonnet-4-20250514", DeploymentID: "openrouter", NativeModelID: "claude-sonnet-4-20250514"},
 	}
 
-	canonical := migrateStoredModelIDToCanonical("openai/gpt-4.1-2025-04-14", offerings, "fallback/model")
+	canonical := migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+		savedModelID: "openai/gpt-4.1-2025-04-14",
+		offerings:    offerings,
+		smartDefault: "fallback/model",
+	})
 	if canonical.Status != ModelIDMigrationCanonicalMatch || canonical.CanonicalModelID != "openai/gpt-4.1-2025-04-14" {
 		t.Fatalf("canonical match = %+v", canonical)
 	}
 
-	uniqueNative := migrateStoredModelIDToCanonical("my-gpt-4-1-prod", offerings, "fallback/model")
+	uniqueNative := migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+		savedModelID: "my-gpt-4-1-prod",
+		offerings:    offerings,
+		smartDefault: "fallback/model",
+	})
 	if uniqueNative.Status != ModelIDMigrationUniqueNative || uniqueNative.CanonicalModelID != "openai/gpt-4.1-2025-04-14" {
 		t.Fatalf("unique native match = %+v", uniqueNative)
 	}
 
-	ambiguous := migrateStoredModelIDToCanonical("claude-sonnet-4-20250514", offerings, "fallback/model")
+	ambiguous := migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+		savedModelID: "claude-sonnet-4-20250514",
+		offerings:    offerings,
+		smartDefault: "fallback/model",
+	})
 	if ambiguous.Status != ModelIDMigrationAmbiguousNative || ambiguous.CanonicalModelID != "fallback/model" || ambiguous.Diagnostic == "" {
 		t.Fatalf("ambiguous native match = %+v", ambiguous)
 	}
 
-	fallback := migrateStoredModelIDToCanonical("missing-model", offerings, "fallback/model")
+	fallback := migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+		savedModelID: "missing-model",
+		offerings:    offerings,
+		smartDefault: "fallback/model",
+	})
 	if fallback.Status != ModelIDMigrationFallback || fallback.CanonicalModelID != "fallback/model" || fallback.Diagnostic == "" {
 		t.Fatalf("fallback = %+v", fallback)
 	}

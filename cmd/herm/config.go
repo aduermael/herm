@@ -1,13 +1,9 @@
-// config.go handles loading, saving, and merging of global and per-project
-// configuration for herm.
+// config.go defines core configuration fields and runtime deployment helpers.
 package main
 
 import (
-	_ "embed"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -117,7 +113,7 @@ func (c Config) availableModels(models []ModelDef) []ModelDef {
 			continue
 		}
 		if c.Routing != nil && !routingPolicyIsEmpty(c.Routing) {
-			routed, diagnostics, ok := routeAwareDeploymentsForModel(*c.Routing, filtered, configuredDeployments)
+			routed, diagnostics, ok := routeAwareDeploymentsForModel(routeAwareDeploymentsForModelOptions{policy: *c.Routing, model: filtered, configuredDeployments: configuredDeployments})
 			filtered.RouteDiagnostics = append(filtered.RouteDiagnostics, diagnostics...)
 			if !ok {
 				continue
@@ -139,12 +135,22 @@ func (c Config) availableModels(models []ModelDef) []ModelDef {
 	return available
 }
 
-func routeAwareDeploymentsForModel(policy RoutingPolicy, model ModelDef, configuredDeployments map[string]bool) ([]ModelDeploymentDef, []string, bool) {
+type routeAwareDeploymentsForModelOptions struct {
+	policy                RoutingPolicy
+	model                 ModelDef
+	configuredDeployments map[string]bool
+}
+
+func routeAwareDeploymentsForModel(opts routeAwareDeploymentsForModelOptions) ([]ModelDeploymentDef, []string, bool) {
+	policy, model, configuredDeployments := opts.policy, opts.model, opts.configuredDeployments
 	providerID := model.OwnerProvider
 	if providerID == "" {
 		providerID = model.Provider
 	}
-	stages, source, ok := policy.routeFor(model.ID, providerID)
+	stages, source, ok := policy.routeFor(routeForOptions{
+		canonicalModelID: model.ID,
+		providerID:       providerID,
+	})
 	if !ok {
 		return nil, []string{"routing has no default/provider/model route for " + model.ID}, false
 	}
@@ -188,7 +194,13 @@ func routingPolicyIsEmpty(policy *RoutingPolicy) bool {
 	return policy == nil || len(policy.Default) == 0 && len(policy.Providers) == 0 && len(policy.Models) == 0
 }
 
-func routingValidationIndexForConfigModels(cfg Config, models []ModelDef) RoutingValidationIndex {
+type configModelsOptions struct {
+	cfg    Config
+	models []ModelDef
+}
+
+func routingValidationIndexForConfigModels(opts configModelsOptions) RoutingValidationIndex {
+	cfg, models := opts.cfg, opts.models
 	configuredDeployments := cfg.configuredDeploymentIDs()
 	deploymentConfigs := cfg.deploymentConfigs()
 	eligibleByModel := map[string]map[string]bool{}
@@ -230,11 +242,12 @@ func routingValidationIndexForConfigModels(cfg Config, models []ModelDef) Routin
 	}
 }
 
-func routingDiagnosticsForConfigModels(cfg Config, models []ModelDef) []RoutingDiagnostic {
+func routingDiagnosticsForConfigModels(opts configModelsOptions) []RoutingDiagnostic {
+	cfg, models := opts.cfg, opts.models
 	if cfg.Routing == nil {
 		return nil
 	}
-	index := routingValidationIndexForConfigModels(cfg, models)
+	index := routingValidationIndexForConfigModels(configModelsOptions{cfg: cfg, models: models})
 	diagnostics := cfg.Routing.validate(index)
 	for _, model := range models {
 		if model.ID == "" {
@@ -244,7 +257,10 @@ func routingDiagnosticsForConfigModels(cfg Config, models []ModelDef) []RoutingD
 		if providerID == "" {
 			providerID = model.Provider
 		}
-		stages, source, ok := cfg.Routing.routeFor(model.ID, providerID)
+		stages, source, ok := cfg.Routing.routeFor(routeForOptions{
+			canonicalModelID: model.ID,
+			providerID:       providerID,
+		})
 		if !ok {
 			diagnostics = append(diagnostics, RoutingDiagnostic{
 				Path:    "routing.effective." + model.ID,
@@ -257,7 +273,12 @@ func routingDiagnosticsForConfigModels(cfg Config, models []ModelDef) []RoutingD
 			continue
 		}
 		path := fmt.Sprintf("routing.effective.%s.%s", source, model.ID)
-		diagnostics = append(diagnostics, validateRoutingStages(path, model.ID, stages, index)...)
+		diagnostics = append(diagnostics, validateRoutingStages(validateRoutingStagesOptions{
+			path:             path,
+			canonicalModelID: model.ID,
+			stages:           stages,
+			index:            index,
+		})...)
 	}
 	return uniqueRoutingDiagnostics(diagnostics)
 }
@@ -290,7 +311,10 @@ func (c Config) deploymentConfigs() map[string]DeploymentConfig {
 	}
 	mergeDeploymentConfig := func(id string, deployment DeploymentConfig) {
 		current := out[id]
-		mergeDeploymentConfigFields(&current, deployment)
+		mergeDeploymentConfigFields(mergeDeploymentConfigFieldsOptions{
+			current:  &current,
+			incoming: deployment,
+		})
 		out[id] = current
 	}
 	if c.AnthropicAPIKey != "" {
@@ -332,7 +356,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 
 func (c Config) deploymentConfig(deploymentID string) DeploymentConfig {
 	deployment := c.deploymentConfigs()[deploymentID]
-	return deploymentWithEnvFallbacks(deploymentID, deployment)
+	return deploymentWithEnvFallbacks(deploymentConfigOptions{deploymentID: deploymentID, deployment: deployment})
 }
 
 func (c Config) openRouterAPIKey() string {
@@ -346,15 +370,21 @@ func (c Config) ollamaBaseURL() string {
 func (c Config) configuredDeploymentIDs() map[string]bool {
 	configured := map[string]bool{}
 	for deploymentID, deployment := range c.deploymentConfigs() {
-		if deploymentHasRequiredConfig(deploymentID, deployment) {
+		if deploymentHasRequiredConfig(deploymentConfigOptions{deploymentID: deploymentID, deployment: deployment}) {
 			configured[deploymentID] = true
 		}
 	}
 	return configured
 }
 
-func deploymentHasRequiredConfig(deploymentID string, deployment DeploymentConfig) bool {
-	deployment = deploymentWithEnvFallbacks(deploymentID, deployment)
+type deploymentConfigOptions struct {
+	deploymentID string
+	deployment   DeploymentConfig
+}
+
+func deploymentHasRequiredConfig(opts deploymentConfigOptions) bool {
+	deploymentID := opts.deploymentID
+	deployment := deploymentWithEnvFallbacks(opts)
 	switch deploymentID {
 	case "anthropic-direct", "openai-direct", "grok-direct", "openrouter", "gemini-direct":
 		return deployment.APIKey != ""
@@ -371,15 +401,16 @@ func deploymentHasRequiredConfig(deploymentID string, deployment DeploymentConfi
 	}
 }
 
-func deploymentWithEnvFallbacks(deploymentID string, deployment DeploymentConfig) DeploymentConfig {
+func deploymentWithEnvFallbacks(opts deploymentConfigOptions) DeploymentConfig {
+	deploymentID, deployment := opts.deploymentID, opts.deployment
 	for _, fallback := range deploymentEnvFallbacks[deploymentID] {
-		value := deploymentFieldValue(deployment, fallback.Field)
+		value := deploymentFieldValue(deploymentFieldValueOptions{deployment: deployment, field: fallback.Field})
 		if value != "" {
 			continue
 		}
 		for _, envName := range fallback.Env {
 			if envValue := strings.TrimSpace(os.Getenv(envName)); envValue != "" {
-				setDeploymentFieldValue(&deployment, fallback.Field, envValue)
+				setDeploymentFieldValue(setDeploymentFieldValueOptions{deployment: &deployment, field: fallback.Field, value: envValue})
 				break
 			}
 		}
@@ -387,7 +418,13 @@ func deploymentWithEnvFallbacks(deploymentID string, deployment DeploymentConfig
 	return deployment
 }
 
-func deploymentFieldValue(deployment DeploymentConfig, field string) string {
+type deploymentFieldValueOptions struct {
+	deployment DeploymentConfig
+	field      string
+}
+
+func deploymentFieldValue(opts deploymentFieldValueOptions) string {
+	deployment, field := opts.deployment, opts.field
 	switch field {
 	case "api_key":
 		return deployment.APIKey
@@ -406,7 +443,14 @@ func deploymentFieldValue(deployment DeploymentConfig, field string) string {
 	}
 }
 
-func setDeploymentFieldValue(deployment *DeploymentConfig, field, value string) {
+type setDeploymentFieldValueOptions struct {
+	deployment *DeploymentConfig
+	field      string
+	value      string
+}
+
+func setDeploymentFieldValue(opts setDeploymentFieldValueOptions) {
+	deployment, field, value := opts.deployment, opts.field, opts.value
 	switch field {
 	case "api_key":
 		deployment.APIKey = value
@@ -442,7 +486,13 @@ func hermProviderForDeployment(deploymentID string) string {
 	}
 }
 
-func configuredProviderForModel(cfg Config, model ModelDef) string {
+type configuredProviderForModelOptions struct {
+	cfg   Config
+	model ModelDef
+}
+
+func configuredProviderForModel(opts configuredProviderForModelOptions) string {
+	cfg, model := opts.cfg, opts.model
 	available := cfg.availableModels([]ModelDef{model})
 	if len(available) > 0 {
 		for _, deployment := range available[0].Deployments {
@@ -501,10 +551,10 @@ func preferredDefault(opts preferredDefaultOptions) string {
 	if !ok {
 		return ""
 	}
-	candidates := modelIDCandidates(id, id)
+	candidates := modelIDCandidates(modelIDCandidatesOptions{modelID: id, smartDefault: id})
 	for _, m := range models {
 		for _, candidate := range candidates {
-			if modelMatchesID(m, candidate) {
+			if modelMatchesID(modelMatchesIDOptions{model: m, id: candidate}) {
 				return m.ID
 			}
 		}
@@ -539,7 +589,7 @@ func (c Config) resolveActiveModel(models []ModelDef) string {
 func (c Config) resolveActiveModelResult(models []ModelDef) configuredModelResolution {
 	available := c.availableModels(models)
 	if c.ActiveModel != "" {
-		lookup := c.lookupConfiguredModelID(c.ActiveModel, defaultCanonicalActiveModel, available, models)
+		lookup := c.lookupConfiguredModelID(lookupConfiguredModelIDOptions{modelID: c.ActiveModel, smartDefault: defaultCanonicalActiveModel, available: available, models: models})
 		if lookup.Status == configuredModelUsable {
 			return lookup
 		}
@@ -549,7 +599,7 @@ func (c Config) resolveActiveModelResult(models []ModelDef) configuredModelResol
 			ResolvedModelID:   fallback,
 			Fallback:          true,
 			Status:            lookup.Status,
-			Diagnostic:        configuredModelDiagnostic("active_model", c.ActiveModel, fallback, lookup.Status),
+			Diagnostic:        configuredModelDiagnostic(configuredModelDiagnosticOptions{field: "active_model", configured: c.ActiveModel, fallback: fallback, status: lookup.Status}),
 		}
 	}
 	return configuredModelResolution{ResolvedModelID: c.defaultActiveModel(available)}
@@ -580,7 +630,7 @@ type ollamaModelProviderOptions struct {
 func ollamaModelProvider(opts ollamaModelProviderOptions) string {
 	modelID, models, ollamaURL := opts.modelID, opts.models, opts.ollamaURL
 	for _, m := range models {
-		if modelMatchesID(m, modelID) {
+		if modelMatchesID(modelMatchesIDOptions{model: m, id: modelID}) {
 			return m.Provider
 		}
 	}
@@ -610,7 +660,7 @@ func (c Config) resolveExplorationModelResult(models []ModelDef) configuredModel
 		return configuredModelResolution{ResolvedModelID: c.resolveActiveModel(models)}
 	}
 	available := c.availableModels(models)
-	lookup := c.lookupConfiguredModelID(c.ExplorationModel, defaultCanonicalExplorationModel, available, models)
+	lookup := c.lookupConfiguredModelID(lookupConfiguredModelIDOptions{modelID: c.ExplorationModel, smartDefault: defaultCanonicalExplorationModel, available: available, models: models})
 	if lookup.Status == configuredModelUsable {
 		return lookup
 	}
@@ -621,13 +671,22 @@ func (c Config) resolveExplorationModelResult(models []ModelDef) configuredModel
 		ResolvedModelID:   fallback,
 		Fallback:          true,
 		Status:            lookup.Status,
-		Diagnostic:        configuredModelDiagnostic("exploration_model", c.ExplorationModel, fallback, lookup.Status),
+		Diagnostic:        configuredModelDiagnostic(configuredModelDiagnosticOptions{field: "exploration_model", configured: c.ExplorationModel, fallback: fallback, status: lookup.Status}),
 	}
 }
 
-func (c Config) lookupConfiguredModelID(modelID, smartDefault string, available, models []ModelDef) configuredModelResolution {
-	candidates := modelIDCandidates(modelID, smartDefault)
-	availableMatches := uniqueModelsMatchingCandidates(available, candidates, true)
+type lookupConfiguredModelIDOptions struct {
+	modelID      string
+	smartDefault string
+	available    []ModelDef
+	models       []ModelDef
+}
+
+func (c Config) lookupConfiguredModelID(opts lookupConfiguredModelIDOptions) configuredModelResolution {
+	modelID, smartDefault := opts.modelID, opts.smartDefault
+	available, models := opts.available, opts.models
+	candidates := modelIDCandidates(modelIDCandidatesOptions{modelID: modelID, smartDefault: smartDefault})
+	availableMatches := uniqueModelsMatchingCandidates(uniqueModelsMatchingCandidatesOptions{models: available, candidates: candidates, exactOnly: true})
 	switch len(availableMatches) {
 	case 1:
 		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: availableMatches[0].ID, Status: configuredModelUsable}
@@ -635,7 +694,7 @@ func (c Config) lookupConfiguredModelID(modelID, smartDefault string, available,
 	default:
 		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
 	}
-	allMatches := uniqueModelsMatchingCandidates(models, candidates, true)
+	allMatches := uniqueModelsMatchingCandidates(uniqueModelsMatchingCandidatesOptions{models: models, candidates: candidates, exactOnly: true})
 	switch len(allMatches) {
 	case 1:
 		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelUnavailable}
@@ -644,7 +703,7 @@ func (c Config) lookupConfiguredModelID(modelID, smartDefault string, available,
 		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
 	}
 
-	availableMatches = uniqueModelsMatchingCandidates(available, candidates, false)
+	availableMatches = uniqueModelsMatchingCandidates(uniqueModelsMatchingCandidatesOptions{models: available, candidates: candidates})
 	switch len(availableMatches) {
 	case 1:
 		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: availableMatches[0].ID, Status: configuredModelUsable}
@@ -653,7 +712,7 @@ func (c Config) lookupConfiguredModelID(modelID, smartDefault string, available,
 		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
 	}
 
-	allMatches = uniqueModelsMatchingCandidates(models, candidates, false)
+	allMatches = uniqueModelsMatchingCandidates(uniqueModelsMatchingCandidatesOptions{models: models, candidates: candidates})
 	switch len(allMatches) {
 	case 1:
 		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelUnavailable}
@@ -662,17 +721,24 @@ func (c Config) lookupConfiguredModelID(modelID, smartDefault string, available,
 		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
 	}
 
-	if c.trustOfflineOllamaModel(modelID, models) {
+	if c.trustOfflineOllamaModel(trustOfflineOllamaModelOptions{modelID: modelID, models: models}) {
 		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: ollamaCanonicalModelID(modelID), Status: configuredModelUsable}
 	}
 	return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelUnknown}
 }
 
-func uniqueModelsMatchingCandidates(models []ModelDef, candidates []string, exactOnly bool) []ModelDef {
+type uniqueModelsMatchingCandidatesOptions struct {
+	models     []ModelDef
+	candidates []string
+	exactOnly  bool
+}
+
+func uniqueModelsMatchingCandidates(opts uniqueModelsMatchingCandidatesOptions) []ModelDef {
+	models, candidates, exactOnly := opts.models, opts.candidates, opts.exactOnly
 	seen := map[string]bool{}
 	var matches []ModelDef
 	for _, candidate := range candidates {
-		for _, model := range modelsMatchingCandidate(models, candidate, exactOnly) {
+		for _, model := range modelsMatchingCandidate(modelsMatchingCandidateOptions{models: models, candidate: candidate, exactOnly: exactOnly}) {
 			key := model.ID
 			if key == "" {
 				key = model.CanonicalID
@@ -690,7 +756,14 @@ func uniqueModelsMatchingCandidates(models []ModelDef, candidates []string, exac
 	return matches
 }
 
-func modelsMatchingCandidate(models []ModelDef, candidate string, exactOnly bool) []ModelDef {
+type modelsMatchingCandidateOptions struct {
+	models    []ModelDef
+	candidate string
+	exactOnly bool
+}
+
+func modelsMatchingCandidate(opts modelsMatchingCandidateOptions) []ModelDef {
+	models, candidate, exactOnly := opts.models, opts.candidate, opts.exactOnly
 	var matches []ModelDef
 	for _, model := range models {
 		if model.ID == candidate || model.CanonicalID == candidate {
@@ -700,14 +773,22 @@ func modelsMatchingCandidate(models []ModelDef, candidate string, exactOnly bool
 		if exactOnly {
 			continue
 		}
-		if modelMatchesID(model, candidate) {
+		if modelMatchesID(modelMatchesIDOptions{model: model, id: candidate}) {
 			matches = append(matches, model)
 		}
 	}
 	return matches
 }
 
-func configuredModelDiagnostic(field, configured, fallback string, status configuredModelLookupStatus) string {
+type configuredModelDiagnosticOptions struct {
+	field      string
+	configured string
+	fallback   string
+	status     configuredModelLookupStatus
+}
+
+func configuredModelDiagnostic(opts configuredModelDiagnosticOptions) string {
+	field, configured, fallback, status := opts.field, opts.configured, opts.fallback, opts.status
 	reason := "not available"
 	switch status {
 	case configuredModelAmbiguous:
@@ -723,29 +804,48 @@ func configuredModelDiagnostic(field, configured, fallback string, status config
 	return fmt.Sprintf("project %s %q is %s; using fallback model %q", field, configured, reason, fallback)
 }
 
-func (c Config) trustOfflineOllamaModel(modelID string, models []ModelDef) bool {
+type trustOfflineOllamaModelOptions struct {
+	modelID string
+	models  []ModelDef
+}
+
+func (c Config) trustOfflineOllamaModel(opts trustOfflineOllamaModelOptions) bool {
+	modelID, models := opts.modelID, opts.models
 	if modelID == "" || !c.configuredDeploymentIDs()["ollama-local"] {
 		return false
 	}
 	for _, model := range models {
-		if modelMatchesID(model, modelID) {
+		if modelMatchesID(modelMatchesIDOptions{model: model, id: modelID}) {
 			return model.Provider == ProviderOllama || model.OwnerProvider == ProviderOllama
 		}
 	}
 	return true
 }
 
-func configuredProviderForModelID(cfg Config, models []ModelDef, modelID string) string {
+type configuredProviderForModelIDOptions struct {
+	cfg     Config
+	models  []ModelDef
+	modelID string
+}
+
+func configuredProviderForModelID(opts configuredProviderForModelIDOptions) string {
+	cfg, models, modelID := opts.cfg, opts.models, opts.modelID
 	if modelID == "" {
 		return ""
 	}
 	if model := findModelByID(findModelByIDOptions{models: models, id: modelID}); model != nil {
-		return configuredProviderForModel(cfg, *model)
+		return configuredProviderForModel(configuredProviderForModelOptions{cfg: cfg, model: *model})
 	}
 	return ollamaModelProvider(ollamaModelProviderOptions{modelID: modelID, models: models, ollamaURL: cfg.ollamaBaseURL()})
 }
 
-func modelIDCandidates(modelID, smartDefault string) []string {
+type modelIDCandidatesOptions struct {
+	modelID      string
+	smartDefault string
+}
+
+func modelIDCandidates(opts modelIDCandidatesOptions) []string {
+	modelID, smartDefault := opts.modelID, opts.smartDefault
 	seen := map[string]bool{}
 	var candidates []string
 	add := func(id string) {
@@ -760,7 +860,11 @@ func modelIDCandidates(modelID, smartDefault string) []string {
 		add(strings.TrimPrefix(modelID, ProviderOllama+"/"))
 	}
 	if !looksCanonicalModelID(modelID) {
-		migrated := migrateStoredModelIDToCanonical(modelID, defaultModelIDMigrationOfferings(), smartDefault)
+		migrated := migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+			savedModelID: modelID,
+			offerings:    defaultModelIDMigrationOfferings(),
+			smartDefault: smartDefault,
+		})
 		switch migrated.Status {
 		case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative:
 			add(migrated.CanonicalModelID)
@@ -772,418 +876,4 @@ func modelIDCandidates(modelID, smartDefault string) []string {
 		}
 	}
 	return candidates
-}
-
-// ProjectConfig holds per-project overrides loaded from <repo>/.herm/config.json.
-// Fields use omitempty so zero values mean "not overridden" (fall back to global).
-type ProjectConfig struct {
-	ActiveModel       string `json:"active_model,omitempty"`
-	ExplorationModel  string `json:"exploration_model,omitempty"`
-	Personality       string `json:"personality,omitempty"`
-	SubAgentMaxTurns  int    `json:"sub_agent_max_turns,omitempty"`
-	ExploreMaxTurns   int    `json:"explore_max_turns,omitempty"`
-	GeneralMaxTurns   int    `json:"general_max_turns,omitempty"`
-	MaxToolIterations int    `json:"max_tool_iterations,omitempty"`
-	MaxAgentDepth     int    `json:"max_agent_depth,omitempty"`
-	DebugMode         *bool  `json:"debug_mode,omitempty"` // nil = not overridden
-	Thinking          *bool  `json:"thinking,omitempty"`   // nil = not overridden
-}
-
-// mergeConfigsOptions is the parameter bundle for mergeConfigs.
-type mergeConfigsOptions struct {
-	global  Config
-	project ProjectConfig
-}
-
-// mergeConfigs overlays non-zero ProjectConfig fields onto a global Config.
-func mergeConfigs(opts mergeConfigsOptions) Config {
-	global, project := opts.global, opts.project
-	merged := global
-	if project.ActiveModel != "" {
-		merged.ActiveModel = project.ActiveModel
-	}
-	if project.ExplorationModel != "" {
-		merged.ExplorationModel = project.ExplorationModel
-	}
-	if project.Personality != "" {
-		merged.Personality = project.Personality
-	}
-	if project.SubAgentMaxTurns != 0 {
-		merged.SubAgentMaxTurns = project.SubAgentMaxTurns
-	}
-	if project.ExploreMaxTurns != 0 {
-		merged.ExploreMaxTurns = project.ExploreMaxTurns
-	}
-	if project.GeneralMaxTurns != 0 {
-		merged.GeneralMaxTurns = project.GeneralMaxTurns
-	}
-	if project.MaxToolIterations != 0 {
-		merged.MaxToolIterations = project.MaxToolIterations
-	}
-	if project.MaxAgentDepth != 0 {
-		merged.MaxAgentDepth = project.MaxAgentDepth
-	}
-	if project.DebugMode != nil {
-		merged.DebugMode = *project.DebugMode
-	}
-	if project.Thinking != nil {
-		merged.Thinking = project.Thinking
-	}
-	return merged
-}
-
-//go:embed container_version
-var rawHermImageTag string
-
-var hermImageTag = strings.TrimSpace(rawHermImageTag)
-var defaultContainerImage = "aduermael/herm:" + hermImageTag
-
-func defaultConfig() Config {
-	return Config{
-		ConfigVersion:         hermConfigVersionDeploymentAware,
-		PasteCollapseMinChars: 200,
-	}
-}
-
-func configPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(configDir, configFile)
-	}
-	return filepath.Join(home, configDir, configFile)
-}
-
-func projectConfigPath(repoRoot string) string {
-	return filepath.Join(repoRoot, configDir, configFile)
-}
-
-func projectConfigScopeAvailable(repoRoot string) bool {
-	if repoRoot == "" {
-		return false
-	}
-	return !sameFilesystemPath(projectConfigPath(repoRoot), configPath())
-}
-
-func sameFilesystemPath(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	a = bestEffortRealPath(a)
-	b = bestEffortRealPath(b)
-	if a == b {
-		return true
-	}
-	statA, errA := os.Stat(a)
-	statB, errB := os.Stat(b)
-	return errA == nil && errB == nil && os.SameFile(statA, statB)
-}
-
-func bestEffortRealPath(path string) string {
-	if path == "" {
-		return ""
-	}
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-	}
-	path = filepath.Clean(path)
-	if eval, err := filepath.EvalSymlinks(path); err == nil {
-		return filepath.Clean(eval)
-	}
-
-	current := path
-	var suffix []string
-	for {
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-		suffix = append(suffix, filepath.Base(current))
-		current = parent
-		if eval, err := filepath.EvalSymlinks(current); err == nil {
-			realPath := filepath.Clean(eval)
-			for i := len(suffix) - 1; i >= 0; i-- {
-				realPath = filepath.Join(realPath, suffix[i])
-			}
-			return filepath.Clean(realPath)
-		}
-	}
-
-	return path
-}
-
-// ensureConfigDir creates the ~/.herm/ directory if it doesn't exist.
-func ensureConfigDir() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("getting home dir: %w", err)
-	}
-	return os.MkdirAll(filepath.Join(home, configDir), 0o755)
-}
-
-// loadConfig reads config from ~/.herm/config.json.
-// If the file doesn't exist, it creates it with defaults.
-// If the file is malformed, it returns defaults.
-// Merging: starts from defaults and overlays whatever the file contains,
-// so new fields added later automatically get their default values.
-func loadConfig() (Config, error) {
-	cfg := defaultConfig()
-
-	if err := ensureConfigDir(); err != nil {
-		return cfg, fmt.Errorf("creating config dir: %w", err)
-	}
-
-	data, err := os.ReadFile(configPath())
-	if os.IsNotExist(err) {
-		// First run — write defaults
-		if saveErr := saveConfig(cfg); saveErr != nil {
-			return cfg, fmt.Errorf("writing default config: %w", saveErr)
-		}
-		return cfg, nil
-	}
-	if err != nil {
-		return cfg, fmt.Errorf("reading config: %w", err)
-	}
-
-	// Unmarshal on top of defaults — missing fields keep their default values
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		// Malformed JSON — return defaults
-		return defaultConfig(), nil
-	}
-
-	return normalizeLoadedConfig(cfg), nil
-}
-
-// loadConfigFrom reads config from a specific directory path.
-// Used for testing and custom config locations.
-func loadConfigFrom(dir string) (Config, error) {
-	cfg := defaultConfig()
-
-	cfgDir := filepath.Join(dir, configDir)
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
-		return cfg, fmt.Errorf("creating config dir: %w", err)
-	}
-
-	cfgPath := filepath.Join(cfgDir, configFile)
-	data, err := os.ReadFile(cfgPath)
-	if os.IsNotExist(err) {
-		if saveErr := saveConfigTo(saveConfigToOptions{dir: dir, cfg: cfg}); saveErr != nil {
-			return cfg, fmt.Errorf("writing default config: %w", saveErr)
-		}
-		return cfg, nil
-	}
-	if err != nil {
-		return cfg, fmt.Errorf("reading config: %w", err)
-	}
-
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return defaultConfig(), nil
-	}
-
-	return normalizeLoadedConfig(cfg), nil
-}
-
-func normalizeLoadedConfig(cfg Config) Config {
-	cfg.ConfigVersion = hermConfigVersionDeploymentAware
-	cfg.Deployments = deploymentConfigsForStorage(cfg)
-	cfg.Routing = cloneRoutingPolicy(cfg.Routing)
-	cfg = backfillLegacyConfigFieldsFromDeployments(cfg)
-	cfg.ActiveModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ActiveModel, defaultCanonicalActiveModel, defaultModelIDMigrationOfferings())
-	cfg.ExplorationModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ExplorationModel, defaultCanonicalExplorationModel, defaultModelIDMigrationOfferings())
-	return cfg
-}
-
-func backfillLegacyConfigFieldsFromDeployments(cfg Config) Config {
-	deployments := cfg.deploymentConfigs()
-	cfg.AnthropicAPIKey = deployments["anthropic-direct"].APIKey
-	cfg.OpenAIAPIKey = deployments["openai-direct"].APIKey
-	cfg.GrokAPIKey = deployments["grok-direct"].APIKey
-	cfg.OpenRouterAPIKey = deployments["openrouter"].APIKey
-	cfg.GeminiAPIKey = deployments["gemini-direct"].APIKey
-	cfg.OllamaBaseURL = deployments["ollama-local"].BaseURL
-	return cfg
-}
-
-func migrateLoadedModelID(cfg Config, modelID, smartDefault string) string {
-	return migrateLoadedModelIDWithOfferings(cfg, modelID, smartDefault, defaultModelIDMigrationOfferings())
-}
-
-func migrateLoadedModelIDWithOfferings(cfg Config, modelID, smartDefault string, offerings []ModelIDMigrationOffering) string {
-	if modelID == "" || looksCanonicalModelID(modelID) {
-		migrated := migrateStoredModelIDToCanonical(modelID, offerings, smartDefault)
-		if migrated.Status == ModelIDMigrationUniqueNative {
-			return migrated.CanonicalModelID
-		}
-		return modelID
-	}
-	migrated := migrateStoredModelIDToCanonical(modelID, offerings, smartDefault)
-	switch migrated.Status {
-	case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative, ModelIDMigrationAmbiguousNative:
-		return migrated.CanonicalModelID
-	default:
-		if cfg.configuredDeploymentIDs()["ollama-local"] {
-			return ollamaCanonicalModelID(modelID)
-		}
-		return modelID
-	}
-}
-
-func normalizeConfigForModels(cfg Config, models []ModelDef) Config {
-	offerings := defaultModelIDMigrationOfferings()
-	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
-	cfg.ActiveModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ActiveModel, defaultCanonicalActiveModel, offerings)
-	cfg.ExplorationModel = migrateLoadedModelIDWithOfferings(cfg, cfg.ExplorationModel, defaultCanonicalExplorationModel, offerings)
-	return cfg
-}
-
-func normalizeConfigModelIDForModels(cfg Config, modelID, smartDefault string, models []ModelDef) string {
-	offerings := defaultModelIDMigrationOfferings()
-	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
-	return migrateLoadedModelIDWithOfferings(cfg, modelID, smartDefault, offerings)
-}
-
-// saveConfig writes config to ~/.herm/config.json.
-func saveConfig(cfg Config) error {
-	if err := ensureConfigDir(); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-
-	cfg = normalizeLoadedConfig(cfg)
-	data, err := json.MarshalIndent(deploymentAwareConfigFromLegacyConfig(cfg), "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
-	}
-
-	return os.WriteFile(configPath(), data, 0o644)
-}
-
-// saveConfigToOptions is the parameter bundle for saveConfigTo.
-type saveConfigToOptions struct {
-	dir string
-	cfg Config
-}
-
-// saveConfigTo writes config to a specific directory path.
-func saveConfigTo(opts saveConfigToOptions) error {
-	dir, cfg := opts.dir, opts.cfg
-	cfgDir := filepath.Join(dir, configDir)
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
-		return fmt.Errorf("creating config dir: %w", err)
-	}
-
-	cfg = normalizeLoadedConfig(cfg)
-	data, err := json.MarshalIndent(deploymentAwareConfigFromLegacyConfig(cfg), "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
-	}
-
-	return os.WriteFile(filepath.Join(cfgDir, configFile), data, 0o644)
-}
-
-// loadProjectConfig reads project-level overrides from <repoRoot>/.herm/config.json.
-// Returns an empty ProjectConfig if the file doesn't exist or is malformed.
-func loadProjectConfig(repoRoot string) ProjectConfig {
-	pc, ok := readProjectConfig(repoRoot)
-	if !ok {
-		return ProjectConfig{}
-	}
-	return normalizeProjectConfig(pc)
-}
-
-func loadProjectConfigForModels(repoRoot string, models []ModelDef) ProjectConfig {
-	pc, ok := readProjectConfig(repoRoot)
-	if !ok {
-		return ProjectConfig{}
-	}
-	return normalizeProjectConfigForModels(pc, models)
-}
-
-func loadRawProjectConfig(repoRoot string) ProjectConfig {
-	pc, ok := readProjectConfig(repoRoot)
-	if !ok {
-		return ProjectConfig{}
-	}
-	return pc
-}
-
-func readProjectConfig(repoRoot string) (ProjectConfig, bool) {
-	if !projectConfigScopeAvailable(repoRoot) {
-		return ProjectConfig{}, false
-	}
-	data, err := os.ReadFile(projectConfigPath(repoRoot))
-	if err != nil {
-		return ProjectConfig{}, false
-	}
-	var pc ProjectConfig
-	if err := json.Unmarshal(data, &pc); err != nil {
-		return ProjectConfig{}, false
-	}
-	return pc, true
-}
-
-func migrateProjectModelID(modelID, smartDefault string) string {
-	return migrateProjectModelIDWithOfferings(modelID, smartDefault, defaultModelIDMigrationOfferings())
-}
-
-func migrateProjectModelIDWithOfferings(modelID, smartDefault string, offerings []ModelIDMigrationOffering) string {
-	if modelID == "" {
-		return modelID
-	}
-	migrated := migrateStoredModelIDToCanonical(modelID, offerings, smartDefault)
-	switch migrated.Status {
-	case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative:
-		return migrated.CanonicalModelID
-	default:
-		return modelID
-	}
-}
-
-func normalizeProjectConfig(pc ProjectConfig) ProjectConfig {
-	return normalizeProjectConfigWithOfferings(pc, defaultModelIDMigrationOfferings())
-}
-
-func normalizeProjectConfigForModels(pc ProjectConfig, models []ModelDef) ProjectConfig {
-	offerings := defaultModelIDMigrationOfferings()
-	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
-	return normalizeProjectConfigWithOfferings(pc, offerings)
-}
-
-func normalizeProjectModelIDForModels(modelID, smartDefault string, models []ModelDef) string {
-	offerings := defaultModelIDMigrationOfferings()
-	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
-	return migrateProjectModelIDWithOfferings(modelID, smartDefault, offerings)
-}
-
-func normalizeProjectConfigWithOfferings(pc ProjectConfig, offerings []ModelIDMigrationOffering) ProjectConfig {
-	pc.ActiveModel = migrateProjectModelIDWithOfferings(pc.ActiveModel, defaultCanonicalActiveModel, offerings)
-	pc.ExplorationModel = migrateProjectModelIDWithOfferings(pc.ExplorationModel, defaultCanonicalExplorationModel, offerings)
-	return pc
-}
-
-// saveProjectConfigOptions is the parameter bundle for saveProjectConfig.
-type saveProjectConfigOptions struct {
-	repoRoot string
-	pc       ProjectConfig
-	models   []ModelDef
-}
-
-// saveProjectConfig writes project-level overrides to <repoRoot>/.herm/config.json.
-func saveProjectConfig(opts saveProjectConfigOptions) error {
-	repoRoot, pc := opts.repoRoot, opts.pc
-	if !projectConfigScopeAvailable(repoRoot) {
-		return fmt.Errorf("project config path is unavailable or collides with global config")
-	}
-	cfgDir := filepath.Join(repoRoot, configDir)
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
-		return fmt.Errorf("creating project config dir: %w", err)
-	}
-	if opts.models != nil {
-		pc = normalizeProjectConfigForModels(pc, opts.models)
-	} else {
-		pc = normalizeProjectConfig(pc)
-	}
-	data, err := json.MarshalIndent(pc, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling project config: %w", err)
-	}
-	return os.WriteFile(projectConfigPath(repoRoot), data, 0o644)
 }

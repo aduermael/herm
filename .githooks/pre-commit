@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -u
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root" || exit 1
+git_local_env="$(git rev-parse --local-env-vars)"
+unset $git_local_env
+
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/herm-pre-commit.XXXXXX")"
+trap 'rm -rf "$tmpdir"' EXIT
+
+echo "pre-commit: building ci-check"
+if ! (cd tools/ci-check && GOWORK=off go build -o "$tmpdir/ci-check" .); then
+	echo "pre-commit: failed to build tools/ci-check"
+	exit 1
+fi
+
+pids=()
+names=()
+logs=()
+
+start_task() {
+	local name="$1"
+	shift
+	local safe_name="${name//\//-}"
+	local log="$tmpdir/$safe_name.log"
+
+	echo "pre-commit: starting $name"
+	("$@") >"$log" 2>&1 &
+	pids+=("$!")
+	names+=("$name")
+	logs+=("$log")
+}
+
+start_task "file-length" env GOWORK=off "$tmpdir/ci-check" file-length .
+start_task "docstring" env GOWORK=off "$tmpdir/ci-check" docstring .
+start_task "positional-params" env GOWORK=off "$tmpdir/ci-check" positional-params .
+start_task "go-test-root" go test ./...
+
+for mod in tools/*/go.mod; do
+	dir="$(dirname "$mod")"
+	start_task "go-test-$dir" bash -c 'cd "$1" && GOWORK=off go test ./...' _ "$dir"
+done
+
+start_task "prompt-length" bash -c '
+	failed=0
+	for f in prompts/*.md; do
+		lines="$(wc -l < "$f")"
+		if [ "$lines" -gt 100 ]; then
+			echo "ERROR: $f has $lines lines (max 100)"
+			failed=1
+		fi
+	done
+	exit "$failed"
+'
+
+failed=0
+for i in "${!pids[@]}"; do
+	name="${names[$i]}"
+	log="${logs[$i]}"
+	if wait "${pids[$i]}"; then
+		echo "pre-commit: passed $name"
+		continue
+	fi
+
+	failed=1
+	echo
+	echo "pre-commit: failed $name"
+	sed 's/^/  /' "$log"
+done
+
+if [ "$failed" -ne 0 ]; then
+	echo
+	echo "pre-commit: checks failed"
+	exit 1
+fi
+
+echo "pre-commit: all checks passed"

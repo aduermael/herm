@@ -51,7 +51,7 @@ func TestBuildConfigRowsRoutingRemovesPrimaryRouteControls(t *testing.T) {
 }
 
 func TestRoutingJSONPreviewTruncationAndEmptyObject(t *testing.T) {
-	empty := routingJSONPreviewRows(nil, routingJSONPreviewMaxLines)
+	empty := routingJSONPreviewRows(routingJSONPreviewRowsOptions{policy: nil, maxLines: routingJSONPreviewMaxLines})
 	if got := strings.Join(empty, "\n"); got != "{}" {
 		t.Fatalf("empty routing preview = %q, want {}", got)
 	}
@@ -75,7 +75,7 @@ func TestRoutingJSONPreviewTruncationAndEmptyObject(t *testing.T) {
 		}}
 	}
 
-	rows := routingJSONPreviewRows(app.cfgDraft.Routing, 8)
+	rows := routingJSONPreviewRows(routingJSONPreviewRowsOptions{policy: app.cfgDraft.Routing, maxLines: 8})
 	if len(rows) != 8 {
 		t.Fatalf("truncated preview row count = %d, want 8: %#v", len(rows), rows)
 	}

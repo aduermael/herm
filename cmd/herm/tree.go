@@ -76,21 +76,31 @@ func costResultFromAssistantMetadata(metadata *types.AssistantNodeMetadata) *typ
 	return &result
 }
 
-func preferStructuredCost(metadataCost, fallbackCost types.CostResult) types.CostResult {
-	if metadataCost.Status == "" {
-		return fallbackCost
-	}
-	return metadataCost
+type structuredCostPreference struct {
+	metadataCost types.CostResult
+	fallbackCost types.CostResult
 }
 
-func shouldDisplayCost(cost types.CostResult, n *types.Node) bool {
-	switch cost.Status {
+func preferStructuredCost(opts structuredCostPreference) types.CostResult {
+	if opts.metadataCost.Status == "" {
+		return opts.fallbackCost
+	}
+	return opts.metadataCost
+}
+
+type costDisplayOptions struct {
+	cost types.CostResult
+	node *types.Node
+}
+
+func shouldDisplayCost(opts costDisplayOptions) bool {
+	switch opts.cost.Status {
 	case types.CostStatusKnown, types.CostStatusPartial:
-		return cost.Total > 0
+		return opts.cost.Total > 0
 	case types.CostStatusFree:
-		return n != nil && (n.TokensIn > 0 || n.TokensOut > 0 || n.TokensCacheRead > 0 || n.TokensCacheCreation > 0)
+		return opts.node != nil && (opts.node.TokensIn > 0 || opts.node.TokensOut > 0 || opts.node.TokensCacheRead > 0 || opts.node.TokensCacheCreation > 0)
 	case types.CostStatusUnknown:
-		return n != nil && (n.TokensIn > 0 || n.TokensOut > 0)
+		return opts.node != nil && (opts.node.TokensIn > 0 || opts.node.TokensOut > 0)
 	default:
 		return false
 	}
@@ -147,7 +157,7 @@ func (a *App) aggregateDisplayedNodeCosts(nodes []*types.Node) (types.CostResult
 	var results []types.CostResult
 	for _, n := range nodes {
 		cost := a.nodeCostResult(n)
-		if shouldDisplayCost(cost, n) {
+		if shouldDisplayCost(costDisplayOptions{cost: cost, node: n}) {
 			results = append(results, cost)
 		}
 	}
@@ -532,7 +542,7 @@ func (a *App) renderTree(nodes []*types.Node) string {
 			if n.Model != "" {
 				meta = append(meta, shortModel(n.Model))
 			}
-			if cost := a.nodeCostResult(n); shouldDisplayCost(cost, n) {
+			if cost := a.nodeCostResult(n); shouldDisplayCost(costDisplayOptions{cost: cost, node: n}) {
 				meta = append(meta, formatCostResult(cost))
 			}
 			if n.TokensIn > 0 || n.TokensOut > 0 {

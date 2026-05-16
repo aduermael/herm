@@ -43,7 +43,11 @@ func newLangdagClient(cfg Config) (*langdag.Client, error) {
 	return newLangdagClientWithCatalog(cfg, nil)
 }
 
-func newLangdagClientWithCatalog(cfg Config, catalog *langdag.ModelCatalog) (*langdag.Client, error) {
+func newLangdagClientWithCatalog(cfg Config, catalogs ...*langdag.ModelCatalog) (*langdag.Client, error) {
+	var catalog *langdag.ModelCatalog
+	if len(catalogs) > 0 {
+		catalog = catalogs[0]
+	}
 	provider := cfg.defaultLangdagProvider()
 	if provider == "" {
 		return nil, nil
@@ -91,7 +95,7 @@ func newLangdagClientForProvider(opts newLangdagClientForProviderOptions) (*lang
 	case ProviderOllama:
 		langdagCfg.Provider = "ollama"
 	}
-	applyLegacyLangdagFields(&langdagCfg, opts.cfg)
+	applyLegacyLangdagFields(applyLegacyLangdagFieldsOptions{langdagCfg: &langdagCfg, cfg: opts.cfg})
 
 	return langdag.New(langdagCfg)
 }
@@ -108,10 +112,11 @@ func supportedHermProvider(provider string) bool {
 func langdagDeploymentsFromConfig(cfg Config) map[string]langdag.DeploymentConfig {
 	deployments := map[string]langdag.DeploymentConfig{}
 	for deploymentID, deployment := range cfg.deploymentConfigs() {
-		if !deploymentHasRequiredConfig(deploymentID, deployment) {
+		deploymentOpts := deploymentConfigOptions{deploymentID: deploymentID, deployment: deployment}
+		if !deploymentHasRequiredConfig(deploymentOpts) {
 			continue
 		}
-		deployment = deploymentWithEnvFallbacks(deploymentID, deployment)
+		deployment = deploymentWithEnvFallbacks(deploymentOpts)
 		deployments[deploymentID] = langdag.DeploymentConfig{
 			APIKey:        deployment.APIKey,
 			BaseURL:       deployment.BaseURL,
@@ -167,7 +172,14 @@ func langdagRoutingStagesFromConfig(stages []RoutingStage) []langdag.RoutingStag
 	return converted
 }
 
-func applyLegacyLangdagFields(langdagCfg *langdag.Config, cfg Config) {
+type applyLegacyLangdagFieldsOptions struct {
+	langdagCfg *langdag.Config
+	cfg        Config
+}
+
+func applyLegacyLangdagFields(opts applyLegacyLangdagFieldsOptions) {
+	langdagCfg := opts.langdagCfg
+	cfg := opts.cfg
 	if cfg.AnthropicAPIKey != "" {
 		langdagCfg.APIKeys["anthropic"] = cfg.AnthropicAPIKey
 	}

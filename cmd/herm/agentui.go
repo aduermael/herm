@@ -106,7 +106,7 @@ func (a *App) normalizeProjectConfigWithCurrentModels() {
 	if a.models == nil {
 		return
 	}
-	normalized := normalizeProjectConfigForModels(a.projectConfig, a.models)
+	normalized := normalizeProjectConfigForModels(normalizeProjectConfigForModelsOptions{pc: a.projectConfig, models: a.models})
 	if normalized == a.projectConfig {
 		return
 	}
@@ -247,7 +247,7 @@ func (a *App) startAgent(userMessage string) {
 	availableModels := a.config.availableModels(a.models)
 	var modelProvider string
 	if modelDef := findModelByID(findModelByIDOptions{models: availableModels, id: modelID}); modelDef != nil {
-		modelProvider = configuredProviderForModel(a.config, *modelDef)
+		modelProvider = configuredProviderForModel(configuredProviderForModelOptions{cfg: a.config, model: *modelDef})
 	}
 
 	// Server-side tools (e.g. web search) are handled by the LLM provider.
@@ -644,7 +644,7 @@ func (a *App) handleAgentEvent(event AgentEvent) {
 			fallbackCost := computeCostResult(computeCostOptions{models: a.models, modelID: event.Model, usage: *event.Usage})
 			costResult := fallbackCost
 			if event.CostResult != nil {
-				costResult = preferStructuredCost(*event.CostResult, fallbackCost)
+				costResult = preferStructuredCost(structuredCostPreference{metadataCost: *event.CostResult, fallbackCost: fallbackCost})
 			}
 			cost := costResult.Total
 			a.sessionCostUSD += cost

@@ -1,3 +1,5 @@
+// configeditor_routing.go renders routing policy summaries and manages the
+// external JSON editor used for advanced global routing configuration.
 package main
 
 import (
@@ -20,7 +22,7 @@ const (
 func (a *App) routingTabReadOnlyRows() []string {
 	rows := routingSummaryRows(a.cfgDraft.Routing)
 	rows = append(rows, "routing JSON")
-	rows = append(rows, routingJSONPreviewRows(a.cfgDraft.Routing, routingJSONPreviewMaxLines)...)
+	rows = append(rows, routingJSONPreviewRows(routingJSONPreviewRowsOptions{policy: a.cfgDraft.Routing, maxLines: routingJSONPreviewMaxLines})...)
 	return rows
 }
 
@@ -100,7 +102,14 @@ func joinEnglishList(parts []string) string {
 	}
 }
 
-func routingJSONPreviewRows(policy *RoutingPolicy, maxLines int) []string {
+// routingJSONPreviewRowsOptions is the parameter bundle for routingJSONPreviewRows.
+type routingJSONPreviewRowsOptions struct {
+	policy   *RoutingPolicy
+	maxLines int
+}
+
+func routingJSONPreviewRows(opts routingJSONPreviewRowsOptions) []string {
+	policy, maxLines := opts.policy, opts.maxLines
 	data, err := json.MarshalIndent(routingPolicyPreviewValue(policy), "", "  ")
 	if err != nil {
 		return []string{fmt.Sprintf("(routing JSON unavailable: %v)", err)}

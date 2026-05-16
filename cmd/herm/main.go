@@ -5,7 +5,6 @@ package main
 import (
 	"crypto/rand"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -746,7 +745,10 @@ func (a *App) handleResult(result any) {
 				log.Printf("model catalog diagnostic: %s: %s", diagnostic.Code, diagnostic.Message)
 			}
 			a.modelCatalog = msg.catalog
-			a.models = modelsFromCatalogPreservingDynamic(msg.catalog, a.models)
+			a.models = modelsFromCatalogPreservingDynamic(modelsFromCatalogPreservingDynamicOptions{
+				catalog: msg.catalog,
+				current: a.models,
+			})
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
@@ -774,7 +776,7 @@ func (a *App) handleResult(result any) {
 				}
 			}
 			dynamic = append(dynamic, msg.models...)
-			a.models = mergeDynamicModels(base, dynamic)
+			a.models = mergeDynamicModels(mergeDynamicModelsOptions{base: base, dynamic: dynamic})
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
@@ -795,7 +797,7 @@ func (a *App) handleResult(result any) {
 				}
 			}
 			dynamic = append(dynamic, msg.models...)
-			a.models = mergeDynamicModels(base, dynamic)
+			a.models = mergeDynamicModels(mergeDynamicModelsOptions{base: base, dynamic: dynamic})
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
@@ -836,7 +838,7 @@ func (a *App) handleResult(result any) {
 		a.worktreePath = msg.worktreePath
 		a.repoRoot = msg.repoRoot
 		if a.models != nil {
-			a.projectConfig = loadProjectConfigForModels(a.projectConfigRoot(), a.models)
+			a.projectConfig = loadProjectConfigForModels(loadProjectConfigForModelsOptions{repoRoot: a.projectConfigRoot(), models: a.models})
 		} else {
 			a.projectConfig = loadRawProjectConfig(a.projectConfigRoot())
 		}
@@ -968,42 +970,5 @@ func (a *App) cleanup() {
 	}
 	if a.worktreePath != "" {
 		_ = unlockWorktree(a.worktreePath)
-	}
-}
-
-func main() {
-	log.SetOutput(io.Discard)
-
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-v" {
-			fmt.Println("herm " + Version + " (container: " + hermImageTag + ")")
-			os.Exit(0)
-		}
-	}
-
-	app := newApp()
-
-	for i, arg := range os.Args[1:] {
-		switch arg {
-		case "--debug":
-			app.cliDebug = true
-		case "--prompt":
-			if i+1 < len(os.Args[1:]) {
-				app.cliPrompt = os.Args[i+2] // i is 0-based in the slice, +2 to get next arg in os.Args
-			}
-		}
-	}
-
-	if app.cliPrompt != "" {
-		app.headless = true
-		if err := app.RunHeadless(); err != nil {
-			os.Exit(1)
-		}
-		return
-	}
-
-	if err := app.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
 	}
 }

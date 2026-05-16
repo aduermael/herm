@@ -94,7 +94,7 @@ func TestPhase11RuntimeProjectNormalizationUsesCurrentCatalogModels(t *testing.T
 		},
 	}
 
-	normalized := normalizeProjectConfigForModels(project, models)
+	normalized := normalizeProjectConfigForModels(normalizeProjectConfigForModelsOptions{pc: project, models: models})
 	if normalized.ActiveModel != "provider/new-model" {
 		t.Fatalf("ActiveModel = %q, want provider/new-model", normalized.ActiveModel)
 	}
@@ -118,7 +118,7 @@ func TestPhase11RuntimeGlobalNormalizationUsesCurrentCatalogModels(t *testing.T)
 		},
 	}
 
-	normalized := normalizeConfigForModels(cfg, models)
+	normalized := normalizeConfigForModels(configModelsOptions{cfg: cfg, models: models})
 	if normalized.ActiveModel != "provider/new-model" {
 		t.Fatalf("ActiveModel = %q, want provider/new-model", normalized.ActiveModel)
 	}
@@ -140,11 +140,11 @@ func TestPhase11SlashNativeIDNormalizesWhenCatalogDisambiguates(t *testing.T) {
 		}},
 	}}
 
-	project := normalizeProjectConfigForModels(ProjectConfig{ActiveModel: "hf.co/org/model:Q4"}, models)
+	project := normalizeProjectConfigForModels(normalizeProjectConfigForModelsOptions{pc: ProjectConfig{ActiveModel: "hf.co/org/model:Q4"}, models: models})
 	if project.ActiveModel != "ollama/hf.co/org/model:Q4" {
 		t.Fatalf("project ActiveModel = %q, want ollama/hf.co/org/model:Q4", project.ActiveModel)
 	}
-	global := normalizeConfigForModels(Config{ActiveModel: "hf.co/org/model:Q4"}, models)
+	global := normalizeConfigForModels(configModelsOptions{cfg: Config{ActiveModel: "hf.co/org/model:Q4"}, models: models})
 	if global.ActiveModel != "ollama/hf.co/org/model:Q4" {
 		t.Fatalf("global ActiveModel = %q, want ollama/hf.co/org/model:Q4", global.ActiveModel)
 	}
@@ -156,7 +156,11 @@ func TestPhase11ExactCanonicalWinsOverSlashNativeIDCollision(t *testing.T) {
 		{CanonicalModelID: "other/canonical", DeploymentID: "direct", NativeModelID: "provider/model"},
 	}
 
-	result := migrateStoredModelIDToCanonical("provider/model", offerings, "fallback/model")
+	result := migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+		savedModelID: "provider/model",
+		offerings:    offerings,
+		smartDefault: "fallback/model",
+	})
 	if result.Status != ModelIDMigrationCanonicalMatch || result.CanonicalModelID != "provider/model" {
 		t.Fatalf("canonical collision result = %+v, want exact canonical match", result)
 	}
@@ -506,7 +510,7 @@ func TestPhase11ProjectConfigAmbiguousValuesRemainRoundTrippable(t *testing.T) {
 	if err := saveProjectConfig(saveProjectConfigOptions{repoRoot: repoRoot, pc: project, models: models}); err != nil {
 		t.Fatalf("saveProjectConfig: %v", err)
 	}
-	loaded := loadProjectConfigForModels(repoRoot, models)
+	loaded := loadProjectConfigForModels(loadProjectConfigForModelsOptions{repoRoot: repoRoot, models: models})
 	if loaded.ActiveModel != project.ActiveModel || loaded.ExplorationModel != project.ExplorationModel {
 		t.Fatalf("loaded = %+v, want ambiguous values preserved %+v", loaded, project)
 	}
@@ -553,7 +557,7 @@ func TestPhase11ProjectConfigPathCollisionGuardResolvesSymlinks(t *testing.T) {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	t.Setenv("HOME", home)
-	if !sameFilesystemPath(projectConfigPath(link), configPath()) {
+	if !sameFilesystemPath(sameFilesystemPathOptions{pathA: projectConfigPath(link), pathB: configPath()}) {
 		t.Fatal("sameFilesystemPath should treat symlinked global/project config paths as the same file")
 	}
 	if projectConfigScopeAvailable(link) {
@@ -912,7 +916,7 @@ func TestPhase11OllamaOfflineWarningDedupesWhenExplorationRefreshes(t *testing.T
 
 	app.maybeShowInitialModels()
 	app.handleResult(ollamaModelsMsg{})
-	app.models = mergeDynamicModels(app.models, []ModelDef{{
+	app.models = mergeDynamicModels(mergeDynamicModelsOptions{base: app.models, dynamic: []ModelDef{{
 		Provider:      ProviderOpenRouter,
 		OwnerProvider: "vendor",
 		ID:            "vendor/fast-model",
@@ -921,7 +925,7 @@ func TestPhase11OllamaOfflineWarningDedupesWhenExplorationRefreshes(t *testing.T
 			DeploymentID:  "openrouter",
 			NativeModelID: "vendor/fast-model",
 		}},
-	}})
+	}}})
 	app.refreshResolvedModelDisplay()
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
@@ -1008,7 +1012,7 @@ func TestPhase11DynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 		t.Fatalf("startup unexpectedly showed unavailable exploration model:\n%s", startup)
 	}
 
-	app.models = mergeDynamicModels(app.models, []ModelDef{{
+	app.models = mergeDynamicModels(mergeDynamicModelsOptions{base: app.models, dynamic: []ModelDef{{
 		Provider:      ProviderOpenRouter,
 		OwnerProvider: "vendor",
 		ID:            "vendor/fast-model",
@@ -1017,7 +1021,7 @@ func TestPhase11DynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 			DeploymentID:  "openrouter",
 			NativeModelID: "vendor/fast-model",
 		}},
-	}})
+	}}})
 	app.refreshResolvedModelDisplay()
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
