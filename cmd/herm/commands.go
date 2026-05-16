@@ -285,7 +285,7 @@ func (a *App) handleUsageCommand() {
 	// Per-tool breakdown (sorted by bytes descending).
 	if len(a.sessionToolStats) > 0 {
 		type toolStat struct {
-			name       string
+			name         string
 			count, bytes int
 		}
 		var stats []toolStat
@@ -307,14 +307,12 @@ func (a *App) handleUsageCommand() {
 		if err == nil && len(ancestors) > 0 {
 			b.WriteString("\nConversation (" + fmt.Sprintf("%d nodes", len(ancestors)) + ")\n")
 			var convIn, convOut, convCacheRead int
-			var convCost float64
 			var toolResultBytes int
 			var toolResultCount int
 			for _, n := range ancestors {
 				convIn += n.TokensIn
 				convOut += n.TokensOut
 				convCacheRead += n.TokensCacheRead
-				convCost += a.nodeCost(n)
 				if n.NodeType == types.NodeTypeUser && isToolResultContent(n.Content) {
 					toolResultBytes += len(n.Content)
 					toolResultCount++
@@ -325,7 +323,9 @@ func (a *App) handleUsageCommand() {
 			if convCacheRead > 0 {
 				b.WriteString(fmt.Sprintf("  Cache read:    %s\n", formatTokenCount(convCacheRead)))
 			}
-			b.WriteString(fmt.Sprintf("  Cost:          %s\n", formatCost(convCost)))
+			if convCost, ok := a.aggregateDisplayedNodeCosts(ancestors); ok && shouldDisplayAggregateCost(convCost) {
+				b.WriteString(fmt.Sprintf("  Cost:          %s\n", formatCostResult(convCost)))
+			}
 			if toolResultCount > 0 {
 				b.WriteString(fmt.Sprintf("  Tool results:  %d (%s stored)\n", toolResultCount, formatBytes(toolResultBytes)))
 			}

@@ -15,27 +15,30 @@ const configDir = ".herm"
 const configFile = "config.json"
 
 type Config struct {
-	PasteCollapseMinChars int             `json:"paste_collapse_min_chars"`
-	AnthropicAPIKey       string          `json:"anthropic_api_key,omitempty"`
-	GrokAPIKey            string          `json:"grok_api_key,omitempty"`
-	OpenRouterAPIKey      string          `json:"openrouter_api_key,omitempty"`
-	OpenAIAPIKey          string          `json:"openai_api_key,omitempty"`
-	GeminiAPIKey          string          `json:"gemini_api_key,omitempty"`
-	OllamaBaseURL         string          `json:"ollama_base_url,omitempty"` // e.g., "http://localhost:11434"
-	ActiveModel           string          `json:"active_model,omitempty"`
-	ExplorationModel      string          `json:"exploration_model,omitempty"` // model for sub-agents; falls back to ActiveModel
-	ModelSortCol          string          `json:"model_sort_col,omitempty"`   // "name","provider","price","context"
-	ModelSortDirs         map[string]bool `json:"model_sort_dirs,omitempty"` // column name → ascending (per-column)
-	SubAgentMaxTurns      int             `json:"sub_agent_max_turns,omitempty"`
-	ExploreMaxTurns       int             `json:"explore_max_turns,omitempty"`
-	GeneralMaxTurns       int             `json:"general_max_turns,omitempty"`
-	MaxToolIterations     int             `json:"max_tool_iterations,omitempty"`     // main agent tool-call loop cap; 0 = default (200)
-	MaxAgentDepth         int             `json:"max_agent_depth,omitempty"`         // max sub-agent nesting depth; 0 = default (1)
-	Personality           string          `json:"personality,omitempty"` // optional agent personality/tone
-	HistoryMaxEntries     int             `json:"history_max_entries,omitempty"`
-	GitCoAuthor           *bool           `json:"git_co_author,omitempty"` // nil (default) or explicit true/false
-	DebugMode             bool            `json:"debug_mode,omitempty"`
-	Thinking              *bool           `json:"thinking,omitempty"` // nil/false = disabled (default), true = enable extended thinking
+	ConfigVersion         int                         `json:"config_version,omitempty"`
+	PasteCollapseMinChars int                         `json:"paste_collapse_min_chars"`
+	AnthropicAPIKey       string                      `json:"anthropic_api_key,omitempty"`
+	GrokAPIKey            string                      `json:"grok_api_key,omitempty"`
+	OpenRouterAPIKey      string                      `json:"openrouter_api_key,omitempty"`
+	OpenAIAPIKey          string                      `json:"openai_api_key,omitempty"`
+	GeminiAPIKey          string                      `json:"gemini_api_key,omitempty"`
+	OllamaBaseURL         string                      `json:"ollama_base_url,omitempty"` // e.g., "http://localhost:11434"
+	Deployments           map[string]DeploymentConfig `json:"deployments,omitempty"`
+	Routing               *RoutingPolicy              `json:"routing,omitempty"`
+	ActiveModel           string                      `json:"active_model,omitempty"`
+	ExplorationModel      string                      `json:"exploration_model,omitempty"` // model for sub-agents; falls back to ActiveModel
+	ModelSortCol          string                      `json:"model_sort_col,omitempty"`    // "name","provider","price","context"
+	ModelSortDirs         map[string]bool             `json:"model_sort_dirs,omitempty"`   // column name → ascending (per-column)
+	SubAgentMaxTurns      int                         `json:"sub_agent_max_turns,omitempty"`
+	ExploreMaxTurns       int                         `json:"explore_max_turns,omitempty"`
+	GeneralMaxTurns       int                         `json:"general_max_turns,omitempty"`
+	MaxToolIterations     int                         `json:"max_tool_iterations,omitempty"` // main agent tool-call loop cap; 0 = default (200)
+	MaxAgentDepth         int                         `json:"max_agent_depth,omitempty"`     // max sub-agent nesting depth; 0 = default (1)
+	Personality           string                      `json:"personality,omitempty"`         // optional agent personality/tone
+	HistoryMaxEntries     int                         `json:"history_max_entries,omitempty"`
+	GitCoAuthor           *bool                       `json:"git_co_author,omitempty"` // nil (default) or explicit true/false
+	DebugMode             bool                        `json:"debug_mode,omitempty"`
+	Thinking              *bool                       `json:"thinking,omitempty"` // nil/false = disabled (default), true = enable extended thinking
 }
 
 func (c Config) effectiveGitCoAuthor() bool {
@@ -59,56 +62,259 @@ func (c Config) effectiveMaxHistory() int {
 	return 100
 }
 
-// configuredProviders returns a set of provider names that have API keys configured.
+// configuredProviders returns route/provider names that have enough local
+// deployment configuration to be usable.
 func (c Config) configuredProviders() map[string]bool {
 	providers := make(map[string]bool)
-	if c.AnthropicAPIKey != "" {
-		providers[ProviderAnthropic] = true
-	}
-	if c.GrokAPIKey != "" {
-		providers[ProviderGrok] = true
-	}
-	if c.OpenRouterAPIKey != "" {
-		providers[ProviderOpenRouter] = true
-	}
-	if c.OpenAIAPIKey != "" {
-		providers[ProviderOpenAI] = true
-	}
-	if c.GeminiAPIKey != "" {
-		providers[ProviderGemini] = true
-	}
-	if c.OllamaBaseURL != "" {
-		providers[ProviderOllama] = true
+	for deploymentID := range c.configuredDeploymentIDs() {
+		if provider := hermProviderForDeployment(deploymentID); provider != "" {
+			providers[provider] = true
+		}
 	}
 	return providers
 }
 
 // defaultLangdagProvider returns the provider that newLangdagClient will use.
 func (c Config) defaultLangdagProvider() string {
-	if c.AnthropicAPIKey != "" {
-		return ProviderAnthropic
-	}
-	if c.OpenAIAPIKey != "" {
-		return ProviderOpenAI
-	}
-	if c.GrokAPIKey != "" {
-		return ProviderGrok
-	}
-	if c.OpenRouterAPIKey != "" {
-		return ProviderOpenRouter
-	}
-	if c.GeminiAPIKey != "" {
-		return ProviderGemini
-	}
-	if c.OllamaBaseURL != "" {
-		return ProviderOllama
+	providers := c.configuredProviders()
+	for _, provider := range []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama} {
+		if providers[provider] {
+			return provider
+		}
 	}
 	return ""
 }
 
-// availableModels returns the models whose provider has a configured API key.
+// availableModels returns canonical models with at least one locally configured
+// deployment route. Legacy ModelDef values without deployment metadata still
+// fall back to provider-key filtering for compatibility.
 func (c Config) availableModels(models []ModelDef) []ModelDef {
-	return filterModelsByProviders(filterModelsByProvidersOptions{models: models, providers: c.configuredProviders()})
+	configuredDeployments := c.configuredDeploymentIDs()
+	deploymentConfigs := c.deploymentConfigs()
+	providers := c.configuredProviders()
+	var available []ModelDef
+	for _, model := range models {
+		if len(model.Deployments) == 0 {
+			if providers[model.Provider] || providers[model.OwnerProvider] {
+				available = append(available, model)
+			}
+			continue
+		}
+		filtered := model
+		filtered.Deployments = nil
+		for _, deployment := range model.Deployments {
+			if !configuredDeployments[deployment.DeploymentID] {
+				continue
+			}
+			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
+				continue
+			}
+			filtered.Deployments = append(filtered.Deployments, deployment)
+		}
+		if len(filtered.Deployments) == 0 {
+			continue
+		}
+		price := summarizeModelPricing(filtered.Deployments)
+		filtered.PromptPrice = price.promptPrice
+		filtered.CompletionPrice = price.completionPrice
+		filtered.PricingStatus = price.status
+		filtered.PricingCurrency = price.currency
+		filtered.PricingRatesPer1M = price.ratesPer1M
+		filtered.MissingPriceDimensions = price.missingDimensions
+		filtered.PriceLabel = price.label
+		filtered.RouteDependentPricing = price.routeDependent
+		filtered.ServerTools = supportedServerToolsForDeployments(filtered.Deployments)
+		available = append(available, filtered)
+	}
+	return available
+}
+
+func (c Config) deploymentConfigs() map[string]DeploymentConfig {
+	out := map[string]DeploymentConfig{}
+	for deploymentID := range knownDeploymentIDs() {
+		out[deploymentID] = DeploymentConfig{}
+	}
+	for id, deployment := range c.Deployments {
+		out[id] = cloneDeploymentConfig(deployment)
+	}
+	mergeDeploymentConfig := func(id string, deployment DeploymentConfig) {
+		current := out[id]
+		if current.APIKey == "" {
+			current.APIKey = deployment.APIKey
+		}
+		if current.BaseURL == "" {
+			current.BaseURL = deployment.BaseURL
+		}
+		if current.Endpoint == "" {
+			current.Endpoint = deployment.Endpoint
+		}
+		if current.APIVersion == "" {
+			current.APIVersion = deployment.APIVersion
+		}
+		if current.ProjectID == "" {
+			current.ProjectID = deployment.ProjectID
+		}
+		if current.Region == "" {
+			current.Region = deployment.Region
+		}
+		if current.ModelMappings == nil {
+			current.ModelMappings = cloneStringMap(deployment.ModelMappings)
+		}
+		out[id] = current
+	}
+	if c.AnthropicAPIKey != "" {
+		mergeDeploymentConfig("anthropic-direct", DeploymentConfig{APIKey: c.AnthropicAPIKey})
+	}
+	if c.OpenAIAPIKey != "" {
+		mergeDeploymentConfig("openai-direct", DeploymentConfig{APIKey: c.OpenAIAPIKey})
+	}
+	if c.GrokAPIKey != "" {
+		mergeDeploymentConfig("grok-direct", DeploymentConfig{APIKey: c.GrokAPIKey})
+	}
+	if c.OpenRouterAPIKey != "" {
+		mergeDeploymentConfig("openrouter", DeploymentConfig{APIKey: c.OpenRouterAPIKey})
+	}
+	if c.GeminiAPIKey != "" {
+		mergeDeploymentConfig("gemini-direct", DeploymentConfig{APIKey: c.GeminiAPIKey})
+	}
+	if c.OllamaBaseURL != "" {
+		mergeDeploymentConfig("ollama-local", DeploymentConfig{BaseURL: c.OllamaBaseURL})
+	}
+	return out
+}
+
+func cloneDeploymentConfig(deployment DeploymentConfig) DeploymentConfig {
+	deployment.ModelMappings = cloneStringMap(deployment.ModelMappings)
+	return deployment
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(values))
+	for key, value := range values {
+		clone[key] = value
+	}
+	return clone
+}
+
+func (c Config) configuredDeploymentIDs() map[string]bool {
+	configured := map[string]bool{}
+	for deploymentID, deployment := range c.deploymentConfigs() {
+		if deploymentHasRequiredConfig(deploymentID, deployment) {
+			configured[deploymentID] = true
+		}
+	}
+	return configured
+}
+
+func deploymentHasRequiredConfig(deploymentID string, deployment DeploymentConfig) bool {
+	deployment = deploymentWithEnvFallbacks(deploymentID, deployment)
+	switch deploymentID {
+	case "anthropic-direct", "openai-direct", "grok-direct", "openrouter", "gemini-direct":
+		return deployment.APIKey != ""
+	case "openai-azure":
+		return deployment.APIKey != "" && deployment.Endpoint != "" && deployment.APIVersion != ""
+	case "anthropic-bedrock":
+		return deployment.Region != ""
+	case "anthropic-vertex", "gemini-vertex":
+		return deployment.ProjectID != "" && deployment.Region != ""
+	case "ollama-local":
+		return deployment.BaseURL != ""
+	default:
+		return false
+	}
+}
+
+func deploymentWithEnvFallbacks(deploymentID string, deployment DeploymentConfig) DeploymentConfig {
+	for _, fallback := range deploymentEnvFallbacks[deploymentID] {
+		value := deploymentFieldValue(deployment, fallback.Field)
+		if value != "" {
+			continue
+		}
+		for _, envName := range fallback.Env {
+			if envValue := strings.TrimSpace(os.Getenv(envName)); envValue != "" {
+				setDeploymentFieldValue(&deployment, fallback.Field, envValue)
+				break
+			}
+		}
+	}
+	return deployment
+}
+
+func deploymentFieldValue(deployment DeploymentConfig, field string) string {
+	switch field {
+	case "api_key":
+		return deployment.APIKey
+	case "base_url":
+		return deployment.BaseURL
+	case "endpoint":
+		return deployment.Endpoint
+	case "api_version":
+		return deployment.APIVersion
+	case "project_id":
+		return deployment.ProjectID
+	case "region":
+		return deployment.Region
+	default:
+		return ""
+	}
+}
+
+func setDeploymentFieldValue(deployment *DeploymentConfig, field, value string) {
+	switch field {
+	case "api_key":
+		deployment.APIKey = value
+	case "base_url":
+		deployment.BaseURL = value
+	case "endpoint":
+		deployment.Endpoint = value
+	case "api_version":
+		deployment.APIVersion = value
+	case "project_id":
+		deployment.ProjectID = value
+	case "region":
+		deployment.Region = value
+	}
+}
+
+func hermProviderForDeployment(deploymentID string) string {
+	switch deploymentID {
+	case "anthropic-direct", "anthropic-bedrock", "anthropic-vertex":
+		return ProviderAnthropic
+	case "openai-direct", "openai-azure":
+		return ProviderOpenAI
+	case "gemini-direct", "gemini-vertex":
+		return ProviderGemini
+	case "grok-direct":
+		return ProviderGrok
+	case "openrouter":
+		return ProviderOpenRouter
+	case "ollama-local":
+		return ProviderOllama
+	default:
+		return ""
+	}
+}
+
+func configuredProviderForModel(cfg Config, model ModelDef) string {
+	available := cfg.availableModels([]ModelDef{model})
+	if len(available) > 0 {
+		for _, deployment := range available[0].Deployments {
+			if provider := hermProviderForDeployment(deployment.DeploymentID); provider != "" {
+				return provider
+			}
+		}
+		if available[0].Provider != "" {
+			return available[0].Provider
+		}
+		return available[0].OwnerProvider
+	}
+	if model.Provider != "" {
+		return model.Provider
+	}
+	return model.OwnerProvider
 }
 
 // defaultActiveModels maps provider to the preferred default active model ID.
@@ -117,11 +323,11 @@ func (c Config) availableModels(models []ModelDef) []ModelDef {
 // Ollama is intentionally omitted: locally installed models are user-specific
 // and there is no canonical default to suggest.
 var defaultActiveModels = map[string]string{
-	ProviderAnthropic:  "claude-sonnet-4-6",
-	ProviderOpenAI:     "gpt-4.1-2025-04-14",
-	ProviderGrok:       "grok-4-1-fast-reasoning",
+	ProviderAnthropic:  "anthropic/claude-sonnet-4-6",
+	ProviderOpenAI:     "openai/gpt-4.1-2025-04-14",
+	ProviderGrok:       "xai/grok-4-1-fast-reasoning",
 	ProviderOpenRouter: "z-ai/glm-4.5-air:free",
-	ProviderGemini:     "gemini-2.5-pro",
+	ProviderGemini:     "google/gemini-2.5-pro",
 }
 
 // defaultExplorationModels maps provider to the preferred cheap/fast model
@@ -129,11 +335,11 @@ var defaultActiveModels = map[string]string{
 // Ollama is intentionally omitted: locally installed models are user-specific
 // and there is no canonical cheap/fast default to suggest.
 var defaultExplorationModels = map[string]string{
-	ProviderAnthropic:  "claude-haiku-4-5",
-	ProviderOpenAI:     "gpt-4.1-mini-2025-04-14",
-	ProviderGrok:       "grok-4-1-fast-non-reasoning",
+	ProviderAnthropic:  "anthropic/claude-haiku-4-5",
+	ProviderOpenAI:     "openai/gpt-4.1-mini-2025-04-14",
+	ProviderGrok:       "xai/grok-4-1-fast-non-reasoning",
 	ProviderOpenRouter: "z-ai/glm-4.5-air:free",
-	ProviderGemini:     "gemini-2.5-flash",
+	ProviderGemini:     "google/gemini-2.5-flash",
 }
 
 // preferredDefaultOptions is the parameter bundle for preferredDefault.
@@ -151,9 +357,12 @@ func preferredDefault(opts preferredDefaultOptions) string {
 	if !ok {
 		return ""
 	}
+	candidates := modelIDCandidates(id, id)
 	for _, m := range models {
-		if m.ID == id {
-			return id
+		for _, candidate := range candidates {
+			if modelMatchesID(m, candidate) {
+				return m.ID
+			}
 		}
 	}
 	return ""
@@ -163,24 +372,19 @@ func preferredDefault(opts preferredDefaultOptions) string {
 // is invalid or its provider has no key, it falls back to the first available
 // model, or empty string if no keys are configured.
 func (c Config) resolveActiveModel(models []ModelDef) string {
-	// If the saved model's provider is configured, trust it even if the
-	// provider is offline and not in the live model list (e.g. Ollama down).
+	available := c.availableModels(models)
 	if c.ActiveModel != "" {
-		providers := c.configuredProviders()
-		if providers[ollamaModelProvider(ollamaModelProviderOptions{modelID: c.ActiveModel, models: models, ollamaURL: c.OllamaBaseURL})] {
-			return c.ActiveModel
+		for _, candidate := range modelIDCandidates(c.ActiveModel, defaultCanonicalActiveModel) {
+			if m := findModelByID(findModelByIDOptions{models: available, id: candidate}); m != nil {
+				return m.ID
+			}
+		}
+		if c.trustOfflineOllamaModel(c.ActiveModel, models) {
+			return ollamaCanonicalModelID(c.ActiveModel)
 		}
 	}
-
-	available := c.availableModels(models)
 	if len(available) == 0 {
 		return ""
-	}
-	// Check if current active model is in the available list
-	for _, m := range available {
-		if m.ID == c.ActiveModel {
-			return c.ActiveModel
-		}
 	}
 	// Try provider-specific default before falling back to first available
 	if id := preferredDefault(preferredDefaultOptions{models: available, provider: c.defaultLangdagProvider(), defaults: defaultActiveModels}); id != "" {
@@ -203,9 +407,12 @@ type ollamaModelProviderOptions struct {
 func ollamaModelProvider(opts ollamaModelProviderOptions) string {
 	modelID, models, ollamaURL := opts.modelID, opts.models, opts.ollamaURL
 	for _, m := range models {
-		if m.ID == modelID {
+		if modelMatchesID(m, modelID) {
 			return m.Provider
 		}
+	}
+	if strings.HasPrefix(modelID, ProviderOllama+"/") {
+		return ProviderOllama
 	}
 	// Not in catalog — if Ollama is configured, assume it's an Ollama model.
 	if ollamaURL != "" {
@@ -225,21 +432,68 @@ func (c Config) resolveExplorationModel(models []ModelDef) string {
 		}
 		return c.resolveActiveModel(models)
 	}
-	// If the saved exploration model's provider is configured, trust it.
-	if c.ExplorationModel != "" {
-		providers := c.configuredProviders()
-		if providers[ollamaModelProvider(ollamaModelProviderOptions{modelID: c.ExplorationModel, models: models, ollamaURL: c.OllamaBaseURL})] {
-			return c.ExplorationModel
+	available := c.availableModels(models)
+	for _, candidate := range modelIDCandidates(c.ExplorationModel, defaultCanonicalExplorationModel) {
+		if m := findModelByID(findModelByIDOptions{models: available, id: candidate}); m != nil {
+			return m.ID
 		}
 	}
-	available := c.availableModels(models)
-	for _, m := range available {
-		if m.ID == c.ExplorationModel {
-			return c.ExplorationModel
-		}
+	if c.trustOfflineOllamaModel(c.ExplorationModel, models) {
+		return ollamaCanonicalModelID(c.ExplorationModel)
 	}
 	// Configured but invalid — fall back.
 	return c.resolveActiveModel(models)
+}
+
+func (c Config) trustOfflineOllamaModel(modelID string, models []ModelDef) bool {
+	if modelID == "" || !c.configuredDeploymentIDs()["ollama-local"] {
+		return false
+	}
+	for _, model := range models {
+		if modelMatchesID(model, modelID) {
+			return model.Provider == ProviderOllama || model.OwnerProvider == ProviderOllama
+		}
+	}
+	return true
+}
+
+func configuredProviderForModelID(cfg Config, models []ModelDef, modelID string) string {
+	if modelID == "" {
+		return ""
+	}
+	if model := findModelByID(findModelByIDOptions{models: models, id: modelID}); model != nil {
+		return configuredProviderForModel(cfg, *model)
+	}
+	return ollamaModelProvider(ollamaModelProviderOptions{modelID: modelID, models: models, ollamaURL: cfg.OllamaBaseURL})
+}
+
+func modelIDCandidates(modelID, smartDefault string) []string {
+	seen := map[string]bool{}
+	var candidates []string
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		candidates = append(candidates, id)
+	}
+	add(modelID)
+	if strings.HasPrefix(modelID, ProviderOllama+"/") {
+		add(strings.TrimPrefix(modelID, ProviderOllama+"/"))
+	}
+	if !looksCanonicalModelID(modelID) {
+		migrated := migrateStoredModelIDToCanonical(modelID, defaultModelIDMigrationOfferings(), smartDefault)
+		switch migrated.Status {
+		case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative, ModelIDMigrationAmbiguousNative:
+			add(migrated.CanonicalModelID)
+		}
+	}
+	for _, offering := range defaultModelIDMigrationOfferings() {
+		if offering.CanonicalModelID == modelID {
+			add(offering.NativeModelID)
+		}
+	}
+	return candidates
 }
 
 // ProjectConfig holds per-project overrides loaded from <repo>/.herm/config.json.
@@ -359,7 +613,7 @@ func loadConfig() (Config, error) {
 		return defaultConfig(), nil
 	}
 
-	return cfg, nil
+	return normalizeLoadedConfig(cfg), nil
 }
 
 // loadConfigFrom reads config from a specific directory path.
@@ -388,7 +642,29 @@ func loadConfigFrom(dir string) (Config, error) {
 		return defaultConfig(), nil
 	}
 
-	return cfg, nil
+	return normalizeLoadedConfig(cfg), nil
+}
+
+func normalizeLoadedConfig(cfg Config) Config {
+	cfg.ActiveModel = migrateLoadedModelID(cfg, cfg.ActiveModel, defaultCanonicalActiveModel)
+	cfg.ExplorationModel = migrateLoadedModelID(cfg, cfg.ExplorationModel, defaultCanonicalExplorationModel)
+	return cfg
+}
+
+func migrateLoadedModelID(cfg Config, modelID, smartDefault string) string {
+	if modelID == "" || looksCanonicalModelID(modelID) {
+		return modelID
+	}
+	migrated := migrateStoredModelIDToCanonical(modelID, defaultModelIDMigrationOfferings(), smartDefault)
+	switch migrated.Status {
+	case ModelIDMigrationCanonicalMatch, ModelIDMigrationUniqueNative, ModelIDMigrationAmbiguousNative:
+		return migrated.CanonicalModelID
+	default:
+		if cfg.configuredDeploymentIDs()["ollama-local"] {
+			return ollamaCanonicalModelID(modelID)
+		}
+		return modelID
+	}
 }
 
 // saveConfig writes config to ~/.herm/config.json.
@@ -397,6 +673,7 @@ func saveConfig(cfg Config) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
+	cfg = normalizeLoadedConfig(cfg)
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
@@ -419,6 +696,7 @@ func saveConfigTo(opts saveConfigToOptions) error {
 		return fmt.Errorf("creating config dir: %w", err)
 	}
 
+	cfg = normalizeLoadedConfig(cfg)
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
@@ -441,7 +719,13 @@ func loadProjectConfig(repoRoot string) ProjectConfig {
 	if err := json.Unmarshal(data, &pc); err != nil {
 		return ProjectConfig{}
 	}
+	pc.ActiveModel = migrateProjectModelID(pc.ActiveModel, defaultCanonicalActiveModel)
+	pc.ExplorationModel = migrateProjectModelID(pc.ExplorationModel, defaultCanonicalExplorationModel)
 	return pc
+}
+
+func migrateProjectModelID(modelID, smartDefault string) string {
+	return migrateLoadedModelID(Config{}, modelID, smartDefault)
 }
 
 // saveProjectConfigOptions is the parameter bundle for saveProjectConfig.
@@ -457,6 +741,8 @@ func saveProjectConfig(opts saveProjectConfigOptions) error {
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		return fmt.Errorf("creating project config dir: %w", err)
 	}
+	pc.ActiveModel = migrateProjectModelID(pc.ActiveModel, defaultCanonicalActiveModel)
+	pc.ExplorationModel = migrateProjectModelID(pc.ExplorationModel, defaultCanonicalExplorationModel)
 	data, err := json.MarshalIndent(pc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling project config: %w", err)

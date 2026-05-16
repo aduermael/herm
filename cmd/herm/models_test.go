@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -279,9 +280,8 @@ func TestModelsFromCatalog(t *testing.T) {
 	if len(models) != 3 {
 		t.Fatalf("expected 3 models, got %d", len(models))
 	}
-	// anthropic comes first in supportedProviders order
-	if models[0].ID != "claude-opus-4-6" || models[0].Provider != "anthropic" {
-		t.Errorf("first model: got %s/%s, want claude-opus-4-6/anthropic", models[0].ID, models[0].Provider)
+	if models[0].ID != "anthropic/claude-opus-4-6" || models[0].Provider != "anthropic" {
+		t.Errorf("first model: got %s/%s, want anthropic/claude-opus-4-6/anthropic", models[0].ID, models[0].Provider)
 	}
 	if models[0].PromptPrice != 5 || models[0].CompletionPrice != 25 {
 		t.Errorf("pricing: got %f/%f, want 5/25", models[0].PromptPrice, models[0].CompletionPrice)
@@ -712,7 +712,7 @@ func TestComputeCostStandardTokens(t *testing.T) {
 	got := computeCost(computeCostOptions{models: models, modelID: "gpt-4o", usage: usage})
 	// (1000 * 2.5 + 500 * 10.0) / 1_000_000 = (2500 + 5000) / 1_000_000 = 0.0075
 	want := 0.0075
-	if got != want {
+	if math.Abs(got-want) > 1e-12 {
 		t.Errorf("computeCost = %f, want %f", got, want)
 	}
 }
@@ -731,7 +731,7 @@ func TestComputeCostAnthropicCacheRead(t *testing.T) {
 	// output: 500 * 15.0 / 1M = 0.0075
 	// cache read: 10000 * 3.0 * 0.1 / 1M = 0.003
 	want := 0.003 + 0.0075 + 0.003
-	if got != want {
+	if math.Abs(got-want) > 1e-12 {
 		t.Errorf("computeCost = %f, want %f", got, want)
 	}
 }
@@ -748,7 +748,7 @@ func TestComputeCostNonAnthropicCacheReadIgnored(t *testing.T) {
 	got := computeCost(computeCostOptions{models: models, modelID: "gpt-4o", usage: usage})
 	// Cache read tokens should not add cost for non-Anthropic
 	want := (1000*2.5 + 500*10.0) / 1_000_000
-	if got != want {
+	if math.Abs(got-want) > 1e-12 {
 		t.Errorf("computeCost = %f, want %f", got, want)
 	}
 }

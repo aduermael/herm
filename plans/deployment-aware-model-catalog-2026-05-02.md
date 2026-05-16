@@ -299,13 +299,13 @@ Phase validation commands:
 - [x] 5e: Add tests for remote success, opt-out, timeout, invalid schema, stale cache fallback, embedded fallback, partial generated remote data, and cache replacement only after validation.
 
 ## Phase 6: Teach Herm to consume canonical models and deployment-aware metadata
-- [ ] 6a: Update `cmd/herm/models.go` so Herm renders canonical models from langdag's deployment-aware catalog while retaining route/offering/deployment metadata for availability, diagnostics, and pricing display.
-- [ ] 6b: Update provider filtering and configured-provider detection in `cmd/herm/config.go` so model availability is based on deployment credential requirements, `model_mappings`, and local discovery rather than direct provider API-key fields.
-- [ ] 6c: Update model selection, smart defaults, and exploration model resolution so Herm stores canonical model IDs, migrates old model-only config values deterministically, and lets langdag resolve deployments.
-- [ ] 6d: Update `cmd/herm/agent.go` and related client-switching paths so targeted canonical models are sent to langdag with the current global routing policy instead of preselecting a Herm-side provider.
-- [ ] 6e: Update `cmd/herm/tree.go`, `cmd/herm/agentui.go`, trace aggregation, `/usage`, and session history so live and historical cost display uses the structured cost result, exact provider cost when present, and pricing snapshots otherwise.
-- [ ] 6f: Update the model picker so it remains canonical-model centric, shows owner provider and exact/range/partial/unknown prices, and exposes route/deployment diagnostics only when useful.
-- [ ] 6g: Add Herm tests for canonical picker rows, old active/exploration migration, smart defaults, OpenRouter-only availability, Ollama offline behavior, Azure mappings, route-dependent price ranges, exact provider-cost display, and old-node history cost fallback.
+- [x] 6a: Update `cmd/herm/models.go` so Herm renders canonical models from langdag's deployment-aware catalog while retaining route/offering/deployment metadata for availability, diagnostics, and pricing display.
+- [x] 6b: Update provider filtering and configured-provider detection in `cmd/herm/config.go` so model availability is based on deployment credential requirements, `model_mappings`, and local discovery rather than direct provider API-key fields.
+- [x] 6c: Update model selection, smart defaults, and exploration model resolution so Herm stores canonical model IDs, migrates old model-only config values deterministically, and lets langdag resolve deployments.
+- [x] 6d: Update `cmd/herm/agent.go` and related client-switching paths so targeted canonical models are sent to langdag with the current global routing policy instead of preselecting a Herm-side provider.
+- [x] 6e: Update `cmd/herm/tree.go`, `cmd/herm/agentui.go`, trace aggregation, `/usage`, and session history so live and historical cost display uses the structured cost result, exact provider cost when present, and pricing snapshots otherwise.
+- [x] 6f: Update the model picker so it remains canonical-model centric, shows owner provider and exact/range/partial/unknown prices, and exposes route/deployment diagnostics only when useful.
+- [x] 6g: Add Herm tests for canonical picker rows, old active/exploration migration, smart defaults, OpenRouter-only availability, Ollama offline behavior, Azure mappings, route-dependent price ranges, exact provider-cost display, and old-node history cost fallback.
 
 ## Phase 7: Add deployment configuration and global routing UX
 - [ ] 7a: Extend Herm config to read/write config v2 with global deployment credentials, non-secret deployment parameters, deployment-scoped `model_mappings`, and global routing policy.

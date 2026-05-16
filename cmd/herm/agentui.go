@@ -169,29 +169,17 @@ func (a *App) startAgent(userMessage string) {
 		return
 	}
 
+	availableModels := a.config.availableModels(a.models)
 	var modelProvider string
-	if modelDef := findModelByID(findModelByIDOptions{models: a.models, id: modelID}); modelDef != nil {
-		modelProvider = modelDef.Provider
+	if modelDef := findModelByID(findModelByIDOptions{models: availableModels, id: modelID}); modelDef != nil {
+		modelProvider = configuredProviderForModel(a.config, *modelDef)
 	}
 
 	// Server-side tools (e.g. web search) are handled by the LLM provider.
 	// Some models don't support them, so we check before including them.
 	var serverTools []types.ToolDefinition
-	if supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: modelID, models: a.models}) {
+	if supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: modelID, models: availableModels}) {
 		serverTools = []types.ToolDefinition{WebSearchToolDef()}
-	}
-
-	if modelProvider != "" && modelProvider != a.langdagProvider {
-		if a.langdagClient != nil {
-			a.langdagClient.Close()
-		}
-		client, err := newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: a.config, provider: modelProvider, catalog: a.modelCatalog})
-		if err != nil {
-			a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Error initializing %s provider: %v", modelProvider, err)})
-			return
-		}
-		a.langdagClient = client
-		a.langdagProvider = modelProvider
 	}
 
 	// Load project-local skills from .herm/skills/
@@ -231,7 +219,7 @@ func (a *App) startAgent(userMessage string) {
 	}
 	explorationModelID := a.config.resolveExplorationModel(a.models)
 	subAgentServerTools := serverTools
-	if !supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: explorationModelID, models: a.models}) {
+	if !supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: explorationModelID, models: availableModels}) {
 		subAgentServerTools = nil
 	}
 	subAgentTool := NewSubAgentTool(SubAgentConfig{

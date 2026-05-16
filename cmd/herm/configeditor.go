@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"langdag.com/langdag/types"
 )
 
 // isOllamaOffline reports whether modelID is an Ollama model that is not
@@ -20,13 +22,13 @@ func (a *App) isOllamaOffline(modelID string) bool {
 	}
 	// Check if it's in the live list as an Ollama model.
 	for _, m := range a.models {
-		if m.ID == modelID && m.Provider == ProviderOllama {
+		if modelMatchesID(m, modelID) && m.Provider == ProviderOllama {
 			return false // online and present
 		}
 	}
 	// Not in live list — treat as offline if it's not a known catalog model either.
 	for _, m := range a.models {
-		if m.ID == modelID {
+		if modelMatchesID(m, modelID) {
 			return false // it's a different provider's model
 		}
 	}
@@ -50,11 +52,11 @@ var cfgTabNames = []string{"API Keys", "Global", "Project"}
 type cfgField struct {
 	label      string
 	get        func(Config) string
-	display    func(Config) string    // masked display; nil means use get
+	display    func(Config) string // masked display; nil means use get
 	set        func(*Config, string)
-	toggle     func(*Config)          // if non-nil, Enter toggles instead of opening editor
-	globalHint func(Config) string    // if set, shows "(global: X)" when field value is empty
-	picker     func(*App)             // if non-nil, Enter opens a picker (e.g. model selector) instead of editor
+	toggle     func(*Config)       // if non-nil, Enter toggles instead of opening editor
+	globalHint func(Config) string // if set, shows "(global: X)" when field value is empty
+	picker     func(*App)          // if non-nil, Enter opens a picker (e.g. model selector) instead of editor
 }
 
 var cfgAPIKeyFields = []cfgField{
@@ -98,10 +100,10 @@ func (a *App) effectiveProviderForConfig(cfg Config) (provider string, modelID s
 	modelID = cfg.resolveActiveModel(a.models)
 	if modelID != "" {
 		if model := findModelByID(findModelByIDOptions{models: a.models, id: modelID}); model != nil {
-			return model.Provider, modelID
+			return configuredProviderForModel(cfg, *model), modelID
 		}
 		// For unknown model IDs, keep the existing offline-Ollama assumption.
-		return ollamaModelProvider(ollamaModelProviderOptions{modelID: modelID, models: a.models, ollamaURL: cfg.OllamaBaseURL}), modelID
+		return configuredProviderForModelID(cfg, a.models, modelID), modelID
 	}
 	return cfg.defaultLangdagProvider(), ""
 }
@@ -270,25 +272,18 @@ func (a *App) doOpenConfigModelPicker(opts doOpenConfigModelPickerOptions) {
 	// If OpenRouter is configured but models haven't loaded yet (e.g. bad key or
 	// network error), inject a stub so the picker still shows the saved selection.
 	if a.cfgDraft.OpenRouterAPIKey != "" {
-		orInList := false
-		for _, m := range available {
-			if m.Provider == ProviderOpenRouter {
-				orInList = true
-				break
-			}
+		savedID := getCurrentID()
+		if savedID == "" {
+			savedID = a.cfgDraft.ActiveModel
 		}
-		if !orInList {
-			savedID := getCurrentID()
-			if savedID == "" {
-				savedID = a.cfgDraft.ActiveModel
-			}
-			if savedID != "" {
-				available = append(available, ModelDef{
-					Provider: ProviderOpenRouter,
-					ID:       savedID,
-					Label:    savedID + " \033[33m(unavailable)\033[0m",
-				})
-			}
+		if savedID != "" && !modelListContainsID(available, savedID) {
+			available = append(available, ModelDef{
+				Provider:      ProviderOpenRouter,
+				ID:            savedID,
+				Label:         savedID + " \033[33m(unavailable)\033[0m",
+				PricingStatus: types.CostStatusUnknown,
+				PriceLabel:    "unknown",
+			})
 		}
 	}
 
@@ -307,7 +302,7 @@ func (a *App) doOpenConfigModelPicker(opts doOpenConfigModelPickerOptions) {
 
 	activeIdx := 0
 	for i, m := range a.menuModels {
-		if m.ID == activeID {
+		if modelMatchesID(m, activeID) {
 			activeIdx = i
 			break
 		}
@@ -366,14 +361,63 @@ func (a *App) resolvedExplorationDisplay(c Config) string {
 
 func (a *App) settingsTabFields() []cfgField {
 	return []cfgField{
-		{label: "Active Model", get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) { c.ActiveModel = v }, picker: func(a *App) { a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) { a.cfgDraft.ActiveModel = id }}) }},
-		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) { c.ExplorationModel = v }, picker: func(a *App) { a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) { a.cfgDraft.ExplorationModel = id }}) }},
-		{label: "Paste Collapse", get: func(c Config) string { return strconv.Itoa(c.PasteCollapseMinChars) }, set: func(c *Config, v string) { if n, err := strconv.Atoi(v); err == nil { c.PasteCollapseMinChars = n } }},
-		{label: "Debug Mode", get: func(c Config) string { if c.DebugMode { return "on" }; return "off" }, toggle: func(c *Config) { c.DebugMode = !c.DebugMode }},
-		{label: "Thinking", get: func(c Config) string { if c.effectiveThinking() { return "on" }; return "off" }, toggle: func(c *Config) { if c.Thinking == nil { t := true; c.Thinking = &t } else { v := !*c.Thinking; c.Thinking = &v } }},
-		{label: "Sub-Agent Max Turns", get: func(c Config) string { n := c.SubAgentMaxTurns; if n <= 0 { n = defaultGeneralMaxTurns }; return strconv.Itoa(n) }, set: func(c *Config, v string) { if n, err := strconv.Atoi(v); err == nil && n > 0 { c.SubAgentMaxTurns = n } }},
+		{label: "Active Model", get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) { c.ActiveModel = v }, picker: func(a *App) {
+			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) { a.cfgDraft.ActiveModel = id }})
+		}},
+		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) { c.ExplorationModel = v }, picker: func(a *App) {
+			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) { a.cfgDraft.ExplorationModel = id }})
+		}},
+		{label: "Paste Collapse", get: func(c Config) string { return strconv.Itoa(c.PasteCollapseMinChars) }, set: func(c *Config, v string) {
+			if n, err := strconv.Atoi(v); err == nil {
+				c.PasteCollapseMinChars = n
+			}
+		}},
+		{label: "Debug Mode", get: func(c Config) string {
+			if c.DebugMode {
+				return "on"
+			}
+			return "off"
+		}, toggle: func(c *Config) { c.DebugMode = !c.DebugMode }},
+		{label: "Thinking", get: func(c Config) string {
+			if c.effectiveThinking() {
+				return "on"
+			}
+			return "off"
+		}, toggle: func(c *Config) {
+			if c.Thinking == nil {
+				t := true
+				c.Thinking = &t
+			} else {
+				v := !*c.Thinking
+				c.Thinking = &v
+			}
+		}},
+		{label: "Sub-Agent Max Turns", get: func(c Config) string {
+			n := c.SubAgentMaxTurns
+			if n <= 0 {
+				n = defaultGeneralMaxTurns
+			}
+			return strconv.Itoa(n)
+		}, set: func(c *Config, v string) {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				c.SubAgentMaxTurns = n
+			}
+		}},
 		{label: "Personality", get: func(c Config) string { return c.Personality }, set: func(c *Config, v string) { c.Personality = v }},
-		{label: "Git Co-Author", get: func(c Config) string { if c.effectiveGitCoAuthor() { return "on" }; return "off" }, toggle: func(c *Config) { if c.GitCoAuthor == nil { f := false; c.GitCoAuthor = &f } else { v := !*c.GitCoAuthor; c.GitCoAuthor = &v } }},
+		{label: "Git Co-Author", get: func(c Config) string {
+			if c.effectiveGitCoAuthor() {
+				return "on"
+			}
+			return "off"
+		}, toggle: func(c *Config) {
+			if c.GitCoAuthor == nil {
+				f := false
+				c.GitCoAuthor = &f
+			} else {
+				v := !*c.GitCoAuthor
+				c.GitCoAuthor = &v
+			}
+		}},
 	}
 }
 
@@ -384,14 +428,18 @@ func (a *App) projectTabFields() []cfgField {
 			get:        func(_ Config) string { return a.cfgProjectDraft.ActiveModel },
 			set:        func(_ *Config, v string) { a.cfgProjectDraft.ActiveModel = v },
 			globalHint: func(c Config) string { return c.ActiveModel },
-			picker:     func(a *App) { a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ActiveModel }, onSelect: func(id string) { a.cfgProjectDraft.ActiveModel = id }}) },
+			picker: func(a *App) {
+				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ActiveModel }, onSelect: func(id string) { a.cfgProjectDraft.ActiveModel = id }})
+			},
 		},
 		{
 			label:      "Exploration Model",
 			get:        func(_ Config) string { return a.cfgProjectDraft.ExplorationModel },
 			set:        func(_ *Config, v string) { a.cfgProjectDraft.ExplorationModel = v },
 			globalHint: func(c Config) string { return a.resolvedExplorationDisplay(c) },
-			picker:     func(a *App) { a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) { a.cfgProjectDraft.ExplorationModel = id }}) },
+			picker: func(a *App) {
+				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) { a.cfgProjectDraft.ExplorationModel = id }})
+			},
 		},
 		{
 			label:      "Personality",
@@ -533,7 +581,7 @@ func (a *App) buildConfigRows() []string {
 				val = f.get(a.cfgDraft)
 			}
 			if f.picker != nil && val != "" {
-				p := ollamaModelProvider(ollamaModelProviderOptions{modelID: val, models: a.models, ollamaURL: a.cfgDraft.OllamaBaseURL})
+				p := configuredProviderForModelID(a.cfgDraft, a.models, val)
 				// Hide model values when no providers are configured, or when this
 				// model's provider is not currently configured.
 				if !isProjectTab && (!hasProvider || p == "" || !configured[p]) {
@@ -551,7 +599,7 @@ func (a *App) buildConfigRows() []string {
 				} else if f.globalHint != nil {
 					hint := f.globalHint(a.cfgDraft)
 					if f.picker != nil && !isProjectTab {
-						p := ollamaModelProvider(ollamaModelProviderOptions{modelID: hint, models: a.models, ollamaURL: a.cfgDraft.OllamaBaseURL})
+						p := configuredProviderForModelID(a.cfgDraft, a.models, hint)
 						if hint == "" || p == "" || !configured[p] {
 							hint = "not set"
 						}

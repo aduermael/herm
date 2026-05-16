@@ -25,7 +25,7 @@ var Version = "dev"
 const (
 	promptPrefix       = "▸ "
 	promptPrefixCols   = 2
-	charsPerToken      = 4 // rough estimate for context bar
+	charsPerToken      = 4        // rough estimate for context bar
 	maxAttachmentBytes = 20 << 20 // 20 MB
 )
 
@@ -66,8 +66,6 @@ const (
 	modeBranches
 )
 
-
-
 // ─── App struct ───
 
 type App struct {
@@ -80,7 +78,7 @@ type App struct {
 	prevRowCount  int
 	sepRow        int
 	inputStartRow int
-	scrollShift int // rows scrolled off top when content > terminal height
+	scrollShift   int // rows scrolled off top when content > terminal height
 
 	// Input buffer (from simple-chat)
 	input   []rune
@@ -93,68 +91,68 @@ type App struct {
 	quit     bool
 
 	// Stdin goroutine control
-	stdinDup *os.File   // dup'd stdin fd for the reader goroutine
-	stdinCh  chan byte   // channel carrying bytes from the reader goroutine
+	stdinDup *os.File  // dup'd stdin fd for the reader goroutine
+	stdinCh  chan byte // channel carrying bytes from the reader goroutine
 	readByte func() (byte, bool)
 
 	// Chat state
-	sessionID        string
-	messages         []chatMessage
-	globalConfig     Config        // loaded from ~/.herm/config.json
-	projectConfig    ProjectConfig // loaded from <repo>/.herm/config.json
-	config           Config        // merged effective config (globalConfig + projectConfig)
-	repoRoot         string        // git repo root, for project config path
-	pasteCount       int
-	pasteStore       map[int]string
-	attachmentCount  int
-	attachments      map[int]Attachment
-	mode             appMode
-	models           []ModelDef
-	sweScores        map[string]float64
-	sweLoaded        bool
-	container        *ContainerClient
-	worktreePath     string
-	containerReady      bool
-	containerErr        error
-	containerStatusText string
-	configReady         bool // true after workspace/project config has been merged
-	shownInitialModel   bool // true after the startup model line has been displayed
-	ollamaFetched       bool // true after the initial Ollama model fetch completes (or was skipped)
-	openRouterFetched   bool // true after initial OpenRouter fetch
-	status           statusInfo
-	projectSnap      *projectSnapshot
-	modelCatalog     *langdag.ModelCatalog
-	langdagClient    *langdag.Client
-	langdagProvider  string
-	agent            *Agent
-	agentNodeID      string
-	agentRunning     bool
-	awaitingApproval bool
-	approvalDesc     string
-	approvalSummary  string
-	autocompleteIdx  int
-	streamingText    string
-	pendingToolCall  string
-	needsTextSep     bool
-	sessionCostUSD         float64
-	lastInputTokens        int // input tokens from most recent API call (context usage)
-	sessionInputTokens     int // cumulative input tokens this session (all agents)
-	sessionOutputTokens    int // cumulative output tokens this session (all agents)
-	sessionCacheRead       int // cumulative cache read tokens this session
-	sessionLLMCalls        int // number of LLM API calls this session (all agents)
-	mainAgentInputTokens   int // input tokens from main agent only
-	mainAgentOutputTokens  int // output tokens from main agent only
-	mainAgentLLMCalls      int // LLM calls from main agent only
-	mainAgentToolCount     int // tool results from main agent only
-	sessionToolResults  int            // count of tool results this session
-	sessionToolBytes    int            // cumulative tool result bytes this session
-	sessionToolStats    map[string][2]int // tool name → [count, bytes]
-	lastModelID    string                       // last model used, for detecting changes
-	subAgents              map[string]*subAgentDisplay // per-agent display state keyed by AgentID
-	subAgentGroupInserted  bool                        // true after a msgSubAgentGroup marker has been added to messages
-	suppressedToolIDs map[string]bool              // tool IDs whose UI messages should be hidden
-	containerImage string                       // runtime container image name (not persisted)
-	updateAvailable string   // version tag if update is available
+	sessionID             string
+	messages              []chatMessage
+	globalConfig          Config        // loaded from ~/.herm/config.json
+	projectConfig         ProjectConfig // loaded from <repo>/.herm/config.json
+	config                Config        // merged effective config (globalConfig + projectConfig)
+	repoRoot              string        // git repo root, for project config path
+	pasteCount            int
+	pasteStore            map[int]string
+	attachmentCount       int
+	attachments           map[int]Attachment
+	mode                  appMode
+	models                []ModelDef
+	sweScores             map[string]float64
+	sweLoaded             bool
+	container             *ContainerClient
+	worktreePath          string
+	containerReady        bool
+	containerErr          error
+	containerStatusText   string
+	configReady           bool // true after workspace/project config has been merged
+	shownInitialModel     bool // true after the startup model line has been displayed
+	ollamaFetched         bool // true after the initial Ollama model fetch completes (or was skipped)
+	openRouterFetched     bool // true after initial OpenRouter fetch
+	status                statusInfo
+	projectSnap           *projectSnapshot
+	modelCatalog          *langdag.ModelCatalog
+	langdagClient         *langdag.Client
+	langdagProvider       string
+	agent                 *Agent
+	agentNodeID           string
+	agentRunning          bool
+	awaitingApproval      bool
+	approvalDesc          string
+	approvalSummary       string
+	autocompleteIdx       int
+	streamingText         string
+	pendingToolCall       string
+	needsTextSep          bool
+	sessionCostUSD        float64
+	lastInputTokens       int                         // input tokens from most recent API call (context usage)
+	sessionInputTokens    int                         // cumulative input tokens this session (all agents)
+	sessionOutputTokens   int                         // cumulative output tokens this session (all agents)
+	sessionCacheRead      int                         // cumulative cache read tokens this session
+	sessionLLMCalls       int                         // number of LLM API calls this session (all agents)
+	mainAgentInputTokens  int                         // input tokens from main agent only
+	mainAgentOutputTokens int                         // output tokens from main agent only
+	mainAgentLLMCalls     int                         // LLM calls from main agent only
+	mainAgentToolCount    int                         // tool results from main agent only
+	sessionToolResults    int                         // count of tool results this session
+	sessionToolBytes      int                         // cumulative tool result bytes this session
+	sessionToolStats      map[string][2]int           // tool name → [count, bytes]
+	lastModelID           string                      // last model used, for detecting changes
+	subAgents             map[string]*subAgentDisplay // per-agent display state keyed by AgentID
+	subAgentGroupInserted bool                        // true after a msgSubAgentGroup marker has been added to messages
+	suppressedToolIDs     map[string]bool             // tool IDs whose UI messages should be hidden
+	containerImage        string                      // runtime container image name (not persisted)
+	updateAvailable       string                      // version tag if update is available
 
 	// Tool timer (live elapsed display)
 	toolStartTime time.Time
@@ -189,13 +187,13 @@ type App struct {
 	menuActiveID     string     // active model ID for re-sorting
 
 	// Config editor state
-	cfgActive     bool
-	cfgTab        int
-	cfgCursor     int
-	cfgTabCursor  [3]int // remembered cursor per config tab (API Keys/Global/Project)
-	cfgEditing    bool
-	cfgEditBuf    []rune
-	cfgEditCursor int
+	cfgActive       bool
+	cfgTab          int
+	cfgCursor       int
+	cfgTabCursor    [3]int // remembered cursor per config tab (API Keys/Global/Project)
+	cfgEditing      bool
+	cfgEditBuf      []rune
+	cfgEditCursor   int
 	cfgDraft        Config
 	cfgProjectDraft ProjectConfig
 
@@ -216,9 +214,9 @@ type App struct {
 	cancelSent bool
 
 	// CLI flags
-	cliDebug             bool   // --debug flag
-	cliPrompt            string // --prompt flag (non-interactive mode)
-	headless             bool   // true when running in --prompt mode (no TUI)
+	cliDebug  bool   // --debug flag
+	cliPrompt string // --prompt flag (non-interactive mode)
+	headless  bool   // true when running in --prompt mode (no TUI)
 
 	// JSON trace debug file
 	traceCollector *TraceCollector
@@ -299,7 +297,6 @@ func (a *App) refreshModelMenu() {
 	a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
 	_ = saveConfig(a.globalConfig)
 }
-
 
 // ─── Main event loop ───
 
@@ -448,7 +445,6 @@ done:
 	a.cleanup()
 	return nil
 }
-
 
 // RunHeadless runs herm in non-interactive mode: submits the --prompt text,
 // waits for the agent to finish, and exits. No TUI, no stdin, no resize handling.
@@ -763,12 +759,14 @@ func (a *App) handleResult(result any) {
 		a.ollamaFetched = true
 		if len(msg.models) > 0 {
 			base := modelsFromCatalog(a.modelCatalog)
+			var dynamic []ModelDef
 			for _, m := range a.models {
 				if m.Provider == ProviderOpenRouter {
-					base = append(base, m)
+					dynamic = append(dynamic, m)
 				}
 			}
-			a.models = append(base, msg.models...)
+			dynamic = append(dynamic, msg.models...)
+			a.models = mergeDynamicModels(base, dynamic)
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}
@@ -792,12 +790,14 @@ func (a *App) handleResult(result any) {
 		a.openRouterFetched = true
 		if len(msg.models) > 0 {
 			base := modelsFromCatalog(a.modelCatalog)
+			var dynamic []ModelDef
 			for _, m := range a.models {
 				if m.Provider == ProviderOllama {
-					base = append(base, m)
+					dynamic = append(dynamic, m)
 				}
 			}
-			a.models = append(base, msg.models...)
+			dynamic = append(dynamic, msg.models...)
+			a.models = mergeDynamicModels(base, dynamic)
 			if a.sweLoaded && a.sweScores != nil {
 				matchSWEScores(matchSWEScoresOptions{models: a.models, scores: a.sweScores})
 			}

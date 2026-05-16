@@ -49,10 +49,10 @@ func TestOldGlobalConfigFixtureLoadsFlatFields(t *testing.T) {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
 
-	if cfg.ActiveModel != "gpt-4.1-2025-04-14" {
+	if cfg.ActiveModel != "openai/gpt-4.1-2025-04-14" {
 		t.Errorf("ActiveModel = %q", cfg.ActiveModel)
 	}
-	if cfg.ExplorationModel != "claude-haiku-4-5" {
+	if cfg.ExplorationModel != "anthropic/claude-haiku-4-5" {
 		t.Errorf("ExplorationModel = %q", cfg.ExplorationModel)
 	}
 	if cfg.OpenAIAPIKey == "" || cfg.AnthropicAPIKey == "" || cfg.OpenRouterAPIKey == "" || cfg.GeminiAPIKey == "" || cfg.OllamaBaseURL == "" {
@@ -210,10 +210,10 @@ func TestOllamaOfflineFixtureTrustsSavedModels(t *testing.T) {
 	if !cfg.configuredProviders()[ProviderOllama] {
 		t.Fatal("Ollama base_url should make ProviderOllama configured")
 	}
-	if got := cfg.resolveActiveModel(fixture.LiveModels); got != fixture.ActiveModel {
+	if got := cfg.resolveActiveModel(fixture.LiveModels); got != ollamaCanonicalModelID(fixture.ActiveModel) {
 		t.Errorf("resolveActiveModel = %q, want saved offline Ollama model", got)
 	}
-	if got := cfg.resolveExplorationModel(fixture.LiveModels); got != fixture.ExplorationModel {
+	if got := cfg.resolveExplorationModel(fixture.LiveModels); got != ollamaCanonicalModelID(fixture.ExplorationModel) {
 		t.Errorf("resolveExplorationModel = %q, want saved offline Ollama model", got)
 	}
 	a := &App{models: fixture.LiveModels}
@@ -338,7 +338,7 @@ func TestOldNativeModelCostFallbackIsExplicitForAmbiguousIDs(t *testing.T) {
 	}
 }
 
-func TestAzureMappingsFixtureIsFutureShapeOnly(t *testing.T) {
+func TestAzureMappingsFixtureConfiguresDeploymentAvailability(t *testing.T) {
 	var raw struct {
 		ConfigVersion int    `json:"config_version"`
 		ActiveModel   string `json:"active_model"`
@@ -364,7 +364,7 @@ func TestAzureMappingsFixtureIsFutureShapeOnly(t *testing.T) {
 	if cfg.ActiveModel != raw.ActiveModel {
 		t.Errorf("ActiveModel = %q, want %q", cfg.ActiveModel, raw.ActiveModel)
 	}
-	if len(cfg.configuredProviders()) != 0 {
-		t.Errorf("current Config should not derive providers from deployment mappings yet: %+v", cfg.configuredProviders())
+	if !cfg.configuredProviders()[ProviderOpenAI] {
+		t.Errorf("Config should derive OpenAI availability from openai-azure deployment mappings: %+v", cfg.configuredProviders())
 	}
 }

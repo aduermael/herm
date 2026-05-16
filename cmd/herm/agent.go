@@ -44,26 +44,11 @@ func newLangdagClient(cfg Config) (*langdag.Client, error) {
 }
 
 func newLangdagClientWithCatalog(cfg Config, catalog *langdag.ModelCatalog) (*langdag.Client, error) {
-	// Use the first available provider as default.
-	if cfg.AnthropicAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderAnthropic, catalog: catalog})
+	provider := cfg.defaultLangdagProvider()
+	if provider == "" {
+		return nil, nil
 	}
-	if cfg.OpenAIAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOpenAI, catalog: catalog})
-	}
-	if cfg.GrokAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderGrok, catalog: catalog})
-	}
-	if cfg.OpenRouterAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOpenRouter, catalog: catalog})
-	}
-	if cfg.GeminiAPIKey != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderGemini, catalog: catalog})
-	}
-	if cfg.OllamaBaseURL != "" {
-		return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: ProviderOllama, catalog: catalog})
-	}
-	return nil, nil
+	return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: provider, catalog: catalog})
 }
 
 // newLangdagClientForProviderOptions is the parameter bundle for newLangdagClientForProvider.
@@ -75,38 +60,153 @@ type newLangdagClientForProviderOptions struct {
 
 // newLangdagClientForProvider creates a langdag client configured for a specific provider.
 func newLangdagClientForProvider(opts newLangdagClientForProviderOptions) (*langdag.Client, error) {
+	if opts.provider == "" {
+		opts.provider = opts.cfg.defaultLangdagProvider()
+	}
+	if !supportedHermProvider(opts.provider) {
+		return nil, fmt.Errorf("unsupported provider: %s", opts.provider)
+	}
 	langdagCfg := langdag.Config{
-		StoragePath:  langdagStoragePath(),
-		ModelCatalog: opts.catalog,
+		StoragePath:   langdagStoragePath(),
+		ModelCatalog:  opts.catalog,
+		Deployments:   langdagDeploymentsFromConfig(opts.cfg),
+		RoutingPolicy: langdagRoutingPolicyFromConfig(opts.cfg.Routing),
 		RetryConfig: &langdag.RetryConfig{
 			BaseDelay: 2 * time.Second,
 		},
+		APIKeys: map[string]string{},
 	}
 
 	switch opts.provider {
 	case ProviderAnthropic:
 		langdagCfg.Provider = "anthropic"
-		langdagCfg.APIKeys = map[string]string{"anthropic": opts.cfg.AnthropicAPIKey}
 	case ProviderOpenAI:
 		langdagCfg.Provider = "openai"
-		langdagCfg.APIKeys = map[string]string{"openai": opts.cfg.OpenAIAPIKey}
 	case ProviderGrok:
 		langdagCfg.Provider = "grok"
-		langdagCfg.APIKeys = map[string]string{"grok": opts.cfg.GrokAPIKey}
 	case ProviderOpenRouter:
 		langdagCfg.Provider = "openrouter"
-		langdagCfg.APIKeys = map[string]string{"openrouter": opts.cfg.OpenRouterAPIKey}
 	case ProviderGemini:
 		langdagCfg.Provider = "gemini"
-		langdagCfg.APIKeys = map[string]string{"gemini": opts.cfg.GeminiAPIKey}
 	case ProviderOllama:
 		langdagCfg.Provider = "ollama"
-		langdagCfg.OllamaConfig = &langdag.OllamaConfig{BaseURL: opts.cfg.OllamaBaseURL}
-	default:
-		return nil, fmt.Errorf("unsupported provider: %s", opts.provider)
 	}
+	applyLegacyLangdagFields(&langdagCfg, opts.cfg)
 
 	return langdag.New(langdagCfg)
+}
+
+func supportedHermProvider(provider string) bool {
+	for _, supported := range supportedProviders {
+		if supported == provider {
+			return true
+		}
+	}
+	return false
+}
+
+func langdagDeploymentsFromConfig(cfg Config) map[string]langdag.DeploymentConfig {
+	deployments := map[string]langdag.DeploymentConfig{}
+	for deploymentID, deployment := range cfg.deploymentConfigs() {
+		if !deploymentHasRequiredConfig(deploymentID, deployment) {
+			continue
+		}
+		deployment = deploymentWithEnvFallbacks(deploymentID, deployment)
+		deployments[deploymentID] = langdag.DeploymentConfig{
+			APIKey:        deployment.APIKey,
+			BaseURL:       deployment.BaseURL,
+			Endpoint:      deployment.Endpoint,
+			APIVersion:    deployment.APIVersion,
+			ProjectID:     deployment.ProjectID,
+			Region:        deployment.Region,
+			ModelMappings: cloneStringMap(deployment.ModelMappings),
+		}
+	}
+	return deployments
+}
+
+func langdagRoutingPolicyFromConfig(policy *RoutingPolicy) *langdag.RoutingPolicy {
+	if policy == nil {
+		return nil
+	}
+	converted := &langdag.RoutingPolicy{
+		Default:   langdagRoutingStagesFromConfig(policy.Default),
+		Providers: map[string][]langdag.RoutingStage{},
+		Models:    map[string][]langdag.RoutingStage{},
+	}
+	for providerID, stages := range policy.Providers {
+		converted.Providers[providerID] = langdagRoutingStagesFromConfig(stages)
+	}
+	for modelID, stages := range policy.Models {
+		converted.Models[modelID] = langdagRoutingStagesFromConfig(stages)
+	}
+	if len(converted.Providers) == 0 {
+		converted.Providers = nil
+	}
+	if len(converted.Models) == 0 {
+		converted.Models = nil
+	}
+	return converted
+}
+
+func langdagRoutingStagesFromConfig(stages []RoutingStage) []langdag.RoutingStage {
+	if len(stages) == 0 {
+		return nil
+	}
+	converted := make([]langdag.RoutingStage, 0, len(stages))
+	for _, stage := range stages {
+		next := langdag.RoutingStage{Retries: stage.Retries}
+		for _, choice := range stage.Deployments {
+			next.Deployments = append(next.Deployments, langdag.DeploymentChoice{
+				DeploymentID: choice.DeploymentID,
+				Weight:       choice.Weight,
+			})
+		}
+		converted = append(converted, next)
+	}
+	return converted
+}
+
+func applyLegacyLangdagFields(langdagCfg *langdag.Config, cfg Config) {
+	if cfg.AnthropicAPIKey != "" {
+		langdagCfg.APIKeys["anthropic"] = cfg.AnthropicAPIKey
+	}
+	if cfg.OpenAIAPIKey != "" {
+		langdagCfg.APIKeys["openai"] = cfg.OpenAIAPIKey
+	}
+	if cfg.GeminiAPIKey != "" {
+		langdagCfg.APIKeys["gemini"] = cfg.GeminiAPIKey
+	}
+	if cfg.GrokAPIKey != "" {
+		langdagCfg.APIKeys["grok"] = cfg.GrokAPIKey
+	}
+	if cfg.OpenRouterAPIKey != "" {
+		langdagCfg.APIKeys["openrouter"] = cfg.OpenRouterAPIKey
+	}
+	deployments := cfg.deploymentConfigs()
+	if deployment := deployments["openai-direct"]; deployment.BaseURL != "" {
+		langdagCfg.OpenAIConfig = &langdag.OpenAIConfig{BaseURL: deployment.BaseURL}
+	}
+	if deployment := deployments["grok-direct"]; deployment.BaseURL != "" {
+		langdagCfg.GrokConfig = &langdag.GrokConfig{BaseURL: deployment.BaseURL}
+	}
+	if deployment := deployments["openrouter"]; deployment.BaseURL != "" {
+		langdagCfg.OpenRouterConfig = &langdag.OpenRouterConfig{BaseURL: deployment.BaseURL}
+	}
+	if deployment := deployments["openai-azure"]; deployment.Endpoint != "" || deployment.APIVersion != "" || deployment.APIKey != "" {
+		langdagCfg.AzureOpenAIConfig = &langdag.AzureOpenAIConfig{Endpoint: deployment.Endpoint, APIVersion: deployment.APIVersion, APIKey: deployment.APIKey}
+	}
+	if deployment := deployments["anthropic-bedrock"]; deployment.Region != "" {
+		langdagCfg.BedrockConfig = &langdag.BedrockConfig{Region: deployment.Region}
+	}
+	if deployment := deployments["anthropic-vertex"]; deployment.ProjectID != "" || deployment.Region != "" {
+		langdagCfg.VertexConfig = &langdag.VertexConfig{ProjectID: deployment.ProjectID, Region: deployment.Region}
+	} else if deployment := deployments["gemini-vertex"]; deployment.ProjectID != "" || deployment.Region != "" {
+		langdagCfg.VertexConfig = &langdag.VertexConfig{ProjectID: deployment.ProjectID, Region: deployment.Region}
+	}
+	if deployment := deployments["ollama-local"]; deployment.BaseURL != "" {
+		langdagCfg.OllamaConfig = &langdag.OllamaConfig{BaseURL: deployment.BaseURL}
+	}
 }
 
 // defaultMaxOutputTokens is the per-response output token limit sent to the

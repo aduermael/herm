@@ -438,7 +438,7 @@ func TestProjectTabSubAgentClearsOnEmpty(t *testing.T) {
 
 func TestBuildConfigRowsNoProject(t *testing.T) {
 	a := &App{
-		cfgTab:   2, // Project tab
+		cfgTab:   2,  // Project tab
 		repoRoot: "", // no repo
 	}
 	rows := a.buildConfigRows()
@@ -813,8 +813,8 @@ func TestResolveActiveModel_OllamaOfflineTrustsSaved(t *testing.T) {
 		ActiveModel:   testOllamaActiveModel,
 	}
 	got := cfg.resolveActiveModel(nil) // no live models
-	if got != testOllamaActiveModel {
-		t.Errorf("resolveActiveModel = %q, want %q (Ollama offline should trust saved model)", got, testOllamaActiveModel)
+	if got != ollamaCanonicalModelID(testOllamaActiveModel) {
+		t.Errorf("resolveActiveModel = %q, want canonical Ollama model for %q", got, testOllamaActiveModel)
 	}
 }
 
@@ -826,8 +826,8 @@ func TestResolveActiveModel_OllamaOfflineWithOtherProviders(t *testing.T) {
 		ActiveModel:     testOllamaActiveModel,
 	}
 	got := cfg.resolveActiveModel(nil) // Ollama offline, no live models
-	if got != testOllamaActiveModel {
-		t.Errorf("resolveActiveModel = %q, want %q (saved Ollama model should persist when offline)", got, testOllamaActiveModel)
+	if got != ollamaCanonicalModelID(testOllamaActiveModel) {
+		t.Errorf("resolveActiveModel = %q, want canonical Ollama model for %q", got, testOllamaActiveModel)
 	}
 }
 
@@ -866,8 +866,8 @@ func TestResolveExplorationModel_OllamaOfflineTrustsSaved(t *testing.T) {
 		ExplorationModel: testOllamaExploreModel,
 	}
 	got := cfg.resolveExplorationModel(nil)
-	if got != testOllamaExploreModel {
-		t.Errorf("resolveExplorationModel = %q, want %q (Ollama offline should trust saved exploration model)", got, testOllamaExploreModel)
+	if got != ollamaCanonicalModelID(testOllamaExploreModel) {
+		t.Errorf("resolveExplorationModel = %q, want canonical Ollama model for %q", got, testOllamaExploreModel)
 	}
 }
 
@@ -997,12 +997,12 @@ func TestOllamaURLNormalization(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"http://localhost:11434", "http://localhost:11434"},   // already correct
+		{"http://localhost:11434", "http://localhost:11434"},         // already correct
 		{"https://ollama.example.com", "https://ollama.example.com"}, // https preserved
-		{"localhost:11434", "http://localhost:11434"},          // bare host gets http://
-		{"  localhost:11434  ", "http://localhost:11434"},      // whitespace trimmed
-		{"", ""},                                               // empty cleared
-		{"  ", ""},                                             // whitespace-only cleared
+		{"localhost:11434", "http://localhost:11434"},                // bare host gets http://
+		{"  localhost:11434  ", "http://localhost:11434"},            // whitespace trimmed
+		{"", ""},   // empty cleared
+		{"  ", ""}, // whitespace-only cleared
 	}
 
 	for _, tc := range cases {

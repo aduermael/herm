@@ -28,7 +28,7 @@ func (a *App) nodeCostResult(n *types.Node) types.CostResult {
 			usage = *metadata.NormalizedUsage
 		}
 		result := types.ComputeCost(metadata.ProviderCost, metadata.PricingSnapshot, usage)
-		if result.Status != types.CostStatusUnknown {
+		if metadata.ProviderCost != nil || metadata.PricingSnapshot != nil || result.Status != types.CostStatusUnknown {
 			return result
 		}
 	}
@@ -65,6 +65,9 @@ func costResultFromAssistantMetadata(metadata *types.AssistantNodeMetadata) *typ
 	if metadata == nil {
 		return nil
 	}
+	if metadata.ProviderCost == nil && metadata.PricingSnapshot == nil {
+		return nil
+	}
 	var usage types.NormalizedUsage
 	if metadata.NormalizedUsage != nil {
 		usage = *metadata.NormalizedUsage
@@ -74,7 +77,7 @@ func costResultFromAssistantMetadata(metadata *types.AssistantNodeMetadata) *typ
 }
 
 func preferStructuredCost(metadataCost, fallbackCost types.CostResult) types.CostResult {
-	if metadataCost.Status == types.CostStatusUnknown && fallbackCost.Status != types.CostStatusUnknown {
+	if metadataCost.Status == "" {
 		return fallbackCost
 	}
 	return metadataCost
@@ -91,6 +94,67 @@ func shouldDisplayCost(cost types.CostResult, n *types.Node) bool {
 	default:
 		return false
 	}
+}
+
+func aggregateCostResults(results []types.CostResult) types.CostResult {
+	if len(results) == 0 {
+		return types.CostResult{Status: types.CostStatusUnknown, Source: types.CostSourceHistorical}
+	}
+	aggregate := types.CostResult{Status: types.CostStatusFree, Currency: "USD", Source: types.CostSourceHistorical}
+	missing := map[string]bool{}
+	var sawKnown, sawPartial, sawUnknown bool
+	for _, result := range results {
+		aggregate.Total += result.Total
+		if aggregate.Currency == "" && result.Currency != "" {
+			aggregate.Currency = result.Currency
+		}
+		if result.Source == types.CostSourceProviderResponse {
+			aggregate.Source = types.CostSourceProviderResponse
+		} else if aggregate.Source == "" && result.Source != "" {
+			aggregate.Source = result.Source
+		}
+		for _, dimension := range result.MissingDimensions {
+			if dimension != "" {
+				missing[dimension] = true
+			}
+		}
+		switch result.Status {
+		case types.CostStatusUnknown:
+			sawUnknown = true
+		case types.CostStatusPartial:
+			sawPartial = true
+		case types.CostStatusKnown:
+			sawKnown = true
+		}
+	}
+	switch {
+	case sawUnknown && (sawKnown || sawPartial || aggregate.Total > 0):
+		aggregate.Status = types.CostStatusPartial
+	case sawUnknown:
+		aggregate.Status = types.CostStatusUnknown
+	case sawPartial:
+		aggregate.Status = types.CostStatusPartial
+	case sawKnown:
+		aggregate.Status = types.CostStatusKnown
+	default:
+		aggregate.Status = types.CostStatusFree
+	}
+	aggregate.MissingDimensions = sortedStringSet(missing)
+	return aggregate
+}
+
+func (a *App) aggregateDisplayedNodeCosts(nodes []*types.Node) (types.CostResult, bool) {
+	var results []types.CostResult
+	for _, n := range nodes {
+		cost := a.nodeCostResult(n)
+		if shouldDisplayCost(cost, n) {
+			results = append(results, cost)
+		}
+	}
+	if len(results) == 0 {
+		return types.CostResult{}, false
+	}
+	return aggregateCostResults(results), true
 }
 
 // buildConversationTree retrieves the active conversation path (root to
@@ -404,7 +468,6 @@ func formatRelativeTime(t time.Time) string {
 // compact "✓ toolname" / "✗ toolname" lines, indented under the assistant.
 func (a *App) renderTree(nodes []*types.Node) string {
 	var b strings.Builder
-	var totalCost float64
 	// pendingTools holds tool names from the last assistant's tool_use blocks,
 	// keyed by tool_use ID so we can match them with results.
 	var pendingTools []toolUseInfo
@@ -415,11 +478,12 @@ func (a *App) renderTree(nodes []*types.Node) string {
 		}
 	}
 
+	var displayedNodes []*types.Node
 	for i, n := range nodes {
 		if n.OutputGroupID != "" && i < lastInOutputGroup[n.OutputGroupID] {
 			continue
 		}
-		totalCost += a.nodeCost(n)
+		displayedNodes = append(displayedNodes, n)
 
 		switch {
 		case n.NodeType == types.NodeTypeUser && isToolResultContent(n.Content):
@@ -493,11 +557,22 @@ func (a *App) renderTree(nodes []*types.Node) string {
 		}
 	}
 
-	if totalCost > 0 {
-		b.WriteString(fmt.Sprintf("\nTotal: %s", formatCost(totalCost)))
+	if totalCost, ok := a.aggregateDisplayedNodeCosts(displayedNodes); ok && shouldDisplayAggregateCost(totalCost) {
+		b.WriteString(fmt.Sprintf("\nTotal: %s", formatCostResult(totalCost)))
 	}
 
 	return b.String()
+}
+
+func shouldDisplayAggregateCost(cost types.CostResult) bool {
+	switch cost.Status {
+	case types.CostStatusKnown, types.CostStatusPartial:
+		return cost.Total > 0 || len(cost.MissingDimensions) > 0
+	case types.CostStatusFree, types.CostStatusUnknown:
+		return true
+	default:
+		return false
+	}
 }
 
 type toolUseInfo struct {
