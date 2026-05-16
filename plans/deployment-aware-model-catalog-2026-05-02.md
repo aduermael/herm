@@ -2,7 +2,7 @@
 
 **Goal:** Separate model identity, API protocol, provider ownership, and deployment/hosting so Herm can support new models served through already-supported APIs without shipping a new app build, while keeping pricing and cost tracking accurate when the same canonical model is served through different deployments.
 
-**Readiness status:** Ready for execution after the contract decisions captured in this plan. The implementation should not start by preserving old langdag public APIs for external consumers; Herm is the only app consumer in this repo. Data compatibility for existing Herm configs, model catalog caches, and conversation DBs is still required.
+**Readiness status:** V1 rollout completed through Phase 8. This plan is reopened for post-v1 feedback hardening in Phases 9-11; preserve Phases 0-8 as completed historical work. The original implementation did not need to preserve old langdag public APIs for external consumers; Herm is the only app consumer in this repo. Data compatibility for existing Herm configs, model catalog caches, and conversation DBs remains required.
 
 **Execution note:** This plan is expected to change both Herm and the `external/langdag` submodule. Langdag changes should be made on the counterpart submodule branch `aduermael/deployment-provider-api-model`, committed inside `external/langdag`, and then recorded in Herm by updating the parent repo gitlink. Phase commits in Herm should include the relevant Herm changes, plan updates, and the updated langdag submodule pointer.
 
@@ -328,6 +328,45 @@ Phase validation commands:
 - Langdag: `(cd external/langdag && go test ./...)` - pass
 - Langdag Go SDK: `(cd external/langdag/sdks/go && GOWORK=off GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass
 - Deferred gaps: none recorded for v1 rollout.
+
+## Phase 9: Rebaseline post-v1 feedback and regressions
+- [ ] 9a: Capture the routing config complexity feedback and define the new Routing tab contract as read-mostly: a simple generated explanation, a pretty JSON preview of the `routing` object, capped preview height with an ellipsis when truncated, diagnostics, and one advanced edit key.
+- [ ] 9b: Capture the Project config active-model regression as blocking: a project `active_model` such as `claude-opus-4-6` must resolve to the same canonical model used by the header and agent runtime, never silently fall back to `claude-sonnet-4-6`.
+- [ ] 9c: Add failing regression coverage before implementation for routing preview rendering, routing explanation generation, routing JSON truncation, advanced JSON edit entry, project/global model merge behavior, bare-to-canonical model migration, and startup/runtime model agreement.
+- [ ] 9d: Record targeted baseline validation commands and the current failures for the feedback scope.
+
+Phase validation commands:
+
+- Herm targeted config/routing smoke: `go test ./cmd/herm -run 'Test(BuildConfigRows|Routing|ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAware)' -count=1`
+- Herm full suite: `go test ./...`
+
+## Phase 10: Replace routing form controls with a concise JSON-first view
+- [ ] 10a: Remove the normal Routing tab's custom per-route editing fields and route mini-language from the primary UI; keep routing setup positioned as an advanced global-only feature.
+- [ ] 10b: Render a deterministic plain-English explanation from the current routing policy, covering precedence, default/provider/model overrides, fallback stages, weighted choices, retries, and the empty-routing case without implying that most users need to configure it.
+- [ ] 10c: Render only the `routing` JSON object as pretty JSON, never secrets or deployment credentials, with a stable max line count and an ellipsis or remaining-line indicator when the preview is too tall.
+- [ ] 10d: Add an advanced key on the Routing tab that opens the global config JSON file for editing, handles unsaved drafts deliberately, reloads valid edits, and reports invalid JSON without clobbering the existing in-memory config.
+- [ ] 10e: Keep existing routing diagnostics visible below the explanation and preview, capped so they do not dominate the config screen.
+- [ ] 10f: Add tests for empty routing, simple default routing, provider/model override summaries, multi-stage fallback summaries, weighted/retry display, preview truncation, diagnostics, editor key dispatch, editor failure, and malformed JSON reload behavior.
+
+Phase validation commands:
+
+- Herm routing UI smoke: `go test ./cmd/herm -run 'Test(BuildConfigRowsRouting|RoutingSummary|RoutingJSONPreview|RoutingEditor|RoutingDiagnostics)' -count=1`
+- Herm config editor suite: `go test ./cmd/herm -run 'Test(BuildConfigRows|HandleConfigByte|ConfigEditor|Routing)' -count=1`
+- Herm full suite: `go test ./...`
+
+## Phase 11: Make project active-model overrides authoritative
+- [ ] 11a: Fix project config load, migration, merge, and save paths so project `active_model` and `exploration_model` overrides are preserved and normalized to the matching canonical model when possible, including bare native IDs such as `claude-opus-4-6`.
+- [ ] 11b: Ensure project config cannot introduce deployment credentials, routing policy, or other global-only secret/deployment state, while still using effective global deployments to validate and display model availability.
+- [ ] 11c: Make startup model display, config header/context display, `startAgent`, compact/exploration paths, traces, and saved assistant metadata all use the same resolved effective project/global model IDs.
+- [ ] 11d: When a configured project model is unavailable or ambiguous, surface an explicit diagnostic that names the configured model and the fallback model instead of silently displaying or running another Anthropic default.
+- [ ] 11e: Add tests for project `claude-opus-4-6` resolving to `anthropic/claude-opus-4-6`, invalid project model fallback diagnostics, project save/load round trips, unknown-but-catalog-valid IDs, old bare IDs, global hint display, and no accidental global credential or routing overwrite.
+- [ ] 11f: Update docs or config help text to state that routing/deployments are global-only in v1 and project config may override active/exploration models plus non-secret behavior only.
+
+Phase validation commands:
+
+- Herm project config smoke: `go test ./cmd/herm -run 'Test(ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAwareCompatibility|Phase8)' -count=1`
+- Herm full suite: `go test ./...`
+- Langdag regression check if model migration/catalog fixtures change: `(cd external/langdag && go test ./...)`
 
 ---
 
