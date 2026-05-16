@@ -330,10 +330,21 @@ Phase validation commands:
 - Deferred gaps: none recorded for v1 rollout.
 
 ## Phase 9: Rebaseline post-v1 feedback and regressions
-- [ ] 9a: Capture the routing config complexity feedback and define the new Routing tab contract as read-mostly: a simple generated explanation, a pretty JSON preview of the `routing` object, capped preview height with an ellipsis when truncated, diagnostics, and one advanced edit key.
-- [ ] 9b: Capture the Project config active-model regression as blocking: a project `active_model` such as `claude-opus-4-6` must resolve to the same canonical model used by the header and agent runtime, never silently fall back to `claude-sonnet-4-6`.
-- [ ] 9c: Add failing regression coverage before implementation for routing preview rendering, routing explanation generation, routing JSON truncation, advanced JSON edit entry, project/global model merge behavior, bare-to-canonical model migration, and startup/runtime model agreement.
-- [ ] 9d: Record targeted baseline validation commands and the current failures for the feedback scope.
+- [x] 9a: Capture the routing config complexity feedback and define the new Routing tab contract as read-mostly: a simple generated explanation, a pretty JSON preview of the `routing` object, capped preview height with an ellipsis when truncated, diagnostics, and one advanced edit key.
+- [x] 9b: Capture the Project config active-model regression as blocking: a project `active_model` such as `claude-opus-4-6` must resolve to the same canonical model used by the header and agent runtime, never silently fall back to `claude-sonnet-4-6`.
+- [x] 9c: Add failing regression coverage before implementation for routing preview rendering, routing explanation generation, routing JSON truncation, advanced JSON edit entry, project/global model merge behavior, bare-to-canonical model migration, and startup/runtime model agreement.
+- [x] 9d: Record targeted baseline validation commands and the current failures for the feedback scope.
+
+Phase 9 rebaseline notes:
+
+- Routing tab contract: the normal Routing tab is read-mostly. It must show a short explanation that routing is global, model routes override provider routes, provider routes override the default route, overrides do not implicitly cascade, stages are tried in order, deployment choices are weighted, and retries apply per stage. It must show a pretty JSON preview of only the `routing` object, never deployment credentials or secrets. Long previews are capped and end with `...` plus a remaining-line indicator. Existing diagnostics remain visible below the preview, capped. The normal tab exposes one advanced edit entry/key only: `Ctrl+E=edit global JSON`.
+- Routing UI regression baseline: the current UI still renders editable fields such as `Default Route`, `OpenAI Route`, model route rows, and the route mini-language help line. Phase 10 must remove those primary controls and satisfy the read-mostly preview/explanation contract.
+- Project active-model regression baseline: a project `active_model` saved as a bare native ID such as `claude-opus-4-6` currently remains bare after project load/merge. Phase 11 must normalize it to `anthropic/claude-opus-4-6` wherever possible so startup display, config context, `startAgent`, exploration/compact paths, traces, and saved metadata all use the same resolved canonical model.
+
+Phase 9 baseline validation results:
+
+- `go test ./cmd/herm -run 'Test(BuildConfigRows|Routing|ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAware)' -count=1` - intentionally fails on the new Phase 9 tests: `TestBuildConfigRowsRoutingReadOnlyPreviewContract`, `TestRoutingJSONPreviewTruncatesLongPolicies`, `TestRoutingAdvancedJSONEditKeyIsOnlyRoutingEditEntry`, `TestProjectConfigBareModelMigrationKeepsOpusOverride`, `TestResolveActiveModelProjectBareOverrideBeatsGlobalAndSmartDefault`, and `TestStartAgentStartupAndRuntimeUseProjectBareCanonicalModel`.
+- `go test ./...` - intentionally fails on the same new `cmd/herm` Phase 9 regression tests. No separate non-Phase-9 failure was identified in this run.
 
 Phase validation commands:
 
