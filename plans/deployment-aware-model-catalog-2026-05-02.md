@@ -316,11 +316,18 @@ Phase validation commands:
 - [x] 7f: Add tests for one-deployment UI behavior, two-deployment routing controls, provider/model override behavior, no cascade to default from overrides, weighted-stage parsing, retry validation, Azure mapping validation, and availability changing when deployment credentials are added or removed.
 
 ## Phase 8: End-to-end rollout and docs
-- [ ] 8a: Add langdag integration tests that exercise dynamic catalog refresh, canonical-model targeting, deployment resolution, provider fallback, retry, exact cost when mocked, pricing snapshot persistence, and metadata persistence with mock providers.
-- [ ] 8b: Add Herm integration tests for startup with embedded-only catalog, cached catalog, refreshed remote catalog, migrated old model config, old conversation DBs, changing deployment credentials, and route-specific model selection.
-- [ ] 8c: Update docs and examples in Herm and langdag to describe deployments, canonical model selection, global routing, fallback stages, credentials, Azure `model_mappings`, OpenRouter, Ollama, pricing accuracy, and the catalog refresh lifecycle.
-- [ ] 8d: Verify existing smart-default behavior still chooses sensible active and exploration canonical models when multiple deployments can serve the same model.
-- [ ] 8e: Run the relevant langdag and Herm test suites after each phase and record any intentionally deferred gaps.
+- [x] 8a: Add langdag integration tests that exercise dynamic catalog refresh, canonical-model targeting, deployment resolution, provider fallback, retry, exact cost when mocked, pricing snapshot persistence, and metadata persistence with mock providers.
+- [x] 8b: Add Herm integration tests for startup with embedded-only catalog, cached catalog, refreshed remote catalog, migrated old model config, old conversation DBs, changing deployment credentials, and route-specific model selection.
+- [x] 8c: Update docs and examples in Herm and langdag to describe deployments, canonical model selection, global routing, fallback stages, credentials, Azure `model_mappings`, OpenRouter, Ollama, pricing accuracy, and the catalog refresh lifecycle.
+- [x] 8d: Verify existing smart-default behavior still chooses sensible active and exploration canonical models when multiple deployments can serve the same model.
+- [x] 8e: Run the relevant langdag and Herm test suites after each phase and record any intentionally deferred gaps.
+
+Phase validation commands:
+
+- Herm: `go test ./...` - pass
+- Langdag: `(cd external/langdag && go test ./...)` - pass
+- Langdag Go SDK: `(cd external/langdag/sdks/go && GOWORK=off GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass
+- Deferred gaps: none recorded for v1 rollout.
 
 ---
 

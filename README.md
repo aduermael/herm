@@ -12,7 +12,7 @@ A coding agent CLI that's containerized by default. Every command runs inside a 
 
 **Containerized by default** — The agent runs inside Docker containers with full control: installing packages, editing files, running builds. Your host machine stays untouched. No permission prompts, ever.
 
-**Multi-provider** — Use Anthropic, OpenAI, Gemini, or Grok. Switch models on the fly.
+**Multi-provider** — Use Anthropic, OpenAI, Gemini, Grok, OpenRouter, Ollama, Azure OpenAI, Vertex AI, or Bedrock. Switch canonical models on the fly while herm resolves the configured deployment.
 
 **Self-building dev environments** — Need Python but it's not installed? herm extends its own container by writing Dockerfiles dynamically. Dev environments are scoped per project (git repo) and survive container restarts — the rebuilt image persists across sessions.
 
@@ -55,7 +55,12 @@ go build -o herm ./cmd/herm
 herm
 ```
 
-You'll need an API key for at least one provider (Anthropic, OpenAI, Grok, or Gemini) — add it via the CLI on first run.
+You'll need a configured deployment such as Anthropic, OpenAI, OpenRouter, Gemini, Grok, Azure OpenAI, or local Ollama. Add credentials with `/config` on first run.
+
+Herm stores model choices as canonical IDs like `openai/gpt-4.1-2025-04-14`.
+Langdag resolves those IDs through your configured deployments and routing
+policy at request time, so newly published catalog models can appear without a
+new herm build when they use an already-supported API.
 
 ## Roadmap
 
@@ -65,7 +70,7 @@ Rough priority order — subject to change.
 2. **Benchmarks** — measure herm against Claude Code and other coding agents on standard coding tasks.
 3. **Skills & `herm.md`** — first-class skills and a project config file. Optional import from other agents' configs (e.g. `CLAUDE.md`).
 4. **PR review bot** — a herm bot that reviews pull requests.
-5. **Dynamic model list** — pick up newly released models without updating herm.
+5. **Dynamic model catalog** — keep expanding deployment-aware refresh, pricing, and routing diagnostics.
 
 ## Project Structure
 
