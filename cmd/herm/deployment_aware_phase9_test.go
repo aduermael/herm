@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -20,10 +21,12 @@ func TestBuildConfigRowsRoutingReadOnlyPreviewContract(t *testing.T) {
 		"Provider openai: primary openai-direct",
 		"Model openai/gpt-4.1-2025-04-14: primary openrouter",
 		"Add rule",
-		"Delete rule",
-		"Ctrl+E=edit global JSON",
 	)
 	expectRowsNotContainAny(t, rows,
+		"Delete rule",
+		"A=add rule",
+		"D=delete rule",
+		"Ctrl+E=edit global JSON",
 		"Route syntax:",
 		"Default Route:",
 		"OpenAI Route:",
@@ -67,15 +70,20 @@ func TestRoutingJSONPreviewTruncatesLongPolicies(t *testing.T) {
 	expectRowsNotContainAny(t, rows, "more routing JSON lines")
 }
 
-func TestRoutingAdvancedJSONEditKeyIsOnlyRoutingEditEntry(t *testing.T) {
+func TestRoutingTabFieldsExposeSelectableActions(t *testing.T) {
 	app := phase9RoutingApp()
 
 	fields := app.routingTabFields()
-	if len(fields) > 1 {
-		t.Fatalf("routingTabFields returned %d fields, want at most one advanced JSON edit entry: %+v", len(fields), fields)
+	got := make([]string, 0, len(fields))
+	for _, field := range fields {
+		got = append(got, field.label)
 	}
-	if len(fields) == 1 && fields[0].label != "Edit Global Config JSON" {
-		t.Fatalf("routing edit entry label = %q, want %q", fields[0].label, "Edit Global Config JSON")
+	want := []string{"Add rule", "Provider openai", "Model openai/gpt-4.1-2025-04-14"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("routing fields = %+v, want %+v", got, want)
+	}
+	if fields[0].action == nil || !fields[0].valueless {
+		t.Fatalf("Add rule should be a valueless selectable action: %+v", fields[0])
 	}
 }
 

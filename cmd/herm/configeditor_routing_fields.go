@@ -3,7 +3,22 @@
 package main
 
 func (a *App) routingTabFields() []cfgField {
-	return nil
+	fields := []cfgField{{
+		label:     "Add rule",
+		valueless: true,
+		action:    func(a *App) { a.openRoutingAddRuleScopeMenu() },
+	}}
+	for _, item := range routingRuleMenuItems(a.cfgDraft.Routing) {
+		item := item
+		fields = append(fields, cfgField{
+			label: item.label,
+			get: func(c Config) string {
+				return routingScopedStagesSummary(getRoutingStages(getRoutingStagesOptions{policy: c.Routing, scope: item.scope, key: item.key})) + "."
+			},
+			action: func(a *App) { a.openRoutingRuleOptionsMenu(item) },
+		})
+	}
+	return fields
 }
 
 type routingScope string

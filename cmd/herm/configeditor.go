@@ -45,6 +45,8 @@ type cfgField struct {
 	display    func(Config) string // masked display; nil means use get
 	set        func(*Config, string)
 	toggle     func(*Config)       // if non-nil, Enter toggles instead of opening editor
+	action     func(*App)          // if non-nil, Enter invokes an action instead of editing
+	valueless  bool                // if true, render as a selectable row without ": value"
 	globalHint func(Config) string // if set, shows "(global: X)" when field value is empty
 	picker     func(*App)          // if non-nil, Enter opens a picker (e.g. model selector) instead of editor
 }
@@ -94,6 +96,7 @@ func (a *App) enterConfigMode() {
 	a.cfgEditCursor = 0
 	a.cfgDraft = a.globalConfig
 	a.cfgProjectDraft = a.projectConfig
+	a.startConfigTicker()
 	a.renderInput()
 }
 
@@ -105,6 +108,7 @@ func (a *App) projectConfigRoot() string {
 }
 
 func (a *App) exitConfigMode(save bool) {
+	a.stopConfigTicker()
 	if save {
 		a.globalConfig = normalizeConfigForModels(configModelsOptions{cfg: a.cfgDraft, models: a.models})
 		a.cfgDraft = a.globalConfig
@@ -315,9 +319,64 @@ func (a *App) cfgCurrentFields() []cfgField {
 	case 2:
 		return a.settingsTabFields()
 	case 3:
+		if a.projectConfigRoot() == "" {
+			return nil
+		}
 		return a.projectTabFields()
 	}
 	return nil
+}
+
+func (a *App) clampConfigCursor() {
+	fields := a.cfgCurrentFields()
+	if len(fields) == 0 {
+		a.cfgCursor = 0
+		a.cfgTabCursor[a.cfgTab] = 0
+		return
+	}
+	if a.cfgCursor < 0 {
+		a.cfgCursor = 0
+	} else if a.cfgCursor >= len(fields) {
+		a.cfgCursor = len(fields) - 1
+	}
+	a.cfgTabCursor[a.cfgTab] = a.cfgCursor
+}
+
+func (a *App) configSelectedField() (cfgField, bool) {
+	fields := a.cfgCurrentFields()
+	if len(fields) == 0 || a.cfgCursor < 0 || a.cfgCursor >= len(fields) {
+		return cfgField{}, false
+	}
+	return fields[a.cfgCursor], true
+}
+
+func (a *App) configHelpLine() string {
+	if a.cfgEditing {
+		return "\033[2mEnter=confirm  Esc=cancel\033[0m"
+	}
+	parts := []string{"←/→=tab"}
+	fields := a.cfgCurrentFields()
+	if len(fields) > 0 {
+		parts = append(parts, "↑/↓=select")
+		enterHint := "Enter=edit"
+		if a.cfgTab == 1 {
+			enterHint = "Enter=select"
+		} else if field, ok := a.configSelectedField(); ok && (field.action != nil || field.picker != nil || field.toggle != nil) {
+			enterHint = "Enter=select"
+		}
+		parts = append(parts, enterHint)
+	}
+	if a.cfgTab == 3 && a.projectConfigRoot() != "" {
+		if field, ok := a.configSelectedField(); ok && field.set != nil && field.get != nil && field.get(a.cfgDraft) != "" {
+			parts = append(parts, "Backspace=unset")
+		}
+	}
+	parts = append(parts, "Esc=close")
+	line := "\033[2m" + strings.Join(parts, "  ")
+	if a.hasUnsavedConfigDrafts() {
+		line += "  " + runningStatusStyle(a.configAnimationElapsed()) + "Ctrl+S=save\033[0m\033[2m"
+	}
+	return line + "\033[0m"
 }
 
 func (a *App) resolvedExplorationDisplay(c Config) string {
@@ -510,7 +569,7 @@ func (a *App) buildConfigRows() []string {
 	// No-project message for Project tab
 	if a.cfgTab == 3 && a.projectConfigRoot() == "" {
 		rows = append(rows, "\033[2mNo project detected (not in a git repository)\033[0m")
-		rows = append(rows, "\033[2m←/→=tab  Esc=close  Ctrl+S=save & close\033[0m")
+		rows = append(rows, a.configHelpLine())
 		return rows
 	}
 
@@ -541,7 +600,7 @@ func (a *App) buildConfigRows() []string {
 		last := end
 		rows = append(rows, fmt.Sprintf("\033[2m(%d->%d / %d)\033[0m", first, last, total))
 		if a.menuModels != nil {
-			rows = append(rows, "\033[2m←/→ sort column  Tab flip order  Enter select  Esc close\033[0m")
+			rows = append(rows, "\033[2mEnter=choose  Esc=close\033[0m")
 		} else {
 			rows = append(rows, "\033[2m↑/↓=select  Enter=choose  Esc=close\033[0m")
 		}
@@ -555,6 +614,14 @@ func (a *App) buildConfigRows() []string {
 	// Fields
 	fields := a.cfgCurrentFields()
 	for i, f := range fields {
+		if f.valueless {
+			if i == a.cfgCursor {
+				rows = append(rows, fmt.Sprintf("\033[36;1m%s ◆\033[0m", f.label))
+			} else {
+				rows = append(rows, f.label)
+			}
+			continue
+		}
 		if a.cfgEditing && i == a.cfgCursor {
 			// Show editable text input with underline
 			editStr := string(a.cfgEditBuf)
@@ -563,7 +630,7 @@ func (a *App) buildConfigRows() []string {
 			val := ""
 			if f.display != nil {
 				val = f.display(a.cfgDraft)
-			} else {
+			} else if f.get != nil {
 				val = f.get(a.cfgDraft)
 			}
 			if f.picker != nil && val != "" {
@@ -625,16 +692,7 @@ func (a *App) buildConfigRows() []string {
 		}
 	}
 
-	// Help line
-	if a.cfgEditing {
-		rows = append(rows, "\033[2mEnter=confirm  Esc=cancel\033[0m")
-	} else if a.cfgTab == 3 {
-		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Backspace=unset  Esc=close  Ctrl+S=save & close\033[0m")
-	} else if a.cfgTab == 1 {
-		rows = append(rows, "\033[2m←/→=tab  A=add rule  D=delete rule  Esc=close  Ctrl+S=save & close  Ctrl+E=edit global JSON\033[0m")
-	} else {
-		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Esc=close  Ctrl+S=save & close\033[0m")
-	}
+	rows = append(rows, a.configHelpLine())
 
 	return rows
 }
@@ -701,14 +759,8 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			if a.cfgTab >= len(cfgTabNames) {
 				a.cfgTab = 0
 			}
-			fields := a.cfgCurrentFields()
-			if len(fields) == 0 {
-				a.cfgCursor = 0
-			} else if a.cfgTabCursor[a.cfgTab] < len(fields) {
-				a.cfgCursor = a.cfgTabCursor[a.cfgTab]
-			} else {
-				a.cfgCursor = len(fields) - 1
-			}
+			a.cfgCursor = a.cfgTabCursor[a.cfgTab]
+			a.clampConfigCursor()
 			a.renderInput()
 		case 'D': // Left - prev tab
 			a.cfgTabCursor[a.cfgTab] = a.cfgCursor
@@ -716,14 +768,8 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			if a.cfgTab < 0 {
 				a.cfgTab = len(cfgTabNames) - 1
 			}
-			fields := a.cfgCurrentFields()
-			if len(fields) == 0 {
-				a.cfgCursor = 0
-			} else if a.cfgTabCursor[a.cfgTab] < len(fields) {
-				a.cfgCursor = a.cfgTabCursor[a.cfgTab]
-			} else {
-				a.cfgCursor = len(fields) - 1
-			}
+			a.cfgCursor = a.cfgTabCursor[a.cfgTab]
+			a.clampConfigCursor()
 			a.renderInput()
 		case '2': // modifyOtherKeys (Ctrl+S, Ctrl+C, etc.)
 			a.handleCSIDigit2(handleCSIDigit2Options{readByte: readByte, onPaste: func(string) {}})
@@ -743,11 +789,13 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		fields := a.cfgCurrentFields()
 		if len(fields) > 0 && a.cfgCursor < len(fields) {
 			f := fields[a.cfgCursor]
-			if f.picker != nil {
+			if f.action != nil {
+				f.action(a)
+			} else if f.picker != nil {
 				f.picker(a)
 			} else if f.toggle != nil {
 				f.toggle(&a.cfgDraft)
-			} else {
+			} else if f.get != nil && f.set != nil {
 				a.cfgEditing = true
 				val := f.get(a.cfgDraft)
 				a.cfgEditBuf = []rune(val)
@@ -761,7 +809,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			fields := a.cfgCurrentFields()
 			if len(fields) > 0 && a.cfgCursor < len(fields) {
 				f := fields[a.cfgCursor]
-				if f.set != nil && f.get(a.cfgDraft) != "" {
+				if f.set != nil && f.get != nil && f.get(a.cfgDraft) != "" {
 					f.set(&a.cfgDraft, "")
 					a.renderInput()
 				}
@@ -770,16 +818,6 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 
 	case ch == 0x13: // Ctrl+S - save and close
 		a.exitConfigMode(true)
-
-	case (ch == 'a' || ch == 'A') && a.cfgTab == 1:
-		a.openRoutingAddRuleScopeMenu()
-
-	case (ch == 'd' || ch == 'D') && a.cfgTab == 1:
-		a.openRoutingDeleteRuleMenu()
-
-	case ch == 0x05 && a.cfgTab == 1: // Ctrl+E - edit global config JSON
-		a.openRoutingGlobalConfigEditor()
-		a.renderFull()
 
 	case ch == 3 || ch == 4: // Ctrl+C/D - exit without saving
 		a.exitConfigMode(false)

@@ -40,8 +40,12 @@ func TestRoutingSummaryDisplaysRelativeWeights(t *testing.T) {
 
 func TestBuildConfigRowsRoutingRemovesPrimaryRouteControls(t *testing.T) {
 	rows := strings.Join(phase9RoutingApp().buildConfigRows(), "\n")
-	expectRowsContainAll(t, rows, "Add rule", "Delete rule", "Ctrl+E=edit global JSON")
+	expectRowsContainAll(t, rows, "Add rule")
 	expectRowsNotContainAny(t, rows,
+		"Delete rule",
+		"A=add rule",
+		"D=delete rule",
+		"Ctrl+E=edit global JSON",
 		"Route syntax:",
 		"Default Route:",
 		"OpenAI Route:",
@@ -106,7 +110,7 @@ func TestRoutingDiagnosticsRemainVisibleAndCapped(t *testing.T) {
 	)
 }
 
-func TestRoutingEditorCtrlEReloadsValidGlobalJSON(t *testing.T) {
+func TestRoutingEditorReloadsValidGlobalJSON(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	var editorPath string
@@ -144,7 +148,7 @@ func TestRoutingEditorCtrlEReloadsValidGlobalJSON(t *testing.T) {
 		},
 	}
 
-	app.handleConfigByte(handleConfigByteOptions{ch: 0x05})
+	app.openRoutingGlobalConfigEditor()
 
 	if editorPath != filepath.Join(os.Getenv("HOME"), configDir, configFile) {
 		t.Fatalf("editor path = %q, want global config path", editorPath)
@@ -179,7 +183,7 @@ func TestRoutingEditorRefusesUnsavedDrafts(t *testing.T) {
 		},
 	}
 
-	app.handleConfigByte(handleConfigByteOptions{ch: 0x05})
+	app.openRoutingGlobalConfigEditor()
 
 	if called {
 		t.Fatal("editor should not open while global draft has unsaved changes")
@@ -210,7 +214,7 @@ func TestRoutingEditorFailureAndMalformedJSONKeepCurrentDraft(t *testing.T) {
 		config:           mergeConfigs(mergeConfigsOptions{global: original, project: ProjectConfig{Personality: "project"}}),
 	}
 
-	app.handleConfigByte(handleConfigByteOptions{ch: 0x05})
+	app.openRoutingGlobalConfigEditor()
 
 	if app.cfgDraft.ActiveModel != original.ActiveModel {
 		t.Fatalf("editor failure changed draft to %+v", app.cfgDraft)
@@ -249,7 +253,7 @@ func TestRoutingEditorFailureAndMalformedJSONKeepCurrentDraft(t *testing.T) {
 		},
 	}
 
-	app.handleConfigByte(handleConfigByteOptions{ch: 0x05})
+	app.openRoutingGlobalConfigEditor()
 
 	if app.cfgDraft.ActiveModel != original.ActiveModel {
 		t.Fatalf("malformed JSON changed draft to %+v", app.cfgDraft)
@@ -261,5 +265,5 @@ func TestRoutingEditorFailureAndMalformedJSONKeepCurrentDraft(t *testing.T) {
 		t.Fatalf("malformed JSON should append invalid JSON error, got %+v", app.messages)
 	}
 
-	app.handleConfigByte(handleConfigByteOptions{ch: 0x05})
+	app.openRoutingGlobalConfigEditor()
 }

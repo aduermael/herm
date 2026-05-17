@@ -533,7 +533,7 @@ func TestDeploymentTabClearsBackfilledLegacyCredential(t *testing.T) {
 	}
 }
 
-func TestRoutingTabIsReadOnlyPreview(t *testing.T) {
+func TestRoutingTabHasSelectableActions(t *testing.T) {
 	models := []ModelDef{{
 		Provider:      ProviderOpenAI,
 		OwnerProvider: ProviderOpenAI,
@@ -550,8 +550,9 @@ func TestRoutingTabIsReadOnlyPreview(t *testing.T) {
 		}},
 		models: models,
 	}
-	if fields := one.routingTabFields(); len(fields) != 0 {
-		t.Fatalf("routing tab should not expose route edit fields: %+v", fields)
+	fields := one.routingTabFields()
+	if len(fields) != 1 || fields[0].label != "Add rule" || fields[0].action == nil {
+		t.Fatalf("routing tab should expose only Add rule for empty routing: %+v", fields)
 	}
 	rows := one.buildConfigRows()
 	if !rowsContain(rows, "No routing rules. Using default model provider/deployment.") {
@@ -572,9 +573,9 @@ func TestRoutingTabIsReadOnlyPreview(t *testing.T) {
 		},
 		models: models,
 	}
-	fields := two.routingTabFields()
-	if len(fields) != 0 {
-		t.Fatalf("two deployments should still use read-only routing preview, got fields: %+v", fields)
+	fields = two.routingTabFields()
+	if len(fields) != 1 || fields[0].label != "Add rule" {
+		t.Fatalf("two deployments should expose Add rule action, got fields: %+v", fields)
 	}
 
 	two.cfgDraft.Routing = &RoutingPolicy{Models: map[string][]RoutingStage{
@@ -583,9 +584,16 @@ func TestRoutingTabIsReadOnlyPreview(t *testing.T) {
 	if !two.routingControlsVisible(two.cfgDraft) {
 		t.Fatalf("existing routing should still be recognized as routing-aware")
 	}
+	fields = two.routingTabFields()
+	if len(fields) != 2 || fields[1].label != "Model anthropic/claude-sonnet-4-20250514" || fields[1].action == nil {
+		t.Fatalf("existing model route should be selectable, got fields: %+v", fields)
+	}
 	rows = two.buildConfigRows()
 	if !rowsContain(rows, "Model anthropic/claude-sonnet-4-20250514") {
 		t.Fatalf("existing model route should be summarized: %v", rows)
+	}
+	if rowsContain(rows, "Delete rule") {
+		t.Fatalf("delete should be contextual to selected rules, not shown on main routing page: %v", rows)
 	}
 }
 
@@ -604,6 +612,7 @@ func TestBuildConfigRowsNoProject(t *testing.T) {
 		repoRoot: "", // no repo
 	}
 	rows := a.buildConfigRows()
+	joined := strings.Join(rows, "\n")
 	found := false
 	for _, row := range rows {
 		if strings.Contains(row, "No project detected") {
@@ -613,6 +622,9 @@ func TestBuildConfigRowsNoProject(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("buildConfigRows on Project tab with no repo should contain 'No project detected', got %v", rows)
+	}
+	if strings.Contains(joined, "↑/↓=select") || strings.Contains(joined, "Enter=") || strings.Contains(joined, "Ctrl+S=save") {
+		t.Errorf("no-project footer should only expose tab/close actions, got %v", rows)
 	}
 }
 

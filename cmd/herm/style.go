@@ -245,14 +245,14 @@ func renderToolBox(opts renderToolBoxOptions) string {
 	// Pick ANSI style for borders vs content.
 	var borderStyle, titleStyle, contentStyle, reset string
 	if isError {
-		borderStyle = "\033[31m"   // red
-		titleStyle = "\033[31;3m"  // red italic
-		contentStyle = "\033[31m"  // red
+		borderStyle = "\033[31m"  // red
+		titleStyle = "\033[31;3m" // red italic
+		contentStyle = "\033[31m" // red
 		reset = "\033[0m"
 	} else {
-		borderStyle = "\033[2m"    // dim
-		titleStyle = "\033[2;3m"   // dim italic
-		contentStyle = "\033[2m"   // dim
+		borderStyle = "\033[2m"  // dim
+		titleStyle = "\033[2;3m" // dim italic
+		contentStyle = "\033[2m" // dim
 		reset = "\033[0m"
 	}
 
@@ -554,6 +554,10 @@ func pastelColor(elapsed time.Duration) string {
 	hue := math.Mod(elapsed.Seconds()*90, 360) // full rotation every 4s
 	r, g, b := hslToRGB(hsl{h: hue, s: 0.65, l: 0.78})
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
+}
+
+func runningStatusStyle(elapsed time.Duration) string {
+	return "\033[0m" + pastelColor(elapsed) + "\033[3m"
 }
 
 // approvalGradientColor returns a bold ANSI true-color escape cycling through

@@ -115,6 +115,8 @@ type toolTimerTickMsg struct{}
 
 type agentTickMsg struct{}
 
+type configTickMsg struct{}
+
 // projectSnapshot holds a lightweight project context gathered at startup.
 type projectSnapshot struct {
 	TopLevel      string // ls -1 of worktree root

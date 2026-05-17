@@ -202,12 +202,12 @@ func TestPhase12RoutingTabShowsScopedActionsAndNoDefaultStep(t *testing.T) {
 		"Provider openai: primary openai-direct",
 		"Model openai/gpt-4.1-2025-04-14: primary openrouter",
 		"Add rule",
+	)
+	expectRowsNotContainAny(t, rows,
 		"Delete rule",
 		"A=add rule",
 		"D=delete rule",
 		"Ctrl+E=edit global JSON",
-	)
-	expectRowsNotContainAny(t, rows,
 		"Default:",
 		"routing JSON",
 		`"default": [`,
@@ -270,8 +270,12 @@ func TestPhase12RoutingAddAndDeleteRuleActions(t *testing.T) {
 		t.Fatalf("provider rule stages = %+v", app.cfgDraft.Routing.Providers["openai"])
 	}
 
-	app.openRoutingDeleteRuleMenu()
-	app.menuAction(menuLineIndex(t, app.menuLines, "Provider openai"))
+	app.cfgCursor = routingFieldIndex(t, app.routingTabFields(), "Provider openai")
+	app.handleConfigByte(handleConfigByteOptions{ch: '\r'})
+	if !app.menuActive || app.menuHeader != "Provider openai" {
+		t.Fatalf("provider row did not open contextual rule menu: active=%v header=%q lines=%+v", app.menuActive, app.menuHeader, app.menuLines)
+	}
+	app.menuAction(menuLineIndex(t, app.menuLines, "Delete rule"))
 	if app.cfgDraft.Routing != nil {
 		t.Fatalf("provider rule was not deleted: %+v", app.cfgDraft.Routing)
 	}
@@ -309,7 +313,7 @@ func TestPhase12RoutingAddModelRuleNoFallbackPath(t *testing.T) {
 	}
 }
 
-func TestPhase12RoutingTabKeyDispatchOpensRuleMenus(t *testing.T) {
+func TestPhase12RoutingTabEnterSelectsAddAndRuleActions(t *testing.T) {
 	app := &App{
 		headless: true,
 		cfgTab:   1,
@@ -327,15 +331,138 @@ func TestPhase12RoutingTabKeyDispatchOpensRuleMenus(t *testing.T) {
 		}},
 	}
 
-	app.handleConfigByte(handleConfigByteOptions{ch: 'a'})
+	app.cfgCursor = 0
+	app.handleConfigByte(handleConfigByteOptions{ch: '\r'})
 	if !app.menuActive || app.menuHeader != "Add routing rule" {
-		t.Fatalf("A key did not open add-rule menu: active=%v header=%q lines=%+v", app.menuActive, app.menuHeader, app.menuLines)
+		t.Fatalf("Enter on Add rule did not open add-rule menu: active=%v header=%q lines=%+v", app.menuActive, app.menuHeader, app.menuLines)
 	}
 	app.menuActive = false
-	app.handleConfigByte(handleConfigByteOptions{ch: 'd'})
-	if !app.menuActive || app.menuHeader != "Delete routing rule" {
-		t.Fatalf("D key did not open delete-rule menu: active=%v header=%q lines=%+v", app.menuActive, app.menuHeader, app.menuLines)
+	app.cfgCursor = routingFieldIndex(t, app.routingTabFields(), "Provider openai")
+	app.handleConfigByte(handleConfigByteOptions{ch: '\r'})
+	if !app.menuActive || app.menuHeader != "Provider openai" {
+		t.Fatalf("Enter on rule did not open contextual menu: active=%v header=%q lines=%+v", app.menuActive, app.menuHeader, app.menuLines)
 	}
+	expectRowsContainAll(t, strings.Join(app.menuLines, "\n"), "Replace rule", "Delete rule", "Cancel")
+}
+
+func TestPhase12RoutingTabArrowNavigationWrapsSelectableRows(t *testing.T) {
+	app := &App{
+		headless: true,
+		cfgTab:   1,
+		cfgDraft: Config{Routing: &RoutingPolicy{Providers: map[string][]RoutingStage{
+			"openai": {{Deployments: []DeploymentChoice{{DeploymentID: "openai-direct", Weight: 100}}}},
+		}}},
+	}
+
+	sendConfigArrow(app, 'B')
+	if got := app.routingTabFields()[app.cfgCursor].label; got != "Provider openai" {
+		t.Fatalf("Down should select provider rule, got %q", got)
+	}
+	sendConfigArrow(app, 'B')
+	if got := app.routingTabFields()[app.cfgCursor].label; got != "Add rule" {
+		t.Fatalf("Down should wrap back to Add rule, got %q", got)
+	}
+	sendConfigArrow(app, 'A')
+	if got := app.routingTabFields()[app.cfgCursor].label; got != "Provider openai" {
+		t.Fatalf("Up should wrap to provider rule, got %q", got)
+	}
+	sendConfigArrow(app, 'A')
+	if got := app.routingTabFields()[app.cfgCursor].label; got != "Add rule" {
+		t.Fatalf("Up from provider should select Add rule, got %q", got)
+	}
+}
+
+func TestPhase12RoutingTabShortcutActionsAreUnsupported(t *testing.T) {
+	called := false
+	app := &App{
+		headless: true,
+		cfgTab:   1,
+		cfgDraft: Config{Routing: &RoutingPolicy{Providers: map[string][]RoutingStage{
+			"openai": {{Deployments: []DeploymentChoice{{DeploymentID: "openai-direct", Weight: 100}}}},
+		}}},
+		configJSONEditor: func(string) error {
+			called = true
+			return nil
+		},
+	}
+
+	for _, ch := range []byte{'a', 'A', 'd', 'D', 0x05} {
+		app.menuActive = false
+		app.handleConfigByte(handleConfigByteOptions{ch: ch})
+		if app.menuActive {
+			t.Fatalf("shortcut %q unexpectedly opened menu %q", ch, app.menuHeader)
+		}
+	}
+	if called {
+		t.Fatal("Ctrl+E should not open the global JSON editor from the routing tab")
+	}
+}
+
+func TestPhase12RoutingAddCandidatesExcludeExistingRules(t *testing.T) {
+	cfg := Config{
+		Deployments: map[string]DeploymentConfig{
+			"openai-direct": {APIKey: "sk-openai"},
+			"openrouter":    {APIKey: "sk-or"},
+		},
+		Routing: &RoutingPolicy{
+			Providers: map[string][]RoutingStage{
+				"openai": {{Deployments: []DeploymentChoice{{DeploymentID: "openai-direct", Weight: 100}}}},
+			},
+			Models: map[string][]RoutingStage{
+				"openai/gpt-a": {{Deployments: []DeploymentChoice{{DeploymentID: "openrouter", Weight: 100}}}},
+			},
+		},
+	}
+	models := []ModelDef{
+		{
+			Provider:      ProviderOpenAI,
+			OwnerProvider: ProviderOpenAI,
+			ID:            "openai/gpt-a",
+			Deployments: []ModelDeploymentDef{
+				{DeploymentID: "openai-direct"},
+				{DeploymentID: "openrouter"},
+			},
+		},
+		{
+			Provider:      ProviderOpenAI,
+			OwnerProvider: ProviderOpenAI,
+			ID:            "openai/gpt-b",
+			Deployments: []ModelDeploymentDef{
+				{DeploymentID: "openai-direct"},
+				{DeploymentID: "openrouter"},
+			},
+		},
+	}
+
+	providers := routingProviderCandidates(routingProviderCandidatesOptions{cfg: cfg, models: models})
+	if len(providers) != 0 {
+		t.Fatalf("provider candidates should exclude existing provider rules, got %+v", providers)
+	}
+	modelCandidates := routingModelCandidates(routingModelCandidatesOptions{cfg: cfg, models: models})
+	got := make([]string, 0, len(modelCandidates))
+	for _, model := range modelCandidates {
+		got = append(got, model.ID)
+	}
+	if !reflect.DeepEqual(got, []string{"openai/gpt-b"}) {
+		t.Fatalf("model candidates should exclude existing model rules, got %+v", got)
+	}
+}
+
+func TestPhase12ConfigSaveHintOnlyAppearsWhenDirty(t *testing.T) {
+	app := &App{
+		cfgTab:       1,
+		globalConfig: Config{},
+		cfgDraft:     Config{},
+	}
+	cleanRows := strings.Join(app.buildConfigRows(), "\n")
+	expectRowsNotContainAny(t, cleanRows, "Ctrl+S=save")
+
+	app.cfgDraft.Routing = &RoutingPolicy{Providers: map[string][]RoutingStage{
+		"openai": {{Deployments: []DeploymentChoice{{DeploymentID: "openai-direct", Weight: 100}}}},
+	}}
+	dirtyRows := strings.Join(app.buildConfigRows(), "\n")
+	expectRowsContainAll(t, dirtyRows, "Ctrl+S=save", "\033[0m\033[38;2;", "\033[3mCtrl+S=save")
+	expectRowsNotContainAny(t, dirtyRows, "\033[1mCtrl+S=save")
 }
 
 func TestPhase12ProviderRuleCandidatesUseAvailableCommonDeployments(t *testing.T) {
@@ -390,4 +517,27 @@ func menuLineIndex(t *testing.T, lines []string, value string) int {
 	}
 	t.Fatalf("menu line %q not found in %+v", value, lines)
 	return -1
+}
+
+func routingFieldIndex(t *testing.T, fields []cfgField, label string) int {
+	t.Helper()
+	for i, field := range fields {
+		if field.label == label {
+			return i
+		}
+	}
+	t.Fatalf("routing field %q not found in %+v", label, fields)
+	return -1
+}
+
+func sendConfigArrow(app *App, final byte) {
+	stdinCh := make(chan byte, 1)
+	stdinCh <- '['
+	app.handleConfigByte(handleConfigByteOptions{
+		ch:      '\033',
+		stdinCh: stdinCh,
+		readByte: func() (byte, bool) {
+			return final, true
+		},
+	})
 }

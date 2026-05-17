@@ -20,10 +20,7 @@ const (
 )
 
 func (a *App) routingTabReadOnlyRows() []string {
-	rows := routingSummaryRows(a.cfgDraft.Routing)
-	rows = append(rows, "Add rule")
-	rows = append(rows, "Delete rule")
-	return rows
+	return routingSummaryRows(a.cfgDraft.Routing)
 }
 
 func routingSummaryRows(policy *RoutingPolicy) []string {
@@ -45,12 +42,6 @@ func routingSummaryRows(policy *RoutingPolicy) []string {
 		} else {
 			rows = append(rows, "No scoped routing rules. Using default model provider/deployment for unmatched models.")
 		}
-	}
-	for _, providerID := range sortedRoutingStageKeys(policy.Providers) {
-		rows = append(rows, fmt.Sprintf("Provider %s: %s.", providerID, routingScopedStagesSummary(policy.Providers[providerID])))
-	}
-	for _, modelID := range sortedRoutingStageKeys(policy.Models) {
-		rows = append(rows, fmt.Sprintf("Model %s: %s.", modelID, routingScopedStagesSummary(policy.Models[modelID])))
 	}
 	return rows
 }
@@ -137,16 +128,28 @@ type routingAddRuleDraft struct {
 }
 
 func (a *App) openRoutingAddRuleScopeMenu() {
+	var lines []string
+	var actions []func()
+	if len(routingProviderCandidates(routingProviderCandidatesOptions{cfg: a.cfgDraft, models: a.models})) > 0 {
+		lines = append(lines, "Provider rule")
+		actions = append(actions, a.openRoutingProviderRuleMenu)
+	}
+	if len(routingModelCandidates(routingModelCandidatesOptions{cfg: a.cfgDraft, models: a.models})) > 0 {
+		lines = append(lines, "Model rule")
+		actions = append(actions, a.openRoutingModelRuleMenu)
+	}
+	if len(lines) == 0 {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No new routing scopes are available."})
+		return
+	}
 	a.openConfigActionMenu(openConfigActionMenuOptions{
 		header: "Add routing rule",
-		lines:  []string{"Provider rule", "Model rule"},
+		lines:  lines,
 		onSelect: func(idx int) {
-			switch idx {
-			case 0:
-				a.openRoutingProviderRuleMenu()
-			case 1:
-				a.openRoutingModelRuleMenu()
+			if idx < 0 || idx >= len(actions) {
+				return
 			}
+			actions[idx]()
 		},
 	})
 }
@@ -270,7 +273,25 @@ func (a *App) openRoutingDeleteRuleMenu() {
 				return
 			}
 			deleteRoutingRule(deleteRoutingRuleOptions{cfg: &a.cfgDraft, item: rules[idx]})
+			a.clampConfigCursor()
 			a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Routing rule deleted."})
+		},
+	})
+}
+
+func (a *App) openRoutingRuleOptionsMenu(item routingRuleMenuItem) {
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: item.label,
+		lines:  []string{"Replace rule", "Delete rule", "Cancel"},
+		onSelect: func(idx int) {
+			switch idx {
+			case 0:
+				a.openRoutingPrimaryDeploymentMenu(routingAddRuleDraft{scope: item.scope, key: item.key, prettyName: item.label})
+			case 1:
+				deleteRoutingRule(deleteRoutingRuleOptions{cfg: &a.cfgDraft, item: item})
+				a.clampConfigCursor()
+				a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Routing rule deleted."})
+			}
 		},
 	})
 }
@@ -327,6 +348,7 @@ type routingProviderCandidatesOptions struct {
 }
 
 func routingProviderCandidates(opts routingProviderCandidatesOptions) []string {
+	existingPolicy := opts.cfg.Routing
 	cfg := opts.cfg
 	cfg.Routing = nil
 	models := cfg.availableModels(opts.models)
@@ -343,6 +365,11 @@ func routingProviderCandidates(opts routingProviderCandidatesOptions) []string {
 	}
 	out := make([]string, 0, len(seen))
 	for providerID := range seen {
+		if existingPolicy != nil {
+			if _, ok := existingPolicy.Providers[providerID]; ok {
+				continue
+			}
+		}
 		deployments := routingEligibleDeploymentCandidates(routingEligibleDeploymentCandidatesOptions{
 			cfg:    opts.cfg,
 			models: opts.models,
@@ -363,9 +390,20 @@ type routingModelCandidatesOptions struct {
 }
 
 func routingModelCandidates(opts routingModelCandidatesOptions) []ModelDef {
+	existingPolicy := opts.cfg.Routing
 	cfg := opts.cfg
 	cfg.Routing = nil
 	models := cfg.availableModels(opts.models)
+	if existingPolicy != nil && len(existingPolicy.Models) > 0 {
+		filtered := models[:0]
+		for _, model := range models {
+			if _, ok := existingPolicy.Models[model.ID]; ok {
+				continue
+			}
+			filtered = append(filtered, model)
+		}
+		models = filtered
+	}
 	sort.SliceStable(models, func(i, j int) bool { return models[i].ID < models[j].ID })
 	return models
 }

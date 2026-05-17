@@ -168,6 +168,11 @@ type App struct {
 	agentDisplayInTok  float64       // lerped display value for input tokens
 	agentDisplayOutTok float64       // lerped display value for output tokens
 
+	// Config editor animation timer
+	configAnimationStart time.Time
+	configTicker         *time.Ticker
+	configTickerStop     chan struct{}
+
 	// Approval timer pause
 	approvalPauseStart  time.Time     // when approval wait started
 	approvalPausedTotal time.Duration // total time spent waiting for approvals
@@ -710,6 +715,11 @@ func (a *App) handleResult(result any) {
 			a.render()
 		}
 		return
+	case configTickMsg:
+		if a.cfgActive && a.hasUnsavedConfigDrafts() {
+			a.renderInput()
+		}
+		return
 	case ctrlCExpiredMsg:
 		_ = msg
 		if a.ctrlCHint {
@@ -950,6 +960,9 @@ func (a *App) cleanup() {
 	if a.toolTimer != nil {
 		a.toolTimer.Stop()
 		a.toolTimer = nil
+	}
+	if a.configTicker != nil {
+		a.stopConfigTicker()
 	}
 	if a.traceCollector != nil {
 		a.traceCollector.Finalize()

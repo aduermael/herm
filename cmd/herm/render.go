@@ -4,13 +4,13 @@ package main
 
 import (
 	"fmt"
+	"github.com/rivo/uniseg"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
-	"github.com/rivo/uniseg"
 )
 
 // ─── Visual line wrapping (from simple-chat) ───
@@ -311,7 +311,7 @@ func collectToolGroup(opts collectToolGroupOptions) toolGroup {
 	i := startIdx
 
 	// Phase 1: collect all consecutive tool calls and results (no other kinds).
-	var calls []int  // indices of msgToolCall messages
+	var calls []int   // indices of msgToolCall messages
 	var results []int // indices of msgToolResult messages
 	for i < len(messages) {
 		switch messages[i].kind {
@@ -479,9 +479,8 @@ func (a *App) buildBlockRows() []string {
 		elapsed := a.agentElapsedTime()
 		text := funnyTexts[a.agentTextIndex]
 		spinner := brailleSpinner(elapsed)
-		color := pastelColor(elapsed)
-		label := fmt.Sprintf("%s %s\033[3m%s | %d 🛠️  | %.2fs | ↑%s ↓%s\033[0m",
-			spinner, color, text, a.mainAgentToolCount, elapsed.Seconds(),
+		label := fmt.Sprintf("%s %s%s | %d 🛠️  | %.2fs | ↑%s ↓%s\033[0m",
+			spinner, runningStatusStyle(elapsed), text, a.mainAgentToolCount, elapsed.Seconds(),
 			formatTokenCount(int(math.Round(a.agentDisplayInTok))),
 			formatTokenCount(int(math.Round(a.agentDisplayOutTok))))
 		rows = append(rows, wrapString(wrapStringOptions{s: label, w: a.width})...)
@@ -820,9 +819,9 @@ func (a *App) renderFull() {
 	if a.headless {
 		return
 	}
-	a.scrollShift = 0 // reset so render() writes from top
+	a.scrollShift = 0                                      // reset so render() writes from top
 	os.Stdout.WriteString("\033[?25l\033[H\033[2J\033[3J") // hide cursor, clear screen + scrollback
-	a.render() // render() → positionCursor() restores cursor visibility
+	a.render()                                             // render() → positionCursor() restores cursor visibility
 }
 
 func (a *App) renderInput() {
