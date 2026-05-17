@@ -540,7 +540,11 @@ func (a *App) buildConfigRows() []string {
 		first := a.menuScrollOffset + 1
 		last := end
 		rows = append(rows, fmt.Sprintf("\033[2m(%d->%d / %d)\033[0m", first, last, total))
-		rows = append(rows, "\033[2m←/→ sort column  Tab flip order  Enter select  Esc close\033[0m")
+		if a.menuModels != nil {
+			rows = append(rows, "\033[2m←/→ sort column  Tab flip order  Enter select  Esc close\033[0m")
+		} else {
+			rows = append(rows, "\033[2m↑/↓=select  Enter=choose  Esc=close\033[0m")
+		}
 		return rows
 	}
 
@@ -627,7 +631,7 @@ func (a *App) buildConfigRows() []string {
 	} else if a.cfgTab == 3 {
 		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Backspace=unset  Esc=close  Ctrl+S=save & close\033[0m")
 	} else if a.cfgTab == 1 {
-		rows = append(rows, "\033[2m←/→=tab  Esc=close  Ctrl+S=save & close  Ctrl+E=edit global JSON\033[0m")
+		rows = append(rows, "\033[2m←/→=tab  A=add rule  D=delete rule  Esc=close  Ctrl+S=save & close  Ctrl+E=edit global JSON\033[0m")
 	} else {
 		rows = append(rows, "\033[2m←/→=tab  ↑/↓=select  Enter=edit  Esc=close  Ctrl+S=save & close\033[0m")
 	}
@@ -766,6 +770,12 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 
 	case ch == 0x13: // Ctrl+S - save and close
 		a.exitConfigMode(true)
+
+	case (ch == 'a' || ch == 'A') && a.cfgTab == 1:
+		a.openRoutingAddRuleScopeMenu()
+
+	case (ch == 'd' || ch == 'D') && a.cfgTab == 1:
+		a.openRoutingDeleteRuleMenu()
 
 	case ch == 0x05 && a.cfgTab == 1: // Ctrl+E - edit global config JSON
 		a.openRoutingGlobalConfigEditor()

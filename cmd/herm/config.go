@@ -152,7 +152,7 @@ func routeAwareDeploymentsForModel(opts routeAwareDeploymentsForModelOptions) ([
 		providerID:       providerID,
 	})
 	if !ok {
-		return nil, []string{"routing has no default/provider/model route for " + model.ID}, false
+		return model.Deployments, nil, true
 	}
 	var diagnostics []string
 	var routed []ModelDeploymentDef
@@ -191,7 +191,7 @@ func routeAwareDeploymentsForModel(opts routeAwareDeploymentsForModelOptions) ([
 }
 
 func routingPolicyIsEmpty(policy *RoutingPolicy) bool {
-	return policy == nil || len(policy.Default) == 0 && len(policy.Providers) == 0 && len(policy.Models) == 0
+	return policy == nil || policy.Default == nil && len(policy.Providers) == 0 && len(policy.Models) == 0
 }
 
 type configModelsOptions struct {
@@ -262,11 +262,6 @@ func routingDiagnosticsForConfigModels(opts configModelsOptions) []RoutingDiagno
 			providerID:       providerID,
 		})
 		if !ok {
-			diagnostics = append(diagnostics, RoutingDiagnostic{
-				Path:    "routing.effective." + model.ID,
-				Code:    "no_effective_route",
-				Message: "routing policy has no default, provider, or model route for this canonical model",
-			})
 			continue
 		}
 		if source == RouteSourceModel {

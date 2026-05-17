@@ -21,29 +21,36 @@ const (
 
 func (a *App) routingTabReadOnlyRows() []string {
 	rows := routingSummaryRows(a.cfgDraft.Routing)
-	rows = append(rows, "routing JSON")
-	rows = append(rows, routingJSONPreviewRows(routingJSONPreviewRowsOptions{policy: a.cfgDraft.Routing, maxLines: routingJSONPreviewMaxLines})...)
+	rows = append(rows, "Add rule")
+	rows = append(rows, "Delete rule")
 	return rows
 }
 
 func routingSummaryRows(policy *RoutingPolicy) []string {
-	rows := []string{
-		"Routing is global.",
-		"Most users do not need routing; configured deployments are enough unless you want a specific fallback policy.",
-		"Model routes override provider routes; provider routes override the default route.",
-		"Overrides do not cascade to default. Stages are tried in order; deployment choices are weighted and retries apply per stage.",
+	rows := []string{"Routing rules are global and scoped to a provider or model."}
+	if policy != nil && policy.Default != nil {
+		rows = append(rows, "Unmatched models use the advanced JSON default route.")
+	} else {
+		rows = append(rows, "Unmatched models use the default model provider/deployment automatically.")
 	}
 	if routingPolicyIsEmpty(policy) {
-		return append(rows, "No routing policy is configured. Herm uses eligible configured deployments automatically.")
+		return append(rows, "No routing rules. Using default model provider/deployment.")
 	}
-	if len(policy.Default) > 0 {
-		rows = append(rows, "Default: "+routingStagesSummary(policy.Default)+".")
+	if policy.Default != nil {
+		rows = append(rows, "Advanced JSON default route is configured.")
+	}
+	if len(policy.Providers) == 0 && len(policy.Models) == 0 {
+		if policy.Default != nil {
+			rows = append(rows, "No scoped routing rules. The advanced JSON default route handles unmatched models.")
+		} else {
+			rows = append(rows, "No scoped routing rules. Using default model provider/deployment for unmatched models.")
+		}
 	}
 	for _, providerID := range sortedRoutingStageKeys(policy.Providers) {
-		rows = append(rows, fmt.Sprintf("Provider %s: %s.", providerID, routingStagesSummary(policy.Providers[providerID])))
+		rows = append(rows, fmt.Sprintf("Provider %s: %s.", providerID, routingScopedStagesSummary(policy.Providers[providerID])))
 	}
 	for _, modelID := range sortedRoutingStageKeys(policy.Models) {
-		rows = append(rows, fmt.Sprintf("Model %s: %s.", modelID, routingStagesSummary(policy.Models[modelID])))
+		rows = append(rows, fmt.Sprintf("Model %s: %s.", modelID, routingScopedStagesSummary(policy.Models[modelID])))
 	}
 	return rows
 }
@@ -67,6 +74,25 @@ func routingStagesSummary(stages []RoutingStage) string {
 	parts := make([]string, 0, len(stages))
 	for i, stage := range stages {
 		parts = append(parts, fmt.Sprintf("stage %d tries %s, retries %d", i+1, routingChoicesSummary(stage.Deployments), stage.Retries))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func routingScopedStagesSummary(stages []RoutingStage) string {
+	if len(stages) == 0 {
+		return "no deployments"
+	}
+	parts := make([]string, 0, len(stages))
+	for i, stage := range stages {
+		prefix := "primary"
+		if i > 0 {
+			prefix = "fallback"
+		}
+		part := fmt.Sprintf("%s %s", prefix, routingChoicesSummary(stage.Deployments))
+		if stage.Retries > 0 {
+			part += fmt.Sprintf(", retries %d", stage.Retries)
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, "; ")
 }
@@ -100,6 +126,346 @@ func joinEnglishList(parts []string) string {
 	default:
 		return strings.Join(parts[:len(parts)-1], ", ") + ", and " + parts[len(parts)-1]
 	}
+}
+
+type routingAddRuleDraft struct {
+	scope      routingScope
+	key        string
+	primary    string
+	fallback   string
+	prettyName string
+}
+
+func (a *App) openRoutingAddRuleScopeMenu() {
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: "Add routing rule",
+		lines:  []string{"Provider rule", "Model rule"},
+		onSelect: func(idx int) {
+			switch idx {
+			case 0:
+				a.openRoutingProviderRuleMenu()
+			case 1:
+				a.openRoutingModelRuleMenu()
+			}
+		},
+	})
+}
+
+func (a *App) openRoutingProviderRuleMenu() {
+	providers := routingProviderCandidates(routingProviderCandidatesOptions{cfg: a.cfgDraft, models: a.models})
+	if len(providers) == 0 {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No provider routing scopes are available."})
+		return
+	}
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: "Choose provider scope",
+		lines:  providers,
+		onSelect: func(idx int) {
+			if idx < 0 || idx >= len(providers) {
+				return
+			}
+			providerID := providers[idx]
+			a.openRoutingPrimaryDeploymentMenu(routingAddRuleDraft{scope: routingScopeProvider, key: providerID, prettyName: "Provider " + providerID})
+		},
+	})
+}
+
+func (a *App) openRoutingModelRuleMenu() {
+	models := routingModelCandidates(routingModelCandidatesOptions{cfg: a.cfgDraft, models: a.models})
+	if len(models) == 0 {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No model routing scopes are available."})
+		return
+	}
+	lines := make([]string, 0, len(models))
+	for _, model := range models {
+		lines = append(lines, model.ID)
+	}
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: "Choose model scope",
+		lines:  lines,
+		onSelect: func(idx int) {
+			if idx < 0 || idx >= len(models) {
+				return
+			}
+			modelID := models[idx].ID
+			a.openRoutingPrimaryDeploymentMenu(routingAddRuleDraft{scope: routingScopeModel, key: modelID, prettyName: "Model " + modelID})
+		},
+	})
+}
+
+func (a *App) openRoutingPrimaryDeploymentMenu(draft routingAddRuleDraft) {
+	deployments := routingEligibleDeploymentCandidates(routingEligibleDeploymentCandidatesOptions{cfg: a.cfgDraft, models: a.models, draft: draft})
+	if len(deployments) == 0 {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No eligible deployments are available for this routing rule."})
+		return
+	}
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: "Choose primary deployment for " + draft.prettyName,
+		lines:  deployments,
+		onSelect: func(idx int) {
+			if idx < 0 || idx >= len(deployments) {
+				return
+			}
+			next := draft
+			next.primary = deployments[idx]
+			a.openRoutingFallbackDeploymentMenu(next)
+		},
+	})
+}
+
+func (a *App) openRoutingFallbackDeploymentMenu(draft routingAddRuleDraft) {
+	deployments := routingEligibleDeploymentCandidates(routingEligibleDeploymentCandidatesOptions{cfg: a.cfgDraft, models: a.models, draft: draft})
+	lines := []string{"No fallback"}
+	for _, deploymentID := range deployments {
+		if deploymentID != draft.primary {
+			lines = append(lines, deploymentID)
+		}
+	}
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: "Choose optional fallback for " + draft.prettyName,
+		lines:  lines,
+		onSelect: func(idx int) {
+			next := draft
+			if idx > 0 && idx < len(lines) {
+				next.fallback = lines[idx]
+			}
+			a.openRoutingReviewRuleMenu(next)
+		},
+	})
+}
+
+func (a *App) openRoutingReviewRuleMenu(draft routingAddRuleDraft) {
+	line := fmt.Sprintf("Save %s: primary %s", draft.prettyName, draft.primary)
+	if draft.fallback != "" {
+		line += "; fallback " + draft.fallback
+	}
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: "Review routing rule",
+		lines:  []string{line, "Cancel"},
+		onSelect: func(idx int) {
+			if idx != 0 {
+				return
+			}
+			saveRoutingRule(saveRoutingRuleOptions{cfg: &a.cfgDraft, draft: draft})
+			a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Routing rule saved."})
+		},
+	})
+}
+
+func (a *App) openRoutingDeleteRuleMenu() {
+	rules := routingRuleMenuItems(a.cfgDraft.Routing)
+	if len(rules) == 0 {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No scoped routing rules to delete."})
+		return
+	}
+	lines := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		lines = append(lines, rule.label)
+	}
+	a.openConfigActionMenu(openConfigActionMenuOptions{
+		header: "Delete routing rule",
+		lines:  lines,
+		onSelect: func(idx int) {
+			if idx < 0 || idx >= len(rules) {
+				return
+			}
+			deleteRoutingRule(deleteRoutingRuleOptions{cfg: &a.cfgDraft, item: rules[idx]})
+			a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Routing rule deleted."})
+		},
+	})
+}
+
+type routingRuleMenuItem struct {
+	label string
+	scope routingScope
+	key   string
+}
+
+func routingRuleMenuItems(policy *RoutingPolicy) []routingRuleMenuItem {
+	if policy == nil {
+		return nil
+	}
+	var items []routingRuleMenuItem
+	for _, providerID := range sortedRoutingStageKeys(policy.Providers) {
+		items = append(items, routingRuleMenuItem{label: "Provider " + providerID, scope: routingScopeProvider, key: providerID})
+	}
+	for _, modelID := range sortedRoutingStageKeys(policy.Models) {
+		items = append(items, routingRuleMenuItem{label: "Model " + modelID, scope: routingScopeModel, key: modelID})
+	}
+	return items
+}
+
+type saveRoutingRuleOptions struct {
+	cfg   *Config
+	draft routingAddRuleDraft
+}
+
+func saveRoutingRule(opts saveRoutingRuleOptions) {
+	cfg, draft := opts.cfg, opts.draft
+	stages := []RoutingStage{{
+		Deployments: []DeploymentChoice{{DeploymentID: draft.primary, Weight: 100}},
+	}}
+	if draft.fallback != "" {
+		stages = append(stages, RoutingStage{Deployments: []DeploymentChoice{{DeploymentID: draft.fallback, Weight: 100}}})
+	}
+	setRoutingStages(setRoutingStagesOptions{cfg: cfg, scope: draft.scope, key: draft.key, stages: stages})
+}
+
+type deleteRoutingRuleOptions struct {
+	cfg  *Config
+	item routingRuleMenuItem
+}
+
+func deleteRoutingRule(opts deleteRoutingRuleOptions) {
+	cfg, item := opts.cfg, opts.item
+	setRoutingStages(setRoutingStagesOptions{cfg: cfg, scope: item.scope, key: item.key, stages: nil})
+}
+
+type routingProviderCandidatesOptions struct {
+	cfg    Config
+	models []ModelDef
+}
+
+func routingProviderCandidates(opts routingProviderCandidatesOptions) []string {
+	cfg := opts.cfg
+	cfg.Routing = nil
+	models := cfg.availableModels(opts.models)
+	seen := map[string]bool{}
+	for _, model := range models {
+		providerID := model.OwnerProvider
+		if providerID == "" {
+			providerID = model.Provider
+		}
+		providerID = canonicalProviderID(providerID)
+		if providerID != "" {
+			seen[providerID] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for providerID := range seen {
+		deployments := routingEligibleDeploymentCandidates(routingEligibleDeploymentCandidatesOptions{
+			cfg:    opts.cfg,
+			models: opts.models,
+			draft:  routingAddRuleDraft{scope: routingScopeProvider, key: providerID},
+		})
+		if len(deployments) == 0 {
+			continue
+		}
+		out = append(out, providerID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+type routingModelCandidatesOptions struct {
+	cfg    Config
+	models []ModelDef
+}
+
+func routingModelCandidates(opts routingModelCandidatesOptions) []ModelDef {
+	cfg := opts.cfg
+	cfg.Routing = nil
+	models := cfg.availableModels(opts.models)
+	sort.SliceStable(models, func(i, j int) bool { return models[i].ID < models[j].ID })
+	return models
+}
+
+type routingEligibleDeploymentCandidatesOptions struct {
+	cfg    Config
+	models []ModelDef
+	draft  routingAddRuleDraft
+}
+
+func routingEligibleDeploymentCandidates(opts routingEligibleDeploymentCandidatesOptions) []string {
+	cfg := opts.cfg
+	cfg.Routing = nil
+	models := cfg.availableModels(opts.models)
+	seen := map[string]bool{}
+	var providerCommon map[string]bool
+	providerMatched := false
+	for _, model := range models {
+		switch opts.draft.scope {
+		case routingScopeProvider:
+			providerID := model.OwnerProvider
+			if providerID == "" {
+				providerID = model.Provider
+			}
+			if canonicalProviderID(providerID) != canonicalProviderID(opts.draft.key) {
+				continue
+			}
+			modelDeployments := map[string]bool{}
+			for _, deployment := range model.Deployments {
+				if deployment.DeploymentID != "" {
+					modelDeployments[deployment.DeploymentID] = true
+				}
+			}
+			if !providerMatched {
+				providerCommon = modelDeployments
+				providerMatched = true
+			} else {
+				for deploymentID := range providerCommon {
+					if !modelDeployments[deploymentID] {
+						delete(providerCommon, deploymentID)
+					}
+				}
+			}
+			continue
+		case routingScopeModel:
+			if model.ID != opts.draft.key {
+				continue
+			}
+		default:
+			continue
+		}
+		for _, deployment := range model.Deployments {
+			if deployment.DeploymentID != "" {
+				seen[deployment.DeploymentID] = true
+			}
+		}
+	}
+	if opts.draft.scope == routingScopeProvider {
+		for deploymentID := range providerCommon {
+			seen[deploymentID] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for deploymentID := range seen {
+		out = append(out, deploymentID)
+	}
+	sort.Strings(out)
+	return out
+}
+
+type openConfigActionMenuOptions struct {
+	header   string
+	lines    []string
+	onSelect func(int)
+}
+
+func (a *App) openConfigActionMenu(opts openConfigActionMenuOptions) {
+	if len(opts.lines) == 0 {
+		return
+	}
+	a.menuHeader = opts.header
+	a.menuLines = append([]string(nil), opts.lines...)
+	a.menuCursor = 0
+	a.menuScrollOffset = 0
+	a.menuModels = nil
+	a.menuActiveID = ""
+	a.menuActive = true
+	a.menuAction = func(idx int) {
+		a.menuLines = nil
+		a.menuHeader = ""
+		a.menuActive = false
+		a.menuAction = nil
+		a.menuScrollOffset = 0
+		a.menuModels = nil
+		a.menuActiveID = ""
+		if opts.onSelect != nil {
+			opts.onSelect(idx)
+		}
+	}
+	a.renderInput()
 }
 
 // routingJSONPreviewRowsOptions is the parameter bundle for routingJSONPreviewRows.

@@ -554,7 +554,7 @@ func TestRoutingTabIsReadOnlyPreview(t *testing.T) {
 		t.Fatalf("routing tab should not expose route edit fields: %+v", fields)
 	}
 	rows := one.buildConfigRows()
-	if !rowsContain(rows, "No routing policy is configured") {
+	if !rowsContain(rows, "No routing rules. Using default model provider/deployment.") {
 		t.Fatalf("empty routing explanation missing: %v", rows)
 	}
 	if rowsContain(rows, "Route syntax:") {

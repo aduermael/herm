@@ -381,12 +381,12 @@ Phase validation commands:
 - Langdag regression check: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass
 
 ## Phase 12: Make routing overrides scoped and simplify the normal UI
-- [ ] 12a: Add regression coverage for scoped routing semantics: provider/model rules apply only to matching canonical models, non-matching models remain visible and use automatic eligible deployment resolution, explicit advanced `routing.default` still works when present, and missing default routes no longer produce no-effective-route diagnostics.
-- [ ] 12b: Update Herm availability and routing diagnostics so configured provider/model routes filter only matching models; unmatched models fall back to the same automatic eligible deployment set used when no routing policy is configured.
-- [ ] 12c: Update langdag deployment routing so a model with no matching model/provider rule falls back to automatic eligible deployment stages, while preserving explicit `routing.default` behavior for advanced JSON configs.
-- [ ] 12d: Simplify the normal Routing tab to show the empty state `No routing rules. Using default model provider/deployment.`, a concise scoped-rule summary, Add rule and Delete rule actions, and no default-route step. Keep `routing.default` available only through direct JSON editing for advanced use cases.
-- [ ] 12e: Define the guided Add rule flow for provider/model rules: choose scope, choose provider or canonical model, choose primary deployment, choose optional fallback deployment, review, and save to the existing routing schema without exposing the route mini-language.
-- [ ] 12f: Update docs and config help text to state that normal routing rules are scoped by provider/model, non-matching models resolve automatically, and `routing.default` is advanced JSON-only.
+- [x] 12a: Add regression coverage for scoped routing semantics: provider/model rules apply only to matching canonical models, non-matching models remain visible and use automatic eligible deployment resolution, explicit advanced `routing.default` still works when present, and missing default routes no longer produce no-effective-route diagnostics.
+- [x] 12b: Update Herm availability and routing diagnostics so configured provider/model routes filter only matching models; unmatched models fall back to the same automatic eligible deployment set used when no routing policy is configured.
+- [x] 12c: Update langdag deployment routing so a model with no matching model/provider rule falls back to automatic eligible deployment stages, while preserving explicit `routing.default` behavior for advanced JSON configs.
+- [x] 12d: Simplify the normal Routing tab to show the empty state `No routing rules. Using default model provider/deployment.`, a concise scoped-rule summary, Add rule and Delete rule actions, and no default-route step. Keep `routing.default` available only through direct JSON editing for advanced use cases.
+- [x] 12e: Define the guided Add rule flow for provider/model rules: choose scope, choose provider or canonical model, choose primary deployment, choose optional fallback deployment, review, and save to the existing routing schema without exposing the route mini-language.
+- [x] 12f: Update docs and config help text to state that normal routing rules are scoped by provider/model, non-matching models resolve automatically, and `routing.default` is advanced JSON-only.
 
 Phase 12 decision notes:
 
@@ -397,10 +397,11 @@ Phase 12 decision notes:
 
 Phase validation commands:
 
-- Herm routing smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRowsRouting|Routing|DeploymentAware|ConfigModels)' -count=1`
-- Langdag routing smoke: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./internal/provider -run 'TestDeploymentRouter.*Routing|TestDeploymentRouter.*Default|TestDeploymentRouter.*Eligible' -count=1)`
-- Herm full suite: `GOCACHE=/private/tmp/herm-gocache go test ./...`
-- Langdag full suite: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)`
+- Herm routing smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRowsRouting|Routing|DeploymentAware|ConfigModels|Phase12)' -count=1` - pass
+- Langdag routing smoke: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./internal/provider ./internal/api ./internal/cli -run 'TestDeploymentRouter.*Routing|TestDeploymentRouter.*Default|TestDeploymentRouter.*Eligible|TestDeploymentRouterScoped|TestDeploymentRouterExplicit|TestAPIRoutingPolicyPreservesExplicitEmptyDefault|TestConvertRoutingStagesPreservesExplicitEmptyDefault' -count=1)` - pass
+- Herm full suite: `GOCACHE=/private/tmp/herm-gocache go test ./...` - pass
+- Langdag full suite: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass
+- End-of-phase systematic review: 3 xhigh agents reviewed Herm routing/UI, langdag routing, and tests/docs/plan consistency. Findings were addressed before completion: explicit empty default preservation, truthful default-route UI copy, provider-rule candidate filtering, model-scope coverage, model Add rule coverage, and advanced-default documentation labeling.
 
 ---
 

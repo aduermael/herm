@@ -11,18 +11,17 @@ import (
 func TestRoutingSummaryEmptyDefaultProviderModelAndFallbackStages(t *testing.T) {
 	empty := strings.Join(routingSummaryRows(nil), "\n")
 	expectRowsContainAll(t, empty,
-		"Routing is global.",
-		"No routing policy is configured. Herm uses eligible configured deployments automatically.",
+		"Routing rules are global and scoped to a provider or model.",
+		"Unmatched models use the default model provider/deployment automatically.",
+		"No routing rules. Using default model provider/deployment.",
 	)
 
 	app := phase9RoutingApp()
 	rows := strings.Join(app.buildConfigRows(), "\n")
 	expectRowsContainAll(t, rows,
-		"Model routes override provider routes; provider routes override the default route.",
-		"Overrides do not cascade to default.",
-		"Default: stage 1 tries openai-direct (weight 70) and openrouter (weight 30), retries 2; stage 2 tries openrouter (weight 100), retries 1.",
-		"Provider openai: stage 1 tries openai-direct (weight 100), retries 1.",
-		"Model openai/gpt-4.1-2025-04-14: stage 1 tries openrouter (weight 100), retries 1.",
+		"Advanced JSON default route is configured.",
+		"Provider openai: primary openai-direct (weight 100), retries 1.",
+		"Model openai/gpt-4.1-2025-04-14: primary openrouter (weight 100), retries 1.",
 	)
 }
 
@@ -41,12 +40,13 @@ func TestRoutingSummaryDisplaysRelativeWeights(t *testing.T) {
 
 func TestBuildConfigRowsRoutingRemovesPrimaryRouteControls(t *testing.T) {
 	rows := strings.Join(phase9RoutingApp().buildConfigRows(), "\n")
-	expectRowsContainAll(t, rows, "routing JSON", "Ctrl+E=edit global JSON")
+	expectRowsContainAll(t, rows, "Add rule", "Delete rule", "Ctrl+E=edit global JSON")
 	expectRowsNotContainAny(t, rows,
 		"Route syntax:",
 		"Default Route:",
 		"OpenAI Route:",
 		"Model Route ",
+		"routing JSON",
 	)
 }
 

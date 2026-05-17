@@ -61,6 +61,8 @@ Herm stores model choices as canonical IDs like `openai/gpt-4.1-2025-04-14`.
 Langdag resolves those IDs through your configured deployments and routing
 policy at request time, so newly published catalog models can appear without a
 new herm build when they use an already-supported API.
+Routing rules are scoped provider/model overrides; models that do not match a
+rule keep using automatic deployment selection.
 
 ## Roadmap
 

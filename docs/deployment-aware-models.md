@@ -71,9 +71,11 @@ Environment variables remain fallback input when config fields are empty:
 
 Routing supports `routing.default`, `routing.providers[provider_id]`, and
 `routing.models[canonical_model_id]`. Exact model routes override provider
-routes, provider routes override the default route, and overrides are
-authoritative. If a model or provider route contains only one stage, Herm and
-langdag do not append fallback stages from the default route.
+routes for matching models. Provider and model rules are scoped: non-matching
+models keep using automatic eligible deployment resolution unless an advanced
+`routing.default` route is explicitly present in JSON. A matching model or
+provider rule is authoritative. If it contains only one stage, Herm and langdag
+do not append fallback stages from `routing.default`.
 
 Provider route keys use canonical catalog provider IDs: `anthropic`, `openai`,
 `google`, `xai`, `z-ai`, `openrouter`, and `ollama`. Legacy Herm names
@@ -86,7 +88,13 @@ another deployment. Model-specific routes are also validated against catalog
 offerings so an ineligible deployment, such as an Anthropic deployment for an
 OpenAI canonical model, is reported before routing.
 
-Example:
+The normal Herm Routing tab manages only scoped provider/model rules. It shows
+`No routing rules. Using default model provider/deployment.` when no scoped
+rules exist, and it offers guided Add rule and Delete rule actions. Edit
+`routing.default` directly in the global JSON config only when you deliberately
+want to replace automatic deployment selection for every unmatched model.
+
+Advanced JSON example with an explicit global default route:
 
 ```json
 {

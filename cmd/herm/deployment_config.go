@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -25,6 +26,20 @@ type RoutingPolicy struct {
 	Default   []RoutingStage            `json:"default,omitempty"`
 	Providers map[string][]RoutingStage `json:"providers,omitempty"`
 	Models    map[string][]RoutingStage `json:"models,omitempty"`
+}
+
+func (r RoutingPolicy) MarshalJSON() ([]byte, error) {
+	out := map[string]any{}
+	if r.Default != nil {
+		out["default"] = r.Default
+	}
+	if len(r.Providers) > 0 {
+		out["providers"] = r.Providers
+	}
+	if len(r.Models) > 0 {
+		out["models"] = r.Models
+	}
+	return json.Marshal(out)
 }
 
 type RoutingStage struct {
@@ -296,7 +311,7 @@ func cloneRoutingPolicy(policy *RoutingPolicy) *RoutingPolicy {
 	for modelID, stages := range policy.Models {
 		clone.Models[modelID] = cloneRoutingStages(stages)
 	}
-	if len(clone.Default) == 0 {
+	if policy.Default == nil {
 		clone.Default = nil
 	}
 	if len(clone.Providers) == 0 {
@@ -305,14 +320,14 @@ func cloneRoutingPolicy(policy *RoutingPolicy) *RoutingPolicy {
 	if len(clone.Models) == 0 {
 		clone.Models = nil
 	}
-	if len(clone.Default) == 0 && len(clone.Providers) == 0 && len(clone.Models) == 0 {
+	if clone.Default == nil && len(clone.Providers) == 0 && len(clone.Models) == 0 {
 		return nil
 	}
 	return clone
 }
 
 func cloneRoutingStages(stages []RoutingStage) []RoutingStage {
-	if len(stages) == 0 {
+	if stages == nil {
 		return nil
 	}
 	clone := make([]RoutingStage, len(stages))

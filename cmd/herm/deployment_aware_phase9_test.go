@@ -14,19 +14,23 @@ func TestBuildConfigRowsRoutingReadOnlyPreviewContract(t *testing.T) {
 	rows := strings.Join(app.buildConfigRows(), "\n")
 
 	expectRowsContainAll(t, rows,
-		"Routing is global",
-		"Model routes override provider routes; provider routes override the default route.",
-		"Default: stage 1 tries openai-direct (weight 70) and openrouter (weight 30), retries 2; stage 2 tries openrouter (weight 100), retries 1.",
-		"routing JSON",
-		`"default": [`,
-		`"providers": {`,
-		`"models": {`,
+		"Routing rules are global and scoped to a provider or model.",
+		"Unmatched models use the advanced JSON default route.",
+		"Advanced JSON default route is configured.",
+		"Provider openai: primary openai-direct",
+		"Model openai/gpt-4.1-2025-04-14: primary openrouter",
+		"Add rule",
+		"Delete rule",
 		"Ctrl+E=edit global JSON",
 	)
 	expectRowsNotContainAny(t, rows,
 		"Route syntax:",
 		"Default Route:",
 		"OpenAI Route:",
+		"routing JSON",
+		`"default": [`,
+		`"providers": {`,
+		`"models": {`,
 		"sk-openai-secret",
 		"api_key",
 		`"active_model"`,
@@ -56,10 +60,11 @@ func TestRoutingJSONPreviewTruncatesLongPolicies(t *testing.T) {
 	rows := strings.Join(app.buildConfigRows(), "\n")
 
 	expectRowsContainAll(t, rows,
-		"routing JSON",
-		"...",
-		"more routing JSON lines",
+		"Model anthropic/claude-opus-4-6: primary openrouter",
+		"Model openai/gpt-4.1-2025-04-14: primary openrouter",
+		"more routing diagnostics",
 	)
+	expectRowsNotContainAny(t, rows, "more routing JSON lines")
 }
 
 func TestRoutingAdvancedJSONEditKeyIsOnlyRoutingEditEntry(t *testing.T) {
