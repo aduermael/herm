@@ -2,7 +2,7 @@
 
 **Goal:** Separate model identity, API protocol, provider ownership, and deployment/hosting so Herm can support new models served through already-supported APIs without shipping a new app build, while keeping pricing and cost tracking accurate when the same canonical model is served through different deployments.
 
-**Readiness status:** V1 rollout completed through Phase 8. This plan is reopened for post-v1 feedback hardening in Phases 9-11; preserve Phases 0-8 as completed historical work. The original implementation did not need to preserve old langdag public APIs for external consumers; Herm is the only app consumer in this repo. Data compatibility for existing Herm configs, model catalog caches, and conversation DBs remains required.
+**Readiness status:** V1 rollout completed through Phase 8. This plan is reopened for post-v1 feedback hardening in Phases 9-12; preserve Phases 0-8 as completed historical work. Phase 12 supersedes the Phase 10 JSON-first routing UX contract with scoped routing overrides and a simpler normal Routing tab. The original implementation did not need to preserve old langdag public APIs for external consumers; Herm is the only app consumer in this repo. Data compatibility for existing Herm configs, model catalog caches, and conversation DBs remains required.
 
 **Execution note:** This plan is expected to change both Herm and the `external/langdag` submodule. Langdag changes should be made on the counterpart submodule branch `aduermael/deployment-provider-api-model`, committed inside `external/langdag`, and then recorded in Herm by updating the parent repo gitlink. Phase commits in Herm should include the relevant Herm changes, plan updates, and the updated langdag submodule pointer.
 
@@ -46,7 +46,7 @@ Langdag already has provider variants for direct Anthropic, Anthropic Vertex, An
 - Users target canonical models. Langdag resolves a canonical model to an eligible deployment/native model using configured deployment credentials, deployment-scoped mappings, routing policy, retry, fallback, and capability requirements.
 - Herm keeps user-facing `active_model` and `exploration_model`, but they store canonical model IDs going forward. Old native model IDs are migrated deterministically when possible.
 - Deployment credentials, deployment-scoped `model_mappings`, and routing policy are global-only in v1. Project config can override active/exploration canonical models and non-secret behavior only. Project-scoped routing is out of scope.
-- Routing supports `routing.default`, `routing.providers[provider_id]`, and `routing.models[canonical_model_id]`. Exact model routes override provider routes, provider routes override default routes, and overrides are authoritative. If an override omits fallback stages, langdag does not cascade to default.
+- Normal routing rules are scoped overrides. `routing.models[canonical_model_id]` applies only to matching canonical models, `routing.providers[provider_id]` applies only to matching model-owner providers, and non-matching models use automatic eligible deployment resolution as if no routing rule existed. `routing.default` remains an advanced JSON-only override for users who deliberately want to replace the automatic baseline, but it is not part of the normal Routing tab flow.
 - Routing stages are ordered. Each stage has weighted deployment choices and a retry count. Deployments that cannot serve the selected canonical model are skipped, so an OpenRouter-only model can jump directly to an eligible OpenRouter stage.
 - Automatic fallback only happens before any output is streamed/saved. If partial stream output has already been emitted, v1 surfaces the error instead of silently switching deployments.
 - Model picker remains canonical-model centric with one row per canonical model. Deployment details are hidden by default and available as diagnostics. Price display shows an exact price, a route-dependent range, `unknown`, or `partial`.
@@ -219,7 +219,7 @@ If an API returns exact per-response billable cost, store it alongside the usage
 - Existing configs and conversations continue to load, with deterministic migration/fallback behavior for ambiguous old model IDs.
 - Network failures fall back to cached or embedded catalog data without blocking startup.
 - Tests prove direct/Bedrock/Vertex/Azure/OpenRouter/Ollama ambiguity is handled explicitly.
-- Routing can express default, provider-level, and model-level policies with ordered fallback stages, weighted deployment choice within a stage, and retry counts.
+- Routing can express provider-level and model-level scoped policies with ordered fallback stages, weighted deployment choice within a stage, and retry counts, while non-matching models continue to use automatic eligible deployment resolution. Advanced JSON config can still express `routing.default` for users who deliberately want a global baseline override.
 - Live session costs are computed from actual response usage/cost metadata and deployment-specific pricing rules, while the model list remains a simple comparison view.
 
 ---
@@ -379,6 +379,28 @@ Phase validation commands:
 - Herm routing/project regression smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRows|Routing|ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAware|Phase11)' -count=1` - pass
 - Herm full suite: `GOCACHE=/private/tmp/herm-gocache go test ./...` - pass
 - Langdag regression check: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass
+
+## Phase 12: Make routing overrides scoped and simplify the normal UI
+- [ ] 12a: Add regression coverage for scoped routing semantics: provider/model rules apply only to matching canonical models, non-matching models remain visible and use automatic eligible deployment resolution, explicit advanced `routing.default` still works when present, and missing default routes no longer produce no-effective-route diagnostics.
+- [ ] 12b: Update Herm availability and routing diagnostics so configured provider/model routes filter only matching models; unmatched models fall back to the same automatic eligible deployment set used when no routing policy is configured.
+- [ ] 12c: Update langdag deployment routing so a model with no matching model/provider rule falls back to automatic eligible deployment stages, while preserving explicit `routing.default` behavior for advanced JSON configs.
+- [ ] 12d: Simplify the normal Routing tab to show the empty state `No routing rules. Using default model provider/deployment.`, a concise scoped-rule summary, Add rule and Delete rule actions, and no default-route step. Keep `routing.default` available only through direct JSON editing for advanced use cases.
+- [ ] 12e: Define the guided Add rule flow for provider/model rules: choose scope, choose provider or canonical model, choose primary deployment, choose optional fallback deployment, review, and save to the existing routing schema without exposing the route mini-language.
+- [ ] 12f: Update docs and config help text to state that normal routing rules are scoped by provider/model, non-matching models resolve automatically, and `routing.default` is advanced JSON-only.
+
+Phase 12 decision notes:
+
+- Scoped overrides are the product contract: routing should affect a model only when that model matches a configured model or provider rule.
+- The normal Routing tab should not require or teach a default route. Automatic eligible deployment resolution is the default behavior.
+- `routing.default` can remain in the JSON schema for advanced users who deliberately edit config directly, but it is not a backward-compatibility constraint for the normal UX.
+- A matching scoped rule remains authoritative for its matching model/provider scope. If it cannot serve the selected model, surface diagnostics clearly rather than silently routing around the rule; unrelated models must still be callable through automatic deployment resolution.
+
+Phase validation commands:
+
+- Herm routing smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRowsRouting|Routing|DeploymentAware|ConfigModels)' -count=1`
+- Langdag routing smoke: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./internal/provider -run 'TestDeploymentRouter.*Routing|TestDeploymentRouter.*Default|TestDeploymentRouter.*Eligible' -count=1)`
+- Herm full suite: `GOCACHE=/private/tmp/herm-gocache go test ./...`
+- Langdag full suite: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)`
 
 ---
 
