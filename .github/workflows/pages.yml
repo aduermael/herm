@@ -29,10 +29,28 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Inject version
+      - name: Resolve released version
+        id: version
+        shell: bash
         run: |
-          VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "latest")
-          sed -i "s/__VERSION__/$VERSION/g" docs/index.html
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME:-}" == v* ]]; then
+            VERSION="$GITHUB_REF_NAME"
+          else
+            git fetch --force --tags origin
+            VERSION="$(git tag --list 'v*' --sort=-version:refname | sed -n '1p')"
+            if [[ -z "$VERSION" ]]; then
+              VERSION="latest"
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved website version: $VERSION"
+
+      - name: Inject version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sed -i "s|__VERSION__|$VERSION|g" docs/index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
