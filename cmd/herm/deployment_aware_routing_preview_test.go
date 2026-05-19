@@ -10,19 +10,19 @@ import (
 )
 
 func TestBuildConfigRowsRoutingReadOnlyPreviewContract(t *testing.T) {
-	app := phase9RoutingApp()
+	app := routingPreviewApp()
 
 	rows := strings.Join(app.buildConfigRows(), "\n")
 
 	expectRowsContainAll(t, rows,
-		"Routing rules are global and scoped to a provider or model.",
-		"Unmatched models use the advanced JSON default route.",
-		"Advanced JSON default route is configured.",
+		"Set custom routing, per provider or model (advanced).",
 		"Provider openai: primary openai-direct",
 		"Model openai/gpt-4.1-2025-04-14: primary openrouter",
 		"Add rule",
 	)
 	expectRowsNotContainAny(t, rows,
+		"Unmatched models use the advanced JSON default route.",
+		"Advanced JSON default route is configured.",
 		"Delete rule",
 		"A=add rule",
 		"D=delete rule",
@@ -42,7 +42,7 @@ func TestBuildConfigRowsRoutingReadOnlyPreviewContract(t *testing.T) {
 }
 
 func TestRoutingJSONPreviewTruncatesLongPolicies(t *testing.T) {
-	app := phase9RoutingApp()
+	app := routingPreviewApp()
 	app.cfgDraft.Routing.Models = map[string][]RoutingStage{}
 	for _, modelID := range []string{
 		"openai/gpt-4.1-2025-04-14",
@@ -71,7 +71,7 @@ func TestRoutingJSONPreviewTruncatesLongPolicies(t *testing.T) {
 }
 
 func TestRoutingTabFieldsExposeSelectableActions(t *testing.T) {
-	app := phase9RoutingApp()
+	app := routingPreviewApp()
 
 	fields := app.routingTabFields()
 	got := make([]string, 0, len(fields))
@@ -105,14 +105,14 @@ func TestResolveActiveModelProjectBareOverrideBeatsGlobalAndSmartDefault(t *test
 	repoRoot := t.TempDir()
 	writeRawProjectConfig(t, repoRoot, `{"active_model":"claude-opus-4-6"}`)
 
-	global := phase9AnthropicGlobalConfig()
+	global := anthropicDeploymentGlobalConfig()
 	global.ActiveModel = "anthropic/claude-sonnet-4-6"
 	effective := mergeConfigs(mergeConfigsOptions{global: global, project: loadProjectConfig(repoRoot)})
 
 	if effective.ActiveModel != "anthropic/claude-opus-4-6" {
 		t.Fatalf("merged ActiveModel = %q, want canonical project override anthropic/claude-opus-4-6", effective.ActiveModel)
 	}
-	if got := effective.resolveActiveModel(phase9AnthropicModels()); got != "anthropic/claude-opus-4-6" {
+	if got := effective.resolveActiveModel(anthropicDeploymentModels()); got != "anthropic/claude-opus-4-6" {
 		t.Fatalf("resolveActiveModel = %q, want project override anthropic/claude-opus-4-6", got)
 	}
 }
@@ -122,8 +122,8 @@ func TestStartAgentStartupAndRuntimeUseProjectBareCanonicalModel(t *testing.T) {
 	writeRawProjectConfig(t, repoRoot, `{"active_model":"claude-opus-4-6","exploration_model":"claude-haiku-4-5"}`)
 
 	app := &App{
-		globalConfig:  phase9AnthropicGlobalConfig(),
-		models:        phase9AnthropicModels(),
+		globalConfig:  anthropicDeploymentGlobalConfig(),
+		models:        anthropicDeploymentModels(),
 		configReady:   true,
 		langdagClient: newTestClient("ok"),
 		resultCh:      make(chan any, 64),
@@ -177,9 +177,9 @@ func TestStartAgentStartupAndRuntimeUseProjectBareCanonicalModel(t *testing.T) {
 	}
 }
 
-func phase9RoutingApp() *App {
+func routingPreviewApp() *App {
 	return &App{
-		cfgTab: 1,
+		cfgTab: cfgTabRouting,
 		cfgDraft: Config{
 			ActiveModel: "openai/gpt-4.1-2025-04-14",
 			Deployments: map[string]DeploymentConfig{
@@ -227,7 +227,7 @@ func phase9RoutingApp() *App {
 	}
 }
 
-func phase9AnthropicGlobalConfig() Config {
+func anthropicDeploymentGlobalConfig() Config {
 	return Config{
 		Deployments: map[string]DeploymentConfig{
 			"anthropic-direct": {APIKey: "sk-ant"},
@@ -237,15 +237,15 @@ func phase9AnthropicGlobalConfig() Config {
 	}
 }
 
-func phase9AnthropicModels() []ModelDef {
+func anthropicDeploymentModels() []ModelDef {
 	return []ModelDef{
-		phase9AnthropicModel("anthropic/claude-opus-4-6", "claude-opus-4-6"),
-		phase9AnthropicModel("anthropic/claude-sonnet-4-6", "claude-sonnet-4-6"),
-		phase9AnthropicModel("anthropic/claude-haiku-4-5", "claude-haiku-4-5"),
+		anthropicDeploymentModel("anthropic/claude-opus-4-6", "claude-opus-4-6"),
+		anthropicDeploymentModel("anthropic/claude-sonnet-4-6", "claude-sonnet-4-6"),
+		anthropicDeploymentModel("anthropic/claude-haiku-4-5", "claude-haiku-4-5"),
 	}
 }
 
-func phase9AnthropicModel(canonicalID, nativeID string) ModelDef {
+func anthropicDeploymentModel(canonicalID, nativeID string) ModelDef {
 	return ModelDef{
 		Provider:       ProviderAnthropic,
 		OwnerProvider:  ProviderAnthropic,
@@ -280,8 +280,9 @@ func chatMessageContents(messages []chatMessage) []string {
 
 func expectRowsContainAll(t *testing.T, rows string, needles ...string) {
 	t.Helper()
+	plainRows := ansiEscRe.ReplaceAllString(rows, "")
 	for _, needle := range needles {
-		if !strings.Contains(rows, needle) {
+		if !strings.Contains(rows, needle) && !strings.Contains(plainRows, needle) {
 			t.Errorf("expected rows to contain %q:\n%s", needle, rows)
 		}
 	}
@@ -289,8 +290,9 @@ func expectRowsContainAll(t *testing.T, rows string, needles ...string) {
 
 func expectRowsNotContainAny(t *testing.T, rows string, needles ...string) {
 	t.Helper()
+	plainRows := ansiEscRe.ReplaceAllString(rows, "")
 	for _, needle := range needles {
-		if strings.Contains(rows, needle) {
+		if strings.Contains(rows, needle) || strings.Contains(plainRows, needle) {
 			t.Errorf("expected rows not to contain %q:\n%s", needle, rows)
 		}
 	}

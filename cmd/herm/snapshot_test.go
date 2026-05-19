@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// --- Phase 4: fetchProjectSnapshot tests ---
+// --- Project snapshot fetch tests ---
 
 func TestFetchProjectSnapshot_NormalRepo(t *testing.T) {
 	tmp := t.TempDir()
@@ -144,7 +144,7 @@ func TestFetchProjectSnapshot_SparseDir(t *testing.T) {
 	t.Logf("TopLevel output:\n%s", snap.TopLevel)
 }
 
-// --- Phase 4b: snapshot injection in system prompt ---
+// --- Snapshot injection in system prompt ---
 
 func TestBuildSystemPromptWithSnapshot(t *testing.T) {
 	snap := &projectSnapshot{
@@ -203,7 +203,7 @@ func TestBuildSystemPromptCleanRepo(t *testing.T) {
 	}
 }
 
-// --- Phase 4c: sub-agent receives snapshot ---
+// --- Sub-agent snapshot propagation ---
 
 func TestBuildSubAgentSystemPromptWithSnapshot(t *testing.T) {
 	snap := &projectSnapshot{
@@ -235,7 +235,7 @@ func TestBuildSubAgentSystemPromptWithoutSnapshot(t *testing.T) {
 	}
 }
 
-// --- Phase 10: buildProjectTree tests ---
+// --- Project tree build tests ---
 
 func TestBuildProjectTree_TwoLevel(t *testing.T) {
 	tmp := t.TempDir()
@@ -349,7 +349,7 @@ func TestBuildProjectTree_HiddenFilesExcluded(t *testing.T) {
 	}
 }
 
-// --- Phase 5: snapshot caching and explore-mode context stripping ---
+// --- Snapshot caching and explore-mode context stripping ---
 
 func TestCachedSnapshot_ReusedWithinTTL(t *testing.T) {
 	tmp := t.TempDir()

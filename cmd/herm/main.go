@@ -181,7 +181,7 @@ type App struct {
 	// Periodic commit info refresh
 	commitInfoTicker *time.Ticker
 
-	// Menu state (for inline menus below input - Phase 3)
+	// Menu state(for inline menus below input)
 	menuLines        []string
 	menuHeader       string // optional header row above scrollable items
 	menuCursor       int
@@ -197,7 +197,7 @@ type App struct {
 	cfgActive        bool
 	cfgTab           int
 	cfgCursor        int
-	cfgTabCursor     [4]int // remembered cursor per config tab
+	cfgTabCursor     [cfgTabCount]int // remembered cursor per config tab
 	cfgEditing       bool
 	cfgEditBuf       []rune
 	cfgEditCursor    int

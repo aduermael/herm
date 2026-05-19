@@ -81,7 +81,7 @@ func (p *mockProvider) Stream(_ context.Context, req *types.CompletionRequest) (
 	return ch, nil
 }
 
-func (p *mockProvider) Name() string          { return "mock" }
+func (p *mockProvider) Name() string              { return "mock" }
 func (p *mockProvider) Models() []types.ModelInfo { return nil }
 
 // --- mock storage ---
@@ -760,7 +760,7 @@ func TestSummarizeOutput(t *testing.T) {
 	}
 }
 
-// --- Phase 2 output file tests ---
+// --- Output file tests ---
 
 func TestSubAgentOutputFileWritten(t *testing.T) {
 	client := newTestClient("Full sub-agent output for file test")
@@ -1138,7 +1138,7 @@ func extractOutputPath(t *testing.T, result string) string {
 	return rest[:end]
 }
 
-// --- Phase 5: Compact result header tests ---
+// --- Compact result header tests ---
 
 func TestSubAgentResultOmitsTokenUsage(t *testing.T) {
 	// Token counts are tracked via EventUsage but omitted from the result header
@@ -1160,7 +1160,7 @@ func TestSubAgentResultOmitsTokenUsage(t *testing.T) {
 	}
 }
 
-// --- Phase 4: Model-based summarization tests ---
+// --- Model-based summarization tests ---
 
 func TestSummarizeWithModelShortOutput(t *testing.T) {
 	// Short output (under 2KB) should be returned as-is without calling the model.
@@ -1267,7 +1267,7 @@ func TestSummarizeWithModelFallbackOnShortOutput(t *testing.T) {
 	}
 }
 
-// --- Phase 4 continued: Output thresholds, structured format, compact header ---
+// --- Output thresholds, structured format, compact header ---
 
 func TestOutputUnder2KBPassesThrough(t *testing.T) {
 	// Outputs under subAgentSummaryBytes (2KB) must pass through verbatim
@@ -1354,7 +1354,7 @@ func TestCompactResultHeaderWithSummaryTruncated(t *testing.T) {
 	}
 }
 
-// --- Phase 5: Graceful sub-agent error reporting tests ---
+// --- Graceful sub-agent error reporting tests ---
 
 func TestSubAgentResultIncludesTurnCount(t *testing.T) {
 	client := newTestClient("turn count output")
@@ -1438,7 +1438,7 @@ func TestFormatSubAgentResultNoOutputNoErrors(t *testing.T) {
 	}
 }
 
-// --- Phase 1: Mode validation and model selection tests ---
+// --- Mode validation and model selection tests ---
 
 func TestSubAgentToolInvalidMode(t *testing.T) {
 	client := newTestClient("ok")
@@ -1498,7 +1498,7 @@ func TestSubAgentToolGeneralModeUsesMainModel(t *testing.T) {
 	}
 }
 
-// --- Phase 2: Turn counting tests ---
+// --- Turn counting tests ---
 
 func TestSubAgentToolBatchedToolCallsCountAsOneTurn(t *testing.T) {
 	// A single LLM response with 3 tool calls should count as 1 turn, not 3.
@@ -1580,7 +1580,7 @@ func TestSubAgentToolMultipleResponsesCountSeparately(t *testing.T) {
 	}
 }
 
-// --- Phase 4: Sub-agent done timeout tests ---
+// --- Sub-agent done timeout tests ---
 
 func TestSubAgentDoneTimeoutDefault(t *testing.T) {
 	// Verify NewSubAgentTool sets the doneTimeout to the default constant.
@@ -1661,7 +1661,7 @@ func TestSubAgentDoneTimeoutDoesNotHang(t *testing.T) {
 	}
 }
 
-// --- Phase 5, Task 5a: Sub-agent output token overflow ---
+// --- Sub-agent output token overflow ---
 
 // firstFreeBlockingTool returns immediately for the first N calls, then blocks
 // until released or context canceled. This creates a deterministic synchronization
@@ -1671,8 +1671,8 @@ type firstFreeBlockingTool struct {
 	name    string
 	mu      sync.Mutex
 	count   int
-	free    int            // first N calls return immediately
-	release chan struct{}  // close to release blocked calls
+	free    int           // first N calls return immediately
+	release chan struct{} // close to release blocked calls
 }
 
 func (ft *firstFreeBlockingTool) Definition() types.ToolDefinition {
@@ -1698,7 +1698,7 @@ func (ft *firstFreeBlockingTool) Execute(ctx context.Context, _ json.RawMessage)
 }
 
 func (ft *firstFreeBlockingTool) RequiresApproval(_ json.RawMessage) bool { return false }
-func (ft *firstFreeBlockingTool) HostTool() bool                         { return false }
+func (ft *firstFreeBlockingTool) HostTool() bool                          { return false }
 
 func TestSubAgentMaxTurnsReached(t *testing.T) {
 	// When a sub-agent exceeds maxTurns, the two-stage enforcement kicks in:
@@ -1827,7 +1827,7 @@ func TestSubAgentMaxTurnsPartialOutputPreserved(t *testing.T) {
 	}
 }
 
-// --- Phase 5, Task 5b: Sub-agent LLM error propagation ---
+// --- Sub-agent LLM error propagation ---
 
 func TestSubAgentPermanentErrorPropagation(t *testing.T) {
 	// When the sub-agent's provider returns a non-retryable error (401),
@@ -1978,7 +1978,7 @@ func TestSubAgentOutputTruncationClarity(t *testing.T) {
 	}
 }
 
-// --- Phase 5, Task 5c: Sub-agent stream interruption ---
+// --- Sub-agent stream interruption ---
 
 // stallingStreamProvider sends partial text then stalls, simulating a provider
 // whose stream stops mid-response (e.g., network partition, server crash).
@@ -2005,7 +2005,7 @@ func (p *stallingStreamProvider) Stream(ctx context.Context, _ *types.Completion
 	return ch, nil
 }
 
-func (p *stallingStreamProvider) Name() string             { return "mock" }
+func (p *stallingStreamProvider) Name() string              { return "mock" }
 func (p *stallingStreamProvider) Models() []types.ModelInfo { return nil }
 
 func TestSubAgentStreamStallTimeout(t *testing.T) {
@@ -2037,7 +2037,7 @@ func TestSubAgentStreamStallTimeout(t *testing.T) {
 	}
 }
 
-// --- Phase 5, Task 5d: Background agent error surfacing ---
+// --- Background agent error surfacing ---
 
 func TestSubAgentBackgroundFatalErrorSurfacing(t *testing.T) {
 	// When a background sub-agent encounters a fatal error (401), the error
@@ -2166,7 +2166,7 @@ func TestSubAgentBackgroundCompletionInjection(t *testing.T) {
 	}
 }
 
-// --- Phase 5, Task 5e: Concurrent sub-agent race conditions ---
+// --- Concurrent sub-agent race conditions ---
 
 func TestSubAgentConcurrentForegroundRace(t *testing.T) {
 	// Spawn 5 foreground sub-agents concurrently from the same SubAgentTool.
@@ -2621,8 +2621,8 @@ func TestExplorePromptContainsExplorationStrategy(t *testing.T) {
 
 // chunkyProvider streams text as many small chunks to test delta batching.
 type chunkyProvider struct {
-	chunks   int
-	model    string
+	chunks int
+	model  string
 }
 
 func (p *chunkyProvider) Complete(_ context.Context, _ *types.CompletionRequest) (*types.CompletionResponse, error) {
@@ -2657,7 +2657,7 @@ func (p *chunkyProvider) Stream(_ context.Context, req *types.CompletionRequest)
 	return ch, nil
 }
 
-func (p *chunkyProvider) Name() string             { return "chunky" }
+func (p *chunkyProvider) Name() string              { return "chunky" }
 func (p *chunkyProvider) Models() []types.ModelInfo { return nil }
 
 func TestDeltaBatchingReducesEvents(t *testing.T) {
@@ -2795,7 +2795,7 @@ func TestForwardBlockingWithTimeout(t *testing.T) {
 	})
 }
 
-// --- Phase 2 (budget-consciousness): Soft wrap-up before hard kill ---
+// --- Budget-consciousness: soft wrap-up before hard kill ---
 
 func TestSubAgentSynthesisTurnOnExceedMaxTurns(t *testing.T) {
 	// When a sub-agent exceeds maxTurns while still requesting tools, the
@@ -3053,7 +3053,7 @@ func TestSubAgentTwoStageErrorMessage(t *testing.T) {
 	}
 }
 
-// --- Phase 6: Integration tests — budget-aware sub-agent lifecycle ---
+// --- Integration tests: budget-aware sub-agent lifecycle ---
 
 // delayedTool introduces a small delay in Execute so the drain loop goroutine
 // has time to process EventToolCallStart and call SetTurnProgress before the
@@ -3076,7 +3076,7 @@ func (dt *delayedTool) Execute(_ context.Context, _ json.RawMessage) (string, er
 }
 
 func (dt *delayedTool) RequiresApproval(_ json.RawMessage) bool { return false }
-func (dt *delayedTool) HostTool() bool                         { return false }
+func (dt *delayedTool) HostTool() bool                          { return false }
 
 // budgetCapturingProvider captures the CompletionRequest for every call,
 // allowing tests to verify system prompt evolution across turns. It returns
@@ -3149,7 +3149,7 @@ func (p *budgetCapturingProvider) Stream(_ context.Context, req *types.Completio
 	return ch, nil
 }
 
-func (p *budgetCapturingProvider) Name() string             { return "mock" }
+func (p *budgetCapturingProvider) Name() string              { return "mock" }
 func (p *budgetCapturingProvider) Models() []types.ModelInfo { return nil }
 
 func (p *budgetCapturingProvider) getRequests() []*types.CompletionRequest {
@@ -3172,7 +3172,7 @@ func TestIntegrationBudgetAwareSubAgentLifecycle(t *testing.T) {
 	//
 	// Note: langdag's PromptFrom uses the root node's stored system prompt for
 	// follow-up calls, so the budget line doesn't update between LLM calls.
-	// The SetTurnProgress mechanism is validated by unit tests (Phase 1).
+	// The SetTurnProgress mechanism is validated by unit tests (turn-progress unit tests).
 	const maxTurns = 5
 	const toolDelay = 20 * time.Millisecond
 
@@ -3675,7 +3675,7 @@ func TestPromptCachingPreservedAcrossTurns(t *testing.T) {
 	}
 }
 
-// --- Phase 2d: Shared drain loop tests ---
+// --- Shared drain loop tests ---
 
 // TestDrainConsistencyForegroundBackground verifies that the shared drain loop
 // produces equivalent text content and turn counts for foreground and background.

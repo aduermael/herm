@@ -375,8 +375,8 @@ Phase validation commands:
 
 Phase validation commands:
 
-- Herm project config smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAwareCompatibility|Phase8|Phase11)' -count=1` - pass
-- Herm routing/project regression smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRows|Routing|ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAware|Phase11)' -count=1` - pass
+- Herm project config smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAwareCompatibility|HermCatalog|ProjectModel)' -count=1` - pass
+- Herm routing/project regression smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRows|Routing|ProjectConfig|ResolveActiveModel|ModelChange|StartAgent|DeploymentAware|ProjectModel)' -count=1` - pass
 - Herm full suite: `GOCACHE=/private/tmp/herm-gocache go test ./...` - pass
 - Langdag regression check: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass
 
@@ -397,7 +397,7 @@ Phase 12 decision notes:
 
 Phase validation commands:
 
-- Herm routing smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRowsRouting|Routing|DeploymentAware|ConfigModels|Phase12)' -count=1` - pass
+- Herm routing smoke: `GOCACHE=/private/tmp/herm-gocache go test ./cmd/herm -run 'Test(BuildConfigRowsRouting|Routing|DeploymentAware|ConfigModels|ScopedRouting)' -count=1` - pass
 - Langdag routing smoke: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./internal/provider ./internal/api ./internal/cli -run 'TestDeploymentRouter.*Routing|TestDeploymentRouter.*Default|TestDeploymentRouter.*Eligible|TestDeploymentRouterScoped|TestDeploymentRouterExplicit|TestAPIRoutingPolicyPreservesExplicitEmptyDefault|TestConvertRoutingStagesPreservesExplicitEmptyDefault' -count=1)` - pass
 - Herm full suite: `GOCACHE=/private/tmp/herm-gocache go test ./...` - pass
 - Langdag full suite: `(cd external/langdag && GOCACHE=/private/tmp/herm-gocache go test ./...)` - pass

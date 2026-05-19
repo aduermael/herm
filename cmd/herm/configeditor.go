@@ -37,16 +37,32 @@ func (a *App) isOllamaOffline(modelID string) bool {
 
 // ─── Config editor ───
 
-var cfgTabNames = []string{"Deployments", "Routing", "Global", "Project"}
+const (
+	cfgTabDeployments = iota
+	cfgTabGlobal
+	cfgTabProject
+	cfgTabRouting
+	cfgTabCount
+)
+
+var cfgTabNames = []string{
+	cfgTabDeployments: "Deployments",
+	cfgTabGlobal:      "Global",
+	cfgTabProject:     "Project",
+	cfgTabRouting:     "Routing",
+}
 
 type cfgField struct {
 	label      string
+	indent     int
 	get        func(Config) string
 	display    func(Config) string // masked display; nil means use get
 	set        func(*Config, string)
 	toggle     func(*Config)       // if non-nil, Enter toggles instead of opening editor
 	action     func(*App)          // if non-nil, Enter invokes an action instead of editing
 	valueless  bool                // if true, render as a selectable row without ": value"
+	optional   bool                // if true, empty values render as "(optional)"
+	secret     bool                // if true, render displayed values with secret emphasis
 	globalHint func(Config) string // if set, shows "(global: X)" when field value is empty
 	picker     func(*App)          // if non-nil, Enter opens a picker (e.g. model selector) instead of editor
 }
@@ -74,13 +90,13 @@ func (a *App) effectiveProviderForConfig(cfg Config) (provider string, modelID s
 // 1) active model provider, 2) first configured provider, 3) Anthropic.
 func (a *App) preferredAPIKeyCursor(cfg Config) int {
 	if p, _ := a.effectiveProviderForConfig(cfg); p != "" {
-		return apiKeyRowForProvider(p)
+		return apiKeyRowForProviderInFields(apiKeyRowForProviderInFieldsOptions{provider: p, fields: deploymentTabFields(cfg)})
 	}
 	ordered := []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama}
 	configured := cfg.configuredProviders()
 	for _, p := range ordered {
 		if configured[p] {
-			return apiKeyRowForProvider(p)
+			return apiKeyRowForProviderInFields(apiKeyRowForProviderInFieldsOptions{provider: p, fields: deploymentTabFields(cfg)})
 		}
 	}
 	return 0
@@ -88,8 +104,8 @@ func (a *App) preferredAPIKeyCursor(cfg Config) int {
 
 func (a *App) enterConfigMode() {
 	a.cfgActive = true
-	a.cfgTab = 0
-	a.cfgTabCursor = [4]int{a.preferredAPIKeyCursor(a.config), 0, 0, 0}
+	a.cfgTab = cfgTabDeployments
+	a.cfgTabCursor = [cfgTabCount]int{cfgTabDeployments: a.preferredAPIKeyCursor(a.config)}
 	a.cfgCursor = a.cfgTabCursor[a.cfgTab]
 	a.cfgEditing = false
 	a.cfgEditBuf = nil
@@ -312,17 +328,17 @@ func (a *App) doOpenConfigModelPicker(opts doOpenConfigModelPickerOptions) {
 
 func (a *App) cfgCurrentFields() []cfgField {
 	switch a.cfgTab {
-	case 0:
-		return cfgAPIKeyFields
-	case 1:
-		return a.routingTabFields()
-	case 2:
+	case cfgTabDeployments:
+		return deploymentTabFields(a.cfgDraft)
+	case cfgTabGlobal:
 		return a.settingsTabFields()
-	case 3:
+	case cfgTabProject:
 		if a.projectConfigRoot() == "" {
 			return nil
 		}
 		return a.projectTabFields()
+	case cfgTabRouting:
+		return a.routingTabFields()
 	}
 	return nil
 }
@@ -359,14 +375,14 @@ func (a *App) configHelpLine() string {
 	if len(fields) > 0 {
 		parts = append(parts, "↑/↓=select")
 		enterHint := "Enter=edit"
-		if a.cfgTab == 1 {
+		if a.cfgTab == cfgTabRouting {
 			enterHint = "Enter=select"
 		} else if field, ok := a.configSelectedField(); ok && (field.action != nil || field.picker != nil || field.toggle != nil) {
 			enterHint = "Enter=select"
 		}
 		parts = append(parts, enterHint)
 	}
-	if a.cfgTab == 3 && a.projectConfigRoot() != "" {
+	if a.cfgTab == cfgTabProject && a.projectConfigRoot() != "" {
 		if field, ok := a.configSelectedField(); ok && field.set != nil && field.get != nil && field.get(a.cfgDraft) != "" {
 			parts = append(parts, "Backspace=unset")
 		}
@@ -538,11 +554,27 @@ func (a *App) projectTabFields() []cfgField {
 	}
 }
 
+func (a *App) configRowsBeforeFields() int {
+	switch a.cfgTab {
+	case cfgTabProject:
+		if a.projectConfigRoot() != "" {
+			return 1
+		}
+	case cfgTabRouting:
+		return len(a.routingTabReadOnlyRows())
+	}
+	return 0
+}
+
 func (a *App) buildConfigRows() []string {
 	var rows []string
 	configured := a.cfgDraft.configuredProviders()
 	hasProvider := len(configured) > 0
-	isProjectTab := a.cfgTab == 3
+	isProjectTab := a.cfgTab == cfgTabProject
+	projectRoot := ""
+	if isProjectTab {
+		projectRoot = a.projectConfigRoot()
+	}
 
 	// Tab bar
 	var tabParts []string
@@ -555,22 +587,13 @@ func (a *App) buildConfigRows() []string {
 	}
 	rows = append(rows, strings.Join(tabParts, " "))
 
-	if a.cfgTab == 0 {
-		effective := mergeConfigs(mergeConfigsOptions{global: a.cfgDraft, project: a.cfgProjectDraft})
-		provider, modelID := a.effectiveProviderForConfig(effective)
-		if provider == "" {
-			rows = append(rows, "\033[2mEffective provider: (none)\033[0m")
-		} else if modelID != "" {
-			rows = append(rows, fmt.Sprintf("\033[2mEffective provider: %s  (active model: %s)\033[0m", provider, modelID))
-		} else {
-			rows = append(rows, fmt.Sprintf("\033[2mEffective provider: %s\033[0m", provider))
+	if isProjectTab {
+		if projectRoot == "" {
+			rows = append(rows, "\033[2mNo project detected (not in a git repository)\033[0m")
+			rows = append(rows, a.configHelpLine())
+			return rows
 		}
-	}
-	// No-project message for Project tab
-	if a.cfgTab == 3 && a.projectConfigRoot() == "" {
-		rows = append(rows, "\033[2mNo project detected (not in a git repository)\033[0m")
-		rows = append(rows, a.configHelpLine())
-		return rows
+		rows = append(rows, fmt.Sprintf("\033[2mOverriding global config for current project (%s).\033[0m", projectRoot))
 	}
 
 	// When a model picker menu is active, render it inline below the tab bar
@@ -607,25 +630,26 @@ func (a *App) buildConfigRows() []string {
 		return rows
 	}
 
-	if a.cfgTab == 1 {
+	if a.cfgTab == cfgTabRouting {
 		rows = append(rows, a.routingTabReadOnlyRows()...)
 	}
 
 	// Fields
 	fields := a.cfgCurrentFields()
 	for i, f := range fields {
+		label := configFieldLabel(f)
 		if f.valueless {
 			if i == a.cfgCursor {
-				rows = append(rows, fmt.Sprintf("\033[36;1m%s ◆\033[0m", f.label))
+				rows = append(rows, fmt.Sprintf("%s %s", styledConfigFieldLabel(styledConfigFieldLabelOptions{label: label, selected: true}), styledConfigCursor("◆")))
 			} else {
-				rows = append(rows, f.label)
+				rows = append(rows, styledConfigFieldLabel(styledConfigFieldLabelOptions{label: label}))
 			}
 			continue
 		}
 		if a.cfgEditing && i == a.cfgCursor {
 			// Show editable text input with underline
 			editStr := string(a.cfgEditBuf)
-			rows = append(rows, fmt.Sprintf("\033[36;1m%s: \033[4m%s\033[0m \033[36;1m◆\033[0m", f.label, editStr))
+			rows = append(rows, fmt.Sprintf("%s \033[4;1m%s\033[0m %s", styledConfigFieldLabel(styledConfigFieldLabelOptions{label: label + ":", selected: true}), editStr, styledConfigCursor("◆")))
 		} else {
 			val := ""
 			if f.display != nil {
@@ -653,6 +677,8 @@ func (a *App) buildConfigRows() []string {
 			if val == "" {
 				if f.picker != nil && !hasProvider && !isProjectTab {
 					val = "(not set)"
+				} else if f.optional {
+					val = "(optional)"
 				} else if f.globalHint != nil {
 					hint := f.globalHint(a.cfgDraft)
 					if f.picker != nil && !isProjectTab {
@@ -673,15 +699,16 @@ func (a *App) buildConfigRows() []string {
 					val = "(not set)"
 				}
 			}
+			styledValue := styledConfigFieldValue(styledConfigFieldValueOptions{value: val, secret: f.secret})
 			if i == a.cfgCursor {
-				rows = append(rows, fmt.Sprintf("\033[36;1m%s: %s\033[36;1m ◆\033[0m", f.label, val))
+				rows = append(rows, fmt.Sprintf("%s %s %s", styledConfigFieldLabel(styledConfigFieldLabelOptions{label: label + ":", selected: true}), styledValue, styledConfigCursor("◆")))
 			} else {
-				rows = append(rows, fmt.Sprintf("%s: %s", f.label, val))
+				rows = append(rows, fmt.Sprintf("%s %s", styledConfigFieldLabel(styledConfigFieldLabelOptions{label: label + ":"}), styledValue))
 			}
 		}
 	}
 
-	if a.cfgTab == 1 && a.cfgDraft.Routing != nil {
+	if a.cfgTab == cfgTabRouting && a.cfgDraft.Routing != nil {
 		diagnostics := routingDiagnosticsForConfigModels(configModelsOptions{cfg: a.cfgDraft, models: a.models})
 		for i, diagnostic := range diagnostics {
 			if i >= routingDiagnosticsMaxRows {
@@ -757,7 +784,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			a.cfgTabCursor[a.cfgTab] = a.cfgCursor
 			a.cfgTab++
 			if a.cfgTab >= len(cfgTabNames) {
-				a.cfgTab = 0
+				a.cfgTab = cfgTabDeployments
 			}
 			a.cfgCursor = a.cfgTabCursor[a.cfgTab]
 			a.clampConfigCursor()
@@ -783,7 +810,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		}
 
 	case ch == '\r': // Enter - toggle, picker, or start editing current field
-		if a.cfgTab == 3 && a.projectConfigRoot() == "" {
+		if a.cfgTab == cfgTabProject && a.projectConfigRoot() == "" {
 			break // Project tab non-editable without a repo
 		}
 		fields := a.cfgCurrentFields()
@@ -805,7 +832,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		a.renderInput()
 
 	case ch == 127 || ch == 0x08: // Backspace - clear current project field (unset → fall back to global)
-		if a.cfgTab == 3 && a.projectConfigRoot() != "" {
+		if a.cfgTab == cfgTabProject && a.projectConfigRoot() != "" {
 			fields := a.cfgCurrentFields()
 			if len(fields) > 0 && a.cfgCursor < len(fields) {
 				f := fields[a.cfgCursor]
@@ -908,6 +935,7 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 		}
 		a.cfgEditing = false
 		a.cfgEditBuf = nil
+		a.clampConfigCursor()
 		a.renderInput()
 
 	case ch == 127 || ch == 0x08: // Backspace

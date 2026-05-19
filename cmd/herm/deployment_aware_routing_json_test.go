@@ -11,15 +11,12 @@ import (
 func TestRoutingSummaryEmptyDefaultProviderModelAndFallbackStages(t *testing.T) {
 	empty := strings.Join(routingSummaryRows(nil), "\n")
 	expectRowsContainAll(t, empty,
-		"Routing rules are global and scoped to a provider or model.",
-		"Unmatched models use the default model provider/deployment automatically.",
-		"No routing rules. Using default model provider/deployment.",
+		"Set custom routing, per provider or model (advanced).",
 	)
 
-	app := phase9RoutingApp()
+	app := routingPreviewApp()
 	rows := strings.Join(app.buildConfigRows(), "\n")
 	expectRowsContainAll(t, rows,
-		"Advanced JSON default route is configured.",
 		"Provider openai: primary openai-direct (weight 100), retries 1.",
 		"Model openai/gpt-4.1-2025-04-14: primary openrouter (weight 100), retries 1.",
 	)
@@ -39,7 +36,7 @@ func TestRoutingSummaryDisplaysRelativeWeights(t *testing.T) {
 }
 
 func TestBuildConfigRowsRoutingRemovesPrimaryRouteControls(t *testing.T) {
-	rows := strings.Join(phase9RoutingApp().buildConfigRows(), "\n")
+	rows := strings.Join(routingPreviewApp().buildConfigRows(), "\n")
 	expectRowsContainAll(t, rows, "Add rule")
 	expectRowsNotContainAny(t, rows,
 		"Delete rule",
@@ -60,7 +57,7 @@ func TestRoutingJSONPreviewTruncationAndEmptyObject(t *testing.T) {
 		t.Fatalf("empty routing preview = %q, want {}", got)
 	}
 
-	app := phase9RoutingApp()
+	app := routingPreviewApp()
 	app.cfgDraft.Routing.Models = map[string][]RoutingStage{}
 	for _, modelID := range []string{
 		"anthropic/claude-haiku-4-5",
@@ -91,7 +88,7 @@ func TestRoutingJSONPreviewTruncationAndEmptyObject(t *testing.T) {
 
 func TestRoutingDiagnosticsRemainVisibleAndCapped(t *testing.T) {
 	app := &App{
-		cfgTab: 1,
+		cfgTab: cfgTabRouting,
 		cfgDraft: Config{Routing: &RoutingPolicy{Default: []RoutingStage{{
 			Deployments: []DeploymentChoice{
 				{DeploymentID: "not-a-deployment", Weight: 0},
@@ -126,7 +123,7 @@ func TestRoutingEditorReloadsValidGlobalJSON(t *testing.T) {
 	}
 	app := &App{
 		headless:     true,
-		cfgTab:       1,
+		cfgTab:       cfgTabRouting,
 		globalConfig: original,
 		cfgDraft:     original,
 		configJSONEditor: func(path string) error {
@@ -174,7 +171,7 @@ func TestRoutingEditorRefusesUnsavedDrafts(t *testing.T) {
 	called := false
 	app := &App{
 		headless:     true,
-		cfgTab:       1,
+		cfgTab:       cfgTabRouting,
 		globalConfig: saved,
 		cfgDraft:     Config{ActiveModel: "anthropic/claude-haiku-4-5"},
 		configJSONEditor: func(string) error {
@@ -205,7 +202,7 @@ func TestRoutingEditorFailureAndMalformedJSONKeepCurrentDraft(t *testing.T) {
 	}
 	app := &App{
 		headless:         true,
-		cfgTab:           1,
+		cfgTab:           cfgTabRouting,
 		cfgDraft:         original,
 		configJSONEditor: func(string) error { return errEditor },
 		cfgProjectDraft:  ProjectConfig{Personality: "project"},
@@ -233,7 +230,7 @@ func TestRoutingEditorFailureAndMalformedJSONKeepCurrentDraft(t *testing.T) {
 	editorRuns := 0
 	app = &App{
 		headless:     true,
-		cfgTab:       1,
+		cfgTab:       cfgTabRouting,
 		cfgDraft:     original,
 		globalConfig: original,
 		config:       original,

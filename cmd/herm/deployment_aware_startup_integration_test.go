@@ -15,20 +15,20 @@ import (
 	"langdag.com/langdag/types"
 )
 
-func phase8HermCatalog(canonicalID, directNativeID, openRouterNativeID string) *langdag.ModelCatalog {
+func hermDeploymentCatalog(canonicalID, directNativeID, openRouterNativeID string) *langdag.ModelCatalog {
 	catalog := langdag.ReferenceCatalogV1()
 	generatedAt := time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC)
 	catalog.GeneratedAt = generatedAt
 	catalog.StaleAfter = generatedAt.Add(30 * 24 * time.Hour)
-	addPhase8HermCatalogModel(catalog, generatedAt, canonicalID, directNativeID, openRouterNativeID)
+	addHermDeploymentCatalogModel(catalog, generatedAt, canonicalID, directNativeID, openRouterNativeID)
 	return catalog
 }
 
-func addPhase8HermCatalogModel(catalog *langdag.ModelCatalog, generatedAt time.Time, canonicalID, directNativeID, openRouterNativeID string) {
+func addHermDeploymentCatalogModel(catalog *langdag.ModelCatalog, generatedAt time.Time, canonicalID, directNativeID, openRouterNativeID string) {
 	catalog.Models[canonicalID] = &langdag.ModelV1{
 		ID:            canonicalID,
 		ProviderID:    "openai",
-		Name:          "GPT Phase 8 Herm",
+		Name:          "GPT Herm Catalog",
 		ContextWindow: 128000,
 	}
 	catalog.Offerings = append(catalog.Offerings,
@@ -59,7 +59,7 @@ func addPhase8HermCatalogModel(catalog *langdag.ModelCatalog, generatedAt time.T
 	)
 }
 
-func writePhase8HermCatalogCache(t *testing.T, path string, catalog *langdag.ModelCatalog) {
+func writeHermDeploymentCatalogCache(t *testing.T, path string, catalog *langdag.ModelCatalog) {
 	t.Helper()
 	if err := langdag.ValidateCatalogV1(catalog); err != nil {
 		t.Fatalf("test catalog is invalid: %v", err)
@@ -76,7 +76,7 @@ func writePhase8HermCatalogCache(t *testing.T, path string, catalog *langdag.Mod
 	}
 }
 
-func servePhase8HermCatalog(t *testing.T, catalog *langdag.ModelCatalog) *httptest.Server {
+func serveHermDeploymentCatalog(t *testing.T, catalog *langdag.ModelCatalog) *httptest.Server {
 	t.Helper()
 	if err := langdag.ValidateCatalogV1(catalog); err != nil {
 		t.Fatalf("test catalog is invalid: %v", err)
@@ -91,7 +91,7 @@ func servePhase8HermCatalog(t *testing.T, catalog *langdag.ModelCatalog) *httpte
 	}))
 }
 
-func clearPhase8CredentialEnv(t *testing.T) {
+func clearDeploymentCredentialEnv(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
 		"ANTHROPIC_API_KEY",
@@ -114,8 +114,8 @@ func clearPhase8CredentialEnv(t *testing.T) {
 	}
 }
 
-func TestPhase8HermCatalogStartupSourcesIntegration(t *testing.T) {
-	clearPhase8CredentialEnv(t)
+func TestHermCatalogCatalogStartupSourcesIntegration(t *testing.T) {
+	clearDeploymentCredentialEnv(t)
 
 	embedded, err := langdag.LoadModelCatalogWithOptions(langdag.CatalogLoadOptions{
 		CachePath: filepath.Join(t.TempDir(), "missing-catalog.json"),
@@ -133,8 +133,8 @@ func TestPhase8HermCatalogStartupSourcesIntegration(t *testing.T) {
 	}
 
 	cachePath := filepath.Join(t.TempDir(), "model_catalog.json")
-	cachedCatalog := phase8HermCatalog("openai/gpt-phase8-cached", "gpt-phase8-cached", "openai/gpt-phase8-cached")
-	writePhase8HermCatalogCache(t, cachePath, cachedCatalog)
+	cachedCatalog := hermDeploymentCatalog("openai/gpt-cached-catalog", "gpt-cached-catalog", "openai/gpt-cached-catalog")
+	writeHermDeploymentCatalogCache(t, cachePath, cachedCatalog)
 	cached, err := langdag.LoadModelCatalogWithOptions(langdag.CatalogLoadOptions{CachePath: cachePath})
 	if err != nil {
 		t.Fatalf("Load cached catalog: %v", err)
@@ -143,12 +143,12 @@ func TestPhase8HermCatalogStartupSourcesIntegration(t *testing.T) {
 		t.Fatalf("cached source = %q", cached.Source)
 	}
 	app.handleResult(catalogMsg{catalog: cached.Catalog, source: cached.Source, diagnostics: cached.Diagnostics})
-	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-phase8-cached"}) == nil {
+	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-cached-catalog"}) == nil {
 		t.Fatalf("cached catalog model not available after startup handling")
 	}
 
-	remoteCatalog := phase8HermCatalog("openai/gpt-phase8-remote", "gpt-phase8-remote", "openai/gpt-phase8-remote")
-	server := servePhase8HermCatalog(t, remoteCatalog)
+	remoteCatalog := hermDeploymentCatalog("openai/gpt-remote-catalog", "gpt-remote-catalog", "openai/gpt-remote-catalog")
+	server := serveHermDeploymentCatalog(t, remoteCatalog)
 	defer server.Close()
 	refreshed, err := langdag.RefreshModelCatalogCache(context.Background(), langdag.CatalogRefreshOptions{
 		CachePath: cachePath,
@@ -160,25 +160,25 @@ func TestPhase8HermCatalogStartupSourcesIntegration(t *testing.T) {
 		t.Fatalf("RefreshModelCatalogCache: %v", err)
 	}
 	app.handleResult(catalogMsg{catalog: refreshed.Catalog, source: refreshed.Source, diagnostics: refreshed.Diagnostics})
-	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-phase8-remote"}) == nil {
+	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-remote-catalog"}) == nil {
 		t.Fatalf("refreshed remote catalog model not available after startup handling")
 	}
-	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-phase8-cached"}) != nil {
+	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-cached-catalog"}) != nil {
 		t.Fatalf("stale cached model remained after refreshed catalog replacement")
 	}
 }
 
-func TestPhase8HermConfigRoutingHistoryAndSmartDefaultsIntegration(t *testing.T) {
-	clearPhase8CredentialEnv(t)
+func TestHermCatalogConfigRoutingHistoryAndSmartDefaultsIntegration(t *testing.T) {
+	clearDeploymentCredentialEnv(t)
 
-	const canonicalID = "openai/gpt-phase8-herm"
-	const nativeID = "gpt-phase8-herm"
-	const explorationID = "openai/gpt-phase8-herm-mini"
-	catalog := phase8HermCatalog(canonicalID, nativeID, "openai/gpt-phase8-herm")
-	addPhase8HermCatalogModel(catalog, catalog.GeneratedAt, explorationID, "gpt-phase8-herm-mini", "openai/gpt-phase8-herm-mini")
+	const canonicalID = "openai/gpt-herm-catalog"
+	const nativeID = "gpt-herm-catalog"
+	const explorationID = "openai/gpt-herm-catalog-mini"
+	catalog := hermDeploymentCatalog(canonicalID, nativeID, "openai/gpt-herm-catalog")
+	addHermDeploymentCatalogModel(catalog, catalog.GeneratedAt, explorationID, "gpt-herm-catalog-mini", "openai/gpt-herm-catalog-mini")
 	models := modelsFromCatalog(catalog)
 	if findModelByID(findModelByIDOptions{models: models, id: canonicalID}) == nil {
-		t.Fatalf("phase8 model not present in catalog-derived rows")
+		t.Fatalf("catalog model not present in catalog-derived rows")
 	}
 
 	oldDefault := defaultActiveModels[ProviderOpenAI]
@@ -195,10 +195,10 @@ func TestPhase8HermConfigRoutingHistoryAndSmartDefaultsIntegration(t *testing.T)
 		OpenRouterAPIKey: "sk-or",
 	})
 	if active := defaultCfg.resolveActiveModel(models); active != canonicalID {
-		t.Fatalf("smart active default = %q, want canonical phase8 model", active)
+		t.Fatalf("smart active default = %q, want canonical catalog model", active)
 	}
 	if exploration := defaultCfg.resolveExplorationModel(models); exploration != explorationID {
-		t.Fatalf("smart exploration default = %q, want canonical phase8 exploration model", exploration)
+		t.Fatalf("smart exploration default = %q, want canonical exploration catalog model", exploration)
 	}
 	defaultAvailable := defaultCfg.availableModels(models)
 	defaultModel := findModelByID(findModelByIDOptions{models: defaultAvailable, id: canonicalID})

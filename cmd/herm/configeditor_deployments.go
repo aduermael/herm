@@ -3,6 +3,7 @@
 package main
 
 import (
+	"os"
 	"sort"
 	"strings"
 )
@@ -17,25 +18,138 @@ func maskKey(key string) string {
 	return key[:4] + "..." + key[len(key)-4:]
 }
 
-var cfgAPIKeyFields = []cfgField{
-	deploymentTextField(deploymentTextFieldOptions{label: "Anthropic Direct API Key", deploymentID: "anthropic-direct", field: "api_key", secret: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "OpenAI Direct API Key", deploymentID: "openai-direct", field: "api_key", secret: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Grok Direct API Key", deploymentID: "grok-direct", field: "api_key", secret: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "OpenRouter API Key", deploymentID: "openrouter", field: "api_key", secret: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Gemini Direct API Key", deploymentID: "gemini-direct", field: "api_key", secret: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Ollama Base URL", deploymentID: "ollama-local", field: "base_url", normalizeURL: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "OpenAI Direct Base URL", deploymentID: "openai-direct", field: "base_url", normalizeURL: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI API Key", deploymentID: "openai-azure", field: "api_key", secret: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI Endpoint", deploymentID: "openai-azure", field: "endpoint", normalizeURL: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI API Version", deploymentID: "openai-azure", field: "api_version"}),
-	deploymentModelMappingsField(deploymentModelMappingsFieldOptions{label: "Azure Model Mappings", deploymentID: "openai-azure"}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Anthropic Bedrock Region", deploymentID: "anthropic-bedrock", field: "region"}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Anthropic Vertex Project", deploymentID: "anthropic-vertex", field: "project_id"}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Anthropic Vertex Region", deploymentID: "anthropic-vertex", field: "region"}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Gemini Vertex Project", deploymentID: "gemini-vertex", field: "project_id"}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Gemini Vertex Region", deploymentID: "gemini-vertex", field: "region"}),
-	deploymentTextField(deploymentTextFieldOptions{label: "Grok Base URL", deploymentID: "grok-direct", field: "base_url", normalizeURL: true}),
-	deploymentTextField(deploymentTextFieldOptions{label: "OpenRouter Base URL", deploymentID: "openrouter", field: "base_url", normalizeURL: true}),
+var cfgAPIKeyFields = deploymentFieldsFromSpecs(deploymentFieldsFromSpecsOptions{
+	cfg:               Config{},
+	includeContextual: true,
+})
+
+type deploymentFieldVisibility int
+
+const (
+	deploymentFieldAlways deploymentFieldVisibility = iota
+	deploymentFieldOpenAIContext
+	deploymentFieldAzureContext
+	deploymentFieldBedrockContext
+	deploymentFieldGrokContext
+	deploymentFieldOpenRouterContext
+	deploymentFieldVertexContext
+)
+
+type deploymentFieldSpec struct {
+	field      cfgField
+	visibility deploymentFieldVisibility
+}
+
+var cfgAPIKeyFieldSpecs = []deploymentFieldSpec{
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Anthropic API Key", deploymentID: "anthropic-direct", field: "api_key", secret: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenAI API Key", deploymentID: "openai-direct", field: "api_key", secret: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenAI Base URL", deploymentID: "openai-direct", field: "base_url", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldOpenAIContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Grok API Key", deploymentID: "grok-direct", field: "api_key", secret: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Grok Base URL", deploymentID: "grok-direct", field: "base_url", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldGrokContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenRouter API Key", deploymentID: "openrouter", field: "api_key", secret: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenRouter Base URL", deploymentID: "openrouter", field: "base_url", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldOpenRouterContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Gemini API Key", deploymentID: "gemini-direct", field: "api_key", secret: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Ollama Base URL", deploymentID: "ollama-local", field: "base_url", normalizeURL: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI API Key", deploymentID: "openai-azure", field: "api_key", secret: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI Endpoint", deploymentID: "openai-azure", field: "endpoint", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldAzureContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI API Version", deploymentID: "openai-azure", field: "api_version", indent: 1, optional: true}), visibility: deploymentFieldAzureContext},
+	{field: deploymentModelMappingsField(deploymentModelMappingsFieldOptions{label: "Azure Model Mappings", deploymentID: "openai-azure", indent: 1, optional: true}), visibility: deploymentFieldAzureContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Anthropic Bedrock Region", deploymentID: "anthropic-bedrock", field: "region", indent: 1, optional: true}), visibility: deploymentFieldBedrockContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Anthropic Vertex Project", deploymentID: "anthropic-vertex", field: "project_id", indent: 1, optional: true}), visibility: deploymentFieldVertexContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Anthropic Vertex Region", deploymentID: "anthropic-vertex", field: "region", indent: 1, optional: true}), visibility: deploymentFieldVertexContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Gemini Vertex Project", deploymentID: "gemini-vertex", field: "project_id", indent: 1, optional: true}), visibility: deploymentFieldVertexContext},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Gemini Vertex Region", deploymentID: "gemini-vertex", field: "region", indent: 1, optional: true}), visibility: deploymentFieldVertexContext},
+}
+
+// deploymentTabFields returns Deployments tab rows with cloud-only fields shown
+// only when the current config or environment makes that cloud context relevant.
+func deploymentTabFields(cfg Config) []cfgField {
+	return deploymentFieldsFromSpecs(deploymentFieldsFromSpecsOptions{cfg: cfg})
+}
+
+type deploymentFieldsFromSpecsOptions struct {
+	cfg               Config
+	includeContextual bool
+}
+
+func deploymentFieldsFromSpecs(opts deploymentFieldsFromSpecsOptions) []cfgField {
+	fields := make([]cfgField, 0, len(cfgAPIKeyFieldSpecs))
+	for _, spec := range cfgAPIKeyFieldSpecs {
+		if !opts.includeContextual && !deploymentFieldVisible(deploymentFieldVisibleOptions{cfg: opts.cfg, visibility: spec.visibility}) {
+			continue
+		}
+		fields = append(fields, spec.field)
+	}
+	return fields
+}
+
+type deploymentFieldVisibleOptions struct {
+	cfg        Config
+	visibility deploymentFieldVisibility
+}
+
+func deploymentFieldVisible(opts deploymentFieldVisibleOptions) bool {
+	switch opts.visibility {
+	case deploymentFieldOpenAIContext:
+		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "openai-direct"})
+	case deploymentFieldAzureContext:
+		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "openai-azure"})
+	case deploymentFieldBedrockContext:
+		return deploymentBedrockCredentialsAvailable()
+	case deploymentFieldGrokContext:
+		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "grok-direct"})
+	case deploymentFieldOpenRouterContext:
+		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "openrouter"})
+	case deploymentFieldVertexContext:
+		return deploymentVertexCredentialsAvailable()
+	default:
+		return true
+	}
+}
+
+type deploymentAPIKeyConfiguredOptions struct {
+	cfg          Config
+	deploymentID string
+}
+
+func deploymentAPIKeyConfigured(opts deploymentAPIKeyConfiguredOptions) bool {
+	return strings.TrimSpace(opts.cfg.deploymentConfig(opts.deploymentID).APIKey) != ""
+}
+
+func deploymentBedrockCredentialsAvailable() bool {
+	if strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID")) != "" &&
+		strings.TrimSpace(os.Getenv("AWS_SECRET_ACCESS_KEY")) != "" {
+		return true
+	}
+	return anyDeploymentEnvSet(deploymentBedrockCredentialEnv)
+}
+
+var deploymentBedrockCredentialEnv = []string{
+	"AWS_PROFILE",
+	"AWS_SHARED_CREDENTIALS_FILE",
+	"AWS_CONFIG_FILE",
+	"AWS_WEB_IDENTITY_TOKEN_FILE",
+	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+	"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+}
+
+func deploymentVertexCredentialsAvailable() bool {
+	return anyDeploymentEnvSet(deploymentVertexCredentialEnv)
+}
+
+var deploymentVertexCredentialEnv = []string{
+	"GOOGLE_APPLICATION_CREDENTIALS",
+	"CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+	"GOOGLE_OAUTH_ACCESS_TOKEN",
+}
+
+func anyDeploymentEnvSet(names []string) bool {
+	for _, name := range names {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // deploymentTextFieldOptions is the parameter bundle for deploymentTextField.
@@ -45,6 +159,8 @@ type deploymentTextFieldOptions struct {
 	field        string
 	secret       bool
 	normalizeURL bool
+	indent       int
+	optional     bool
 }
 
 func deploymentTextField(opts deploymentTextFieldOptions) cfgField {
@@ -61,14 +177,17 @@ func deploymentTextField(opts deploymentTextFieldOptions) cfgField {
 		return value
 	}
 	return cfgField{
-		label: label,
-		get:   get,
+		label:    label,
+		indent:   opts.indent,
+		optional: opts.optional,
+		get:      get,
 		display: func(c Config) string {
 			if secret {
 				return display(c)
 			}
 			return get(c)
 		},
+		secret: secret,
 		set: func(c *Config, v string) {
 			v = strings.TrimSpace(v)
 			if normalizeURL && v != "" && !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
@@ -83,14 +202,18 @@ func deploymentTextField(opts deploymentTextFieldOptions) cfgField {
 type deploymentModelMappingsFieldOptions struct {
 	label        string
 	deploymentID string
+	indent       int
+	optional     bool
 }
 
 func deploymentModelMappingsField(opts deploymentModelMappingsFieldOptions) cfgField {
 	label, deploymentID := opts.label, opts.deploymentID
 	return cfgField{
-		label:   label,
-		get:     func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
-		display: func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
+		label:    label,
+		indent:   opts.indent,
+		optional: opts.optional,
+		get:      func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
+		display:  func(c Config) string { return formatStringMap(c.deploymentConfigs()[deploymentID].ModelMappings) },
 		set: func(c *Config, v string) {
 			mappings := parseStringMap(v)
 			ensureDeploymentConfig(ensureDeploymentConfigOptions{cfg: c, deploymentID: deploymentID})
@@ -222,20 +345,39 @@ func parseStringMap(value string) map[string]string {
 }
 
 func apiKeyRowForProvider(provider string) int {
+	return apiKeyRowForProviderInFields(apiKeyRowForProviderInFieldsOptions{provider: provider, fields: deploymentTabFields(Config{})})
+}
+
+type apiKeyRowForProviderInFieldsOptions struct {
+	provider string
+	fields   []cfgField
+}
+
+func apiKeyRowForProviderInFields(opts apiKeyRowForProviderInFieldsOptions) int {
+	label := apiKeyLabelForProvider(opts.provider)
+	for i, field := range opts.fields {
+		if field.label == label {
+			return i
+		}
+	}
+	return 0
+}
+
+func apiKeyLabelForProvider(provider string) string {
 	switch provider {
 	case ProviderAnthropic:
-		return 0
+		return "Anthropic API Key"
 	case ProviderOpenAI:
-		return 1
+		return "OpenAI API Key"
 	case ProviderGrok:
-		return 2
+		return "Grok API Key"
 	case ProviderOpenRouter:
-		return 3
+		return "OpenRouter API Key"
 	case ProviderGemini:
-		return 4
+		return "Gemini API Key"
 	case ProviderOllama:
-		return 5
+		return "Ollama Base URL"
 	default:
-		return 0
+		return ""
 	}
 }

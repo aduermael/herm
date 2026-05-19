@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 }
 
 // Tests that depend on the old TextInput/Renderer/configForm/modelList
-// types have been removed. They will be rewritten in Phase 5b.
+// types have been removed. They will be rewritten with provider-specific coverage.
 
 // --- visibleWidth tests ---
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -440,9 +441,9 @@ func TestGetVisualLines(t *testing.T) {
 		{"empty", "", 80, 1},
 		{"short", "hi", 80, 1},
 		{"newline", "a\nb", 80, 2},
-		{"char_wrap", "abcdefgh", 5, 3},            // no spaces → char wrap: "abc" | "defgh" | ""
-		{"word_wrap", "hello world", 10, 2},         // "hello " | "world"
-		{"word_wrap_multi", "a bc de", 5, 3},        // "a " | "bc " | "de"
+		{"char_wrap", "abcdefgh", 5, 3},                // no spaces → char wrap: "abc" | "defgh" | ""
+		{"word_wrap", "hello world", 10, 2},            // "hello " | "world"
+		{"word_wrap_multi", "a bc de", 5, 3},           // "a " | "bc " | "de"
 		{"long_word_fallback", "abcdefghij klm", 7, 3}, // "abcde" | "fghij " | "klm" (char then word)
 	}
 
@@ -498,7 +499,7 @@ func TestCursorVisualPosWordWrap(t *testing.T) {
 	// Cursor at newline boundary still works
 	input2 := []rune("ab\ncd")
 	line, col = cursorVisualPos(cursorVisualPosOptions{input: input2, cursor: 2, width: 80}) // at '\n'
-	if line != 0 || col != 4 { // prefix 2 + 2 = 4
+	if line != 0 || col != 4 {                                                               // prefix 2 + 2 = 4
 		t.Errorf("cursor at newline: got (%d,%d), want (0,4)", line, col)
 	}
 }
@@ -540,6 +541,93 @@ func TestBuildInputRows(t *testing.T) {
 	// Second row should contain the prompt and input
 	if !strings.Contains(rows[1], promptPrefix+"hello") {
 		t.Errorf("second row should contain prompt + input, got %q", rows[1])
+	}
+}
+
+func TestWrapStatusSegmentsKeepsAtomicComponents(t *testing.T) {
+	rows := wrapStatusSegments(wrapStatusSegmentsOptions{
+		segments: []statusSegment{
+			dimStatusSegment("branch: main"),
+			newStatusSegment("\033[2;31m-1\033[0m\033[2m/\033[0m\033[2;32m+2\033[0m"),
+			dimStatusSegment("↓0↑0"),
+			dimStatusSegment("$0.01"),
+		},
+		width: 12,
+	})
+
+	if len(rows) == 0 {
+		t.Fatal("wrapStatusSegments returned no rows")
+	}
+	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	if strings.Count(plain, "↓0↑0") != 1 {
+		t.Fatalf("expected upstream component once and intact, got %q", plain)
+	}
+	for _, row := range rows {
+		if got := visibleWidth(row); got > 12 {
+			t.Fatalf("row %q width = %d, want <= 12", ansiEscRe.ReplaceAllString(row, ""), got)
+		}
+		plainRow := ansiEscRe.ReplaceAllString(row, "")
+		if strings.Contains(plainRow, "↓0") && !strings.Contains(plainRow, "↓0↑0") {
+			t.Fatalf("row split upstream component: %q", plainRow)
+		}
+		if strings.Contains(plainRow, "↑0") && !strings.Contains(plainRow, "↓0↑0") {
+			t.Fatalf("row split upstream component: %q", plainRow)
+		}
+	}
+}
+
+func TestBuildInputRowsStatusFooterWrapsComponents(t *testing.T) {
+	app := &App{
+		width: 16,
+		status: statusInfo{
+			Branch:      "aduermael/deployment-provider-api-model",
+			HasUpstream: true,
+			Behind:      0,
+			Ahead:       0,
+			DiffDel:     181,
+			DiffAdd:     524,
+		},
+	}
+
+	rows := app.buildInputRows()
+	plainFooter := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	if strings.Count(plainFooter, "↓0↑0") != 1 {
+		t.Fatalf("expected upstream component once and intact, got %q", plainFooter)
+	}
+	for _, row := range rows {
+		if got := visibleWidth(row); got > app.width {
+			t.Fatalf("row %q width = %d, want <= %d", ansiEscRe.ReplaceAllString(row, ""), got, app.width)
+		}
+		plainRow := ansiEscRe.ReplaceAllString(row, "")
+		if strings.Contains(plainRow, "↓0") && !strings.Contains(plainRow, "↓0↑0") {
+			t.Fatalf("row split upstream component: %q", plainRow)
+		}
+		if strings.Contains(plainRow, "↑0") && !strings.Contains(plainRow, "↓0↑0") {
+			t.Fatalf("row split upstream component: %q", plainRow)
+		}
+	}
+}
+
+func TestBuildInputRowsDebugTracePathShownOnce(t *testing.T) {
+	repo := t.TempDir()
+	tracePath := filepath.Join(repo, ".herm", "debug", "debug-20260519-120000.json")
+	app := &App{
+		width:         80,
+		repoRoot:      repo,
+		traceFilePath: tracePath,
+	}
+
+	rows := app.buildInputRows()
+	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	want := "debug: .herm/debug/debug-20260519-120000.json"
+	if strings.Count(plain, "debug: ") != 1 {
+		t.Fatalf("expected one debug footer, got %q", plain)
+	}
+	if !strings.Contains(plain, want) {
+		t.Fatalf("expected %q in footer, got %q", want, plain)
+	}
+	if strings.Contains(plain, tracePath) {
+		t.Fatalf("debug footer should use relative path, got %q", plain)
 	}
 }
 
@@ -2212,9 +2300,9 @@ func TestFullRenderPipelineWithSubAgents(t *testing.T) {
 
 	now := time.Now().Add(-2 * time.Second)
 	app := &App{
-		width:        80,
-		agentRunning: true,
-		agentStartTime: now,
+		width:              80,
+		agentRunning:       true,
+		agentStartTime:     now,
 		agentDisplayInTok:  500,
 		agentDisplayOutTok: 200,
 		mainAgentToolCount: 3,
@@ -2364,9 +2452,9 @@ func TestSubAgentLinesBeforeStreamingText(t *testing.T) {
 
 	now := time.Now().Add(-3 * time.Second)
 	app := &App{
-		width:         80,
-		agentRunning:  true,
-		streamingText: "Here is my analysis of the results.",
+		width:          80,
+		agentRunning:   true,
+		streamingText:  "Here is my analysis of the results.",
 		agentStartTime: now,
 	}
 	app.subAgents = map[string]*subAgentDisplay{

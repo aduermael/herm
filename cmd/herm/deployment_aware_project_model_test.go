@@ -13,7 +13,7 @@ import (
 	"langdag.com/langdag/types"
 )
 
-func TestPhase11ProjectConfigSaveLoadNormalizesBareAnthropicIDs(t *testing.T) {
+func TestProjectModelProjectConfigSaveLoadNormalizesBareAnthropicIDs(t *testing.T) {
 	repoRoot := t.TempDir()
 	project := ProjectConfig{
 		ActiveModel:      "claude-opus-4-6",
@@ -49,7 +49,7 @@ func TestPhase11ProjectConfigSaveLoadNormalizesBareAnthropicIDs(t *testing.T) {
 	}
 }
 
-func TestPhase11ProjectConfigCannotOverwriteGlobalDeploymentState(t *testing.T) {
+func TestProjectModelProjectConfigCannotOverwriteGlobalDeploymentState(t *testing.T) {
 	repoRoot := t.TempDir()
 	writeRawProjectConfig(t, repoRoot, `{
   "active_model": "claude-opus-4-6",
@@ -79,7 +79,7 @@ func TestPhase11ProjectConfigCannotOverwriteGlobalDeploymentState(t *testing.T) 
 	}
 }
 
-func TestPhase11RuntimeProjectNormalizationUsesCurrentCatalogModels(t *testing.T) {
+func TestProjectModelRuntimeProjectNormalizationUsesCurrentCatalogModels(t *testing.T) {
 	project := ProjectConfig{ActiveModel: "provider-native-new", ExplorationModel: "provider-fast-new"}
 	models := []ModelDef{
 		{
@@ -103,7 +103,7 @@ func TestPhase11RuntimeProjectNormalizationUsesCurrentCatalogModels(t *testing.T
 	}
 }
 
-func TestPhase11RuntimeGlobalNormalizationUsesCurrentCatalogModels(t *testing.T) {
+func TestProjectModelRuntimeGlobalNormalizationUsesCurrentCatalogModels(t *testing.T) {
 	cfg := Config{ActiveModel: "provider-native-new", ExplorationModel: "provider-fast-new"}
 	models := []ModelDef{
 		{
@@ -127,7 +127,7 @@ func TestPhase11RuntimeGlobalNormalizationUsesCurrentCatalogModels(t *testing.T)
 	}
 }
 
-func TestPhase11SlashNativeIDNormalizesWhenCatalogDisambiguates(t *testing.T) {
+func TestProjectModelSlashNativeIDNormalizesWhenCatalogDisambiguates(t *testing.T) {
 	models := []ModelDef{{
 		Provider:       ProviderOllama,
 		OwnerProvider:  ProviderOllama,
@@ -150,7 +150,7 @@ func TestPhase11SlashNativeIDNormalizesWhenCatalogDisambiguates(t *testing.T) {
 	}
 }
 
-func TestPhase11ExactCanonicalWinsOverSlashNativeIDCollision(t *testing.T) {
+func TestProjectModelExactCanonicalWinsOverSlashNativeIDCollision(t *testing.T) {
 	offerings := []ModelIDMigrationOffering{
 		{CanonicalModelID: "provider/model", DeploymentID: "direct", NativeModelID: "native-model"},
 		{CanonicalModelID: "other/canonical", DeploymentID: "direct", NativeModelID: "provider/model"},
@@ -166,7 +166,7 @@ func TestPhase11ExactCanonicalWinsOverSlashNativeIDCollision(t *testing.T) {
 	}
 }
 
-func TestPhase11RuntimeExactCanonicalWinsOverNativeIDCollision(t *testing.T) {
+func TestProjectModelRuntimeExactCanonicalWinsOverNativeIDCollision(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"openrouter":   {APIKey: "sk-or"},
@@ -204,7 +204,7 @@ func TestPhase11RuntimeExactCanonicalWinsOverNativeIDCollision(t *testing.T) {
 	}
 }
 
-func TestPhase11RuntimeExactCanonicalUnavailableBeatsAvailableNativeIDAlias(t *testing.T) {
+func TestProjectModelRuntimeExactCanonicalUnavailableBeatsAvailableNativeIDAlias(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"ollama-local": {BaseURL: "http://localhost:11434"},
@@ -251,7 +251,7 @@ func TestPhase11RuntimeExactCanonicalUnavailableBeatsAvailableNativeIDAlias(t *t
 	}
 }
 
-func TestPhase11RuntimeExplorationExactCanonicalUnavailableBeatsAvailableNativeIDAlias(t *testing.T) {
+func TestProjectModelRuntimeExplorationExactCanonicalUnavailableBeatsAvailableNativeIDAlias(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"ollama-local": {BaseURL: "http://localhost:11434"},
@@ -299,7 +299,7 @@ func TestPhase11RuntimeExplorationExactCanonicalUnavailableBeatsAvailableNativeI
 	}
 }
 
-func TestPhase11ProjectModelFallbackDiagnosticNamesConfiguredAndFallback(t *testing.T) {
+func TestProjectModelProjectModelFallbackDiagnosticNamesConfiguredAndFallback(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{
@@ -309,7 +309,7 @@ func TestPhase11ProjectModelFallbackDiagnosticNamesConfiguredAndFallback(t *test
 		},
 		projectConfig: ProjectConfig{ActiveModel: "anthropic/claude-opus-4-6"},
 		models: []ModelDef{
-			phase9AnthropicModel("anthropic/claude-opus-4-6", "claude-opus-4-6"),
+			anthropicDeploymentModel("anthropic/claude-opus-4-6", "claude-opus-4-6"),
 			{
 				Provider:      ProviderOpenAI,
 				OwnerProvider: ProviderOpenAI,
@@ -341,7 +341,7 @@ func TestPhase11ProjectModelFallbackDiagnosticNamesConfiguredAndFallback(t *test
 	}
 }
 
-func TestPhase11ExplorationFallbackDiagnosticNamesConfiguredAndFallback(t *testing.T) {
+func TestProjectModelExplorationFallbackDiagnosticNamesConfiguredAndFallback(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{
@@ -351,7 +351,7 @@ func TestPhase11ExplorationFallbackDiagnosticNamesConfiguredAndFallback(t *testi
 		},
 		projectConfig: ProjectConfig{ExplorationModel: "anthropic/claude-haiku-4-5"},
 		models: []ModelDef{
-			phase9AnthropicModel("anthropic/claude-haiku-4-5", "claude-haiku-4-5"),
+			anthropicDeploymentModel("anthropic/claude-haiku-4-5", "claude-haiku-4-5"),
 			{
 				Provider:      ProviderOpenAI,
 				OwnerProvider: ProviderOpenAI,
@@ -380,7 +380,7 @@ func TestPhase11ExplorationFallbackDiagnosticNamesConfiguredAndFallback(t *testi
 	}
 }
 
-func TestPhase11AmbiguousProjectModelFallsBackWithDiagnostic(t *testing.T) {
+func TestProjectModelAmbiguousProjectModelFallsBackWithDiagnostic(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"anthropic-direct": {APIKey: "sk-ant"},
@@ -430,7 +430,7 @@ func TestPhase11AmbiguousProjectModelFallsBackWithDiagnostic(t *testing.T) {
 	}
 }
 
-func TestPhase11UnknownButCatalogValidCanonicalProjectIDResolves(t *testing.T) {
+func TestProjectModelUnknownButCatalogValidCanonicalProjectIDResolves(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai"},
@@ -453,7 +453,7 @@ func TestPhase11UnknownButCatalogValidCanonicalProjectIDResolves(t *testing.T) {
 	}
 }
 
-func TestPhase11ProjectConfigUnknownValuesRemainRoundTrippable(t *testing.T) {
+func TestProjectModelProjectConfigUnknownValuesRemainRoundTrippable(t *testing.T) {
 	repoRoot := t.TempDir()
 	project := ProjectConfig{
 		ActiveModel:      "future-native-model",
@@ -480,7 +480,7 @@ func TestPhase11ProjectConfigUnknownValuesRemainRoundTrippable(t *testing.T) {
 	}
 }
 
-func TestPhase11ProjectConfigAmbiguousValuesRemainRoundTrippable(t *testing.T) {
+func TestProjectModelProjectConfigAmbiguousValuesRemainRoundTrippable(t *testing.T) {
 	repoRoot := t.TempDir()
 	models := []ModelDef{
 		{
@@ -528,7 +528,7 @@ func TestPhase11ProjectConfigAmbiguousValuesRemainRoundTrippable(t *testing.T) {
 	}
 }
 
-func TestPhase11GlobalConfigPathIsNotLoadedOrSavedAsProjectConfig(t *testing.T) {
+func TestProjectModelGlobalConfigPathIsNotLoadedOrSavedAsProjectConfig(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	cfgDir := filepath.Join(home, configDir)
@@ -550,7 +550,7 @@ func TestPhase11GlobalConfigPathIsNotLoadedOrSavedAsProjectConfig(t *testing.T) 
 	}
 }
 
-func TestPhase11ProjectConfigPathCollisionGuardResolvesSymlinks(t *testing.T) {
+func TestProjectModelProjectConfigPathCollisionGuardResolvesSymlinks(t *testing.T) {
 	home := t.TempDir()
 	link := filepath.Join(t.TempDir(), "home-link")
 	if err := os.Symlink(home, link); err != nil {
@@ -565,7 +565,7 @@ func TestPhase11ProjectConfigPathCollisionGuardResolvesSymlinks(t *testing.T) {
 	}
 }
 
-func TestPhase11ClearResetsProjectModelDiagnosticDedupe(t *testing.T) {
+func TestProjectModelClearResetsProjectModelDiagnosticDedupe(t *testing.T) {
 	app := &App{
 		projectConfig: ProjectConfig{ActiveModel: "missing-model"},
 		config:        Config{ActiveModel: "missing-model"},
@@ -586,7 +586,7 @@ func TestPhase11ClearResetsProjectModelDiagnosticDedupe(t *testing.T) {
 	}
 }
 
-func TestPhase11CompactShowsExplorationFallbackDiagnosticAndUsesResolvedModel(t *testing.T) {
+func TestProjectModelCompactShowsExplorationFallbackDiagnosticAndUsesResolvedModel(t *testing.T) {
 	store := newMockStorage()
 	leafID := seedCompactableConversation(t, store)
 	provider := &mockProvider{responses: []string{"compact summary"}, model: "openai/gpt-4.1-2025-04-14"}
@@ -602,7 +602,7 @@ func TestPhase11CompactShowsExplorationFallbackDiagnosticAndUsesResolvedModel(t 
 		},
 		projectConfig: ProjectConfig{ExplorationModel: "anthropic/claude-haiku-4-5"},
 		models: []ModelDef{
-			phase9AnthropicModel("anthropic/claude-haiku-4-5", "claude-haiku-4-5"),
+			anthropicDeploymentModel("anthropic/claude-haiku-4-5", "claude-haiku-4-5"),
 			{
 				Provider:      ProviderOpenAI,
 				OwnerProvider: ProviderOpenAI,
@@ -637,7 +637,7 @@ func TestPhase11CompactShowsExplorationFallbackDiagnosticAndUsesResolvedModel(t 
 	}
 }
 
-func TestPhase11CompactPreservesAssistantMetadataAndRecordsTrace(t *testing.T) {
+func TestProjectModelCompactPreservesAssistantMetadataAndRecordsTrace(t *testing.T) {
 	store := newMockStorage()
 	leafID := seedCompactableConversation(t, store)
 	metadata := types.AssistantNodeMetadata{
@@ -677,7 +677,7 @@ func TestPhase11CompactPreservesAssistantMetadataAndRecordsTrace(t *testing.T) {
 		models:         []ModelDef{},
 		configReady:    true,
 		resultCh:       make(chan any, 16),
-		traceCollector: NewTraceCollector("phase11-compact"),
+		traceCollector: NewTraceCollector("project-model-compact"),
 		traceFilePath:  tracePath,
 		headless:       true,
 	}
@@ -718,18 +718,18 @@ func TestPhase11CompactPreservesAssistantMetadataAndRecordsTrace(t *testing.T) {
 	}
 }
 
-func TestPhase11StartAgentPersistsCanonicalModelInUsageTraceAndMetadata(t *testing.T) {
+func TestProjectModelStartAgentPersistsCanonicalModelInUsageTraceAndMetadata(t *testing.T) {
 	store := newMockStorage()
-	provider := &phase11MetadataProvider{}
+	provider := &canonicalMetadataProvider{}
 	client := langdag.NewWithDeps(store, provider)
 	app := &App{
-		globalConfig:   phase9AnthropicGlobalConfig(),
+		globalConfig:   anthropicDeploymentGlobalConfig(),
 		projectConfig:  ProjectConfig{ActiveModel: "claude-opus-4-6", ExplorationModel: "claude-haiku-4-5"},
-		models:         phase9AnthropicModels(),
+		models:         anthropicDeploymentModels(),
 		configReady:    true,
 		langdagClient:  client,
 		resultCh:       make(chan any, 64),
-		traceCollector: NewTraceCollector("phase11"),
+		traceCollector: NewTraceCollector("project-model"),
 		traceFilePath:  filepath.Join(t.TempDir(), "trace.json"),
 		headless:       true,
 		width:          80,
@@ -792,9 +792,9 @@ func TestPhase11StartAgentPersistsCanonicalModelInUsageTraceAndMetadata(t *testi
 	}
 }
 
-func TestPhase11ProjectTabGlobalHintShowsCanonicalGlobalModel(t *testing.T) {
+func TestProjectModelProjectTabGlobalHintShowsCanonicalGlobalModel(t *testing.T) {
 	a := &App{
-		cfgTab:          3,
+		cfgTab:          cfgTabProject,
 		repoRoot:        t.TempDir(),
 		cfgDraft:        Config{ActiveModel: "anthropic/claude-opus-4-6"},
 		cfgProjectDraft: ProjectConfig{},
@@ -806,7 +806,7 @@ func TestPhase11ProjectTabGlobalHintShowsCanonicalGlobalModel(t *testing.T) {
 	}
 }
 
-func TestPhase11ExitConfigModeShowsProjectModelDiagnostic(t *testing.T) {
+func TestProjectModelExitConfigModeShowsProjectModelDiagnostic(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	app := &App{
 		repoRoot:     t.TempDir(),
@@ -820,7 +820,7 @@ func TestPhase11ExitConfigModeShowsProjectModelDiagnostic(t *testing.T) {
 			ActiveModel: "anthropic/claude-opus-4-6",
 		},
 		models: []ModelDef{
-			phase9AnthropicModel("anthropic/claude-opus-4-6", "claude-opus-4-6"),
+			anthropicDeploymentModel("anthropic/claude-opus-4-6", "claude-opus-4-6"),
 			{
 				Provider:      ProviderOpenAI,
 				OwnerProvider: ProviderOpenAI,
@@ -846,13 +846,13 @@ func TestPhase11ExitConfigModeShowsProjectModelDiagnostic(t *testing.T) {
 	}
 }
 
-func TestPhase11CatalogRefreshUpdatesResolvedProjectModelDisplay(t *testing.T) {
-	catalog := phase8HermCatalog("openai/phase11-refresh", "phase11-refresh", "openai/phase11-refresh")
+func TestProjectModelCatalogRefreshUpdatesResolvedProjectModelDisplay(t *testing.T) {
+	catalog := hermDeploymentCatalog("openai/canonical-refresh", "canonical-refresh", "openai/canonical-refresh")
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{"openai-direct": {APIKey: "sk-openai"}},
 		},
-		projectConfig: ProjectConfig{ActiveModel: "openai/phase11-refresh"},
+		projectConfig: ProjectConfig{ActiveModel: "openai/canonical-refresh"},
 		configReady:   true,
 		models:        []ModelDef{},
 		headless:      true,
@@ -867,7 +867,7 @@ func TestPhase11CatalogRefreshUpdatesResolvedProjectModelDisplay(t *testing.T) {
 	app.handleResult(catalogMsg{catalog: catalog})
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(rows, "Using openai/phase11-refresh") {
+	if !strings.Contains(rows, "Using openai/canonical-refresh") {
 		t.Fatalf("catalog refresh did not update resolved project model display:\n%s", rows)
 	}
 	if app.lastModelDiagnostics != "" {
@@ -875,7 +875,7 @@ func TestPhase11CatalogRefreshUpdatesResolvedProjectModelDisplay(t *testing.T) {
 	}
 }
 
-func TestPhase11OllamaRefreshDoesNotDuplicateOfflineWarning(t *testing.T) {
+func TestProjectModelOllamaRefreshDoesNotDuplicateOfflineWarning(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{"ollama-local": {BaseURL: "http://localhost:11434"}},
@@ -897,7 +897,7 @@ func TestPhase11OllamaRefreshDoesNotDuplicateOfflineWarning(t *testing.T) {
 	}
 }
 
-func TestPhase11OllamaOfflineWarningDedupesWhenExplorationRefreshes(t *testing.T) {
+func TestProjectModelOllamaOfflineWarningDedupesWhenExplorationRefreshes(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{
@@ -937,7 +937,7 @@ func TestPhase11OllamaOfflineWarningDedupesWhenExplorationRefreshes(t *testing.T
 	}
 }
 
-func TestPhase11DynamicModelsRefreshStartupModelDisplay(t *testing.T) {
+func TestProjectModelDynamicModelsRefreshStartupModelDisplay(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{
@@ -978,7 +978,7 @@ func TestPhase11DynamicModelsRefreshStartupModelDisplay(t *testing.T) {
 	}
 }
 
-func TestPhase11DynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
+func TestProjectModelDynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{
@@ -1030,34 +1030,34 @@ func TestPhase11DynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 	}
 }
 
-type phase11MetadataProvider struct {
+type canonicalMetadataProvider struct {
 	lastRequest *types.CompletionRequest
 }
 
-func (p *phase11MetadataProvider) Complete(_ context.Context, req *types.CompletionRequest) (*types.CompletionResponse, error) {
+func (p *canonicalMetadataProvider) Complete(_ context.Context, req *types.CompletionRequest) (*types.CompletionResponse, error) {
 	p.lastRequest = req
-	return phase11MetadataResponse(req.Model), nil
+	return canonicalMetadataResponse(req.Model), nil
 }
 
-func (p *phase11MetadataProvider) Stream(_ context.Context, req *types.CompletionRequest) (<-chan types.StreamEvent, error) {
+func (p *canonicalMetadataProvider) Stream(_ context.Context, req *types.CompletionRequest) (<-chan types.StreamEvent, error) {
 	p.lastRequest = req
 	ch := make(chan types.StreamEvent, 2)
 	go func() {
 		defer close(ch)
 		ch <- types.StreamEvent{Type: types.StreamEventDelta, Content: "ok"}
-		ch <- types.StreamEvent{Type: types.StreamEventDone, Response: phase11MetadataResponse(req.Model)}
+		ch <- types.StreamEvent{Type: types.StreamEventDone, Response: canonicalMetadataResponse(req.Model)}
 	}()
 	return ch, nil
 }
 
-func (p *phase11MetadataProvider) Name() string { return ProviderAnthropic }
-func (p *phase11MetadataProvider) Models() []types.ModelInfo {
+func (p *canonicalMetadataProvider) Name() string { return ProviderAnthropic }
+func (p *canonicalMetadataProvider) Models() []types.ModelInfo {
 	return nil
 }
 
-func phase11MetadataResponse(model string) *types.CompletionResponse {
+func canonicalMetadataResponse(model string) *types.CompletionResponse {
 	return &types.CompletionResponse{
-		ID:         "phase11-response",
+		ID:         "canonical-response",
 		Model:      model,
 		Provider:   ProviderAnthropic,
 		Content:    []types.ContentBlock{{Type: "text", Text: "ok"}},

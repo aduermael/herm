@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestPhase12ScopedProviderRouteDoesNotHideUnmatchedModels(t *testing.T) {
+func TestScopedRoutingScopedProviderRouteDoesNotHideUnmatchedModels(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai"},
@@ -51,7 +51,7 @@ func TestPhase12ScopedProviderRouteDoesNotHideUnmatchedModels(t *testing.T) {
 	}
 }
 
-func TestPhase12ScopedModelRouteDoesNotHideUnmatchedModels(t *testing.T) {
+func TestScopedRoutingScopedModelRouteDoesNotHideUnmatchedModels(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai"},
@@ -95,7 +95,7 @@ func TestPhase12ScopedModelRouteDoesNotHideUnmatchedModels(t *testing.T) {
 	}
 }
 
-func TestPhase12RoutingDiagnosticsDoNotRequireDefaultRoute(t *testing.T) {
+func TestScopedRoutingRoutingDiagnosticsDoNotRequireDefaultRoute(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"anthropic-direct": {APIKey: "sk-ant"},
@@ -138,7 +138,7 @@ func TestPhase12RoutingDiagnosticsDoNotRequireDefaultRoute(t *testing.T) {
 	}
 }
 
-func TestPhase12ExplicitAdvancedDefaultRouteStillApplies(t *testing.T) {
+func TestScopedRoutingExplicitAdvancedDefaultRouteStillApplies(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai"},
@@ -164,7 +164,7 @@ func TestPhase12ExplicitAdvancedDefaultRouteStillApplies(t *testing.T) {
 	}
 }
 
-func TestPhase12ExplicitEmptyAdvancedDefaultRouteIsPreserved(t *testing.T) {
+func TestScopedRoutingExplicitEmptyAdvancedDefaultRouteIsPreserved(t *testing.T) {
 	cfg := normalizeLoadedConfig(Config{Routing: &RoutingPolicy{Default: []RoutingStage{}}})
 	if cfg.Routing == nil || cfg.Routing.Default == nil || len(cfg.Routing.Default) != 0 {
 		t.Fatalf("explicit empty routing.default was not preserved: %+v", cfg.Routing)
@@ -195,19 +195,19 @@ func TestPhase12ExplicitEmptyAdvancedDefaultRouteIsPreserved(t *testing.T) {
 	}
 }
 
-func TestPhase12RoutingTabShowsScopedActionsAndNoDefaultStep(t *testing.T) {
-	app := phase9RoutingApp()
+func TestScopedRoutingRoutingTabShowsScopedActionsAndNoDefaultStep(t *testing.T) {
+	app := routingPreviewApp()
 	rows := strings.Join(app.buildConfigRows(), "\n")
 
 	expectRowsContainAll(t, rows,
-		"Routing rules are global and scoped to a provider or model.",
-		"Unmatched models use the advanced JSON default route.",
-		"Advanced JSON default route is configured.",
+		"Set custom routing, per provider or model (advanced).",
 		"Provider openai: primary openai-direct",
 		"Model openai/gpt-4.1-2025-04-14: primary openrouter",
 		"Add rule",
 	)
 	expectRowsNotContainAny(t, rows,
+		"Unmatched models use the advanced JSON default route.",
+		"Advanced JSON default route is configured.",
 		"Delete rule",
 		"A=add rule",
 		"D=delete rule",
@@ -220,9 +220,9 @@ func TestPhase12RoutingTabShowsScopedActionsAndNoDefaultStep(t *testing.T) {
 	)
 }
 
-func TestPhase12RoutingTabDefaultOnlySummaryIsAccurate(t *testing.T) {
+func TestScopedRoutingRoutingTabDefaultOnlySummaryIsAccurate(t *testing.T) {
 	app := &App{
-		cfgTab: 1,
+		cfgTab: cfgTabRouting,
 		cfgDraft: Config{Routing: &RoutingPolicy{Default: []RoutingStage{{
 			Deployments: []DeploymentChoice{{DeploymentID: "openrouter", Weight: 100}},
 		}}}},
@@ -230,20 +230,21 @@ func TestPhase12RoutingTabDefaultOnlySummaryIsAccurate(t *testing.T) {
 
 	rows := strings.Join(app.buildConfigRows(), "\n")
 	expectRowsContainAll(t, rows,
+		"Set custom routing, per provider or model (advanced).",
+	)
+	expectRowsNotContainAny(t, rows,
 		"Unmatched models use the advanced JSON default route.",
 		"Advanced JSON default route is configured.",
 		"No scoped routing rules. The advanced JSON default route handles unmatched models.",
-	)
-	expectRowsNotContainAny(t, rows,
 		"Unmatched models use the default model provider/deployment automatically.",
 		"No routing rules. Using default model provider/deployment.",
 	)
 }
 
-func TestPhase12RoutingAddAndDeleteRuleActions(t *testing.T) {
+func TestScopedRoutingRoutingAddAndDeleteRuleActions(t *testing.T) {
 	app := &App{
 		headless: true,
-		cfgTab:   1,
+		cfgTab:   cfgTabRouting,
 		cfgDraft: Config{Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai"},
 			"openrouter":    {APIKey: "sk-or"},
@@ -285,10 +286,10 @@ func TestPhase12RoutingAddAndDeleteRuleActions(t *testing.T) {
 	}
 }
 
-func TestPhase12RoutingAddModelRuleNoFallbackPath(t *testing.T) {
+func TestScopedRoutingRoutingAddModelRuleNoFallbackPath(t *testing.T) {
 	app := &App{
 		headless: true,
-		cfgTab:   1,
+		cfgTab:   cfgTabRouting,
 		cfgDraft: Config{Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai"},
 			"openrouter":    {APIKey: "sk-or"},
@@ -317,10 +318,10 @@ func TestPhase12RoutingAddModelRuleNoFallbackPath(t *testing.T) {
 	}
 }
 
-func TestPhase12RoutingTabEnterSelectsAddAndRuleActions(t *testing.T) {
+func TestScopedRoutingRoutingTabEnterSelectsAddAndRuleActions(t *testing.T) {
 	app := &App{
 		headless: true,
-		cfgTab:   1,
+		cfgTab:   cfgTabRouting,
 		cfgDraft: Config{
 			Deployments: map[string]DeploymentConfig{"openai-direct": {APIKey: "sk-openai"}},
 			Routing: &RoutingPolicy{Providers: map[string][]RoutingStage{
@@ -349,10 +350,10 @@ func TestPhase12RoutingTabEnterSelectsAddAndRuleActions(t *testing.T) {
 	expectRowsContainAll(t, strings.Join(app.menuLines, "\n"), "Replace rule", "Delete rule", "Cancel")
 }
 
-func TestPhase12RoutingTabArrowNavigationWrapsSelectableRows(t *testing.T) {
+func TestScopedRoutingRoutingTabArrowNavigationWrapsSelectableRows(t *testing.T) {
 	app := &App{
 		headless: true,
-		cfgTab:   1,
+		cfgTab:   cfgTabRouting,
 		cfgDraft: Config{Routing: &RoutingPolicy{Providers: map[string][]RoutingStage{
 			"openai": {{Deployments: []DeploymentChoice{{DeploymentID: "openai-direct", Weight: 100}}}},
 		}}},
@@ -376,11 +377,11 @@ func TestPhase12RoutingTabArrowNavigationWrapsSelectableRows(t *testing.T) {
 	}
 }
 
-func TestPhase12RoutingTabShortcutActionsAreUnsupported(t *testing.T) {
+func TestScopedRoutingRoutingTabShortcutActionsAreUnsupported(t *testing.T) {
 	called := false
 	app := &App{
 		headless: true,
-		cfgTab:   1,
+		cfgTab:   cfgTabRouting,
 		cfgDraft: Config{Routing: &RoutingPolicy{Providers: map[string][]RoutingStage{
 			"openai": {{Deployments: []DeploymentChoice{{DeploymentID: "openai-direct", Weight: 100}}}},
 		}}},
@@ -402,7 +403,7 @@ func TestPhase12RoutingTabShortcutActionsAreUnsupported(t *testing.T) {
 	}
 }
 
-func TestPhase12RoutingAddCandidatesExcludeExistingRules(t *testing.T) {
+func TestScopedRoutingRoutingAddCandidatesExcludeExistingRules(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai"},
@@ -452,9 +453,9 @@ func TestPhase12RoutingAddCandidatesExcludeExistingRules(t *testing.T) {
 	}
 }
 
-func TestPhase12ConfigSaveHintOnlyAppearsWhenDirty(t *testing.T) {
+func TestScopedRoutingConfigSaveHintOnlyAppearsWhenDirty(t *testing.T) {
 	app := &App{
-		cfgTab:       1,
+		cfgTab:       cfgTabRouting,
 		globalConfig: Config{},
 		cfgDraft:     Config{},
 	}
@@ -469,7 +470,7 @@ func TestPhase12ConfigSaveHintOnlyAppearsWhenDirty(t *testing.T) {
 	expectRowsNotContainAny(t, dirtyRows, "\033[1mCtrl+S=save")
 }
 
-func TestPhase12ProviderRuleCandidatesUseAvailableCommonDeployments(t *testing.T) {
+func TestScopedRoutingProviderRuleCandidatesUseAvailableCommonDeployments(t *testing.T) {
 	cfg := Config{Deployments: map[string]DeploymentConfig{
 		"openai-direct": {APIKey: "sk-openai"},
 		"openrouter":    {APIKey: "sk-or"},

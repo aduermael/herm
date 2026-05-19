@@ -110,6 +110,48 @@ func buildLogo(width int) []string {
 
 // ─── Styling helpers ───
 
+type styledConfigFieldLabelOptions struct {
+	label    string
+	selected bool
+}
+
+func styledConfigFieldLabel(opts styledConfigFieldLabelOptions) string {
+	if opts.selected {
+		return "\033[36m" + opts.label + "\033[0m"
+	}
+	return opts.label
+}
+
+func configFieldLabel(field cfgField) string {
+	if field.indent <= 0 {
+		return field.label
+	}
+	return strings.Repeat("  ", field.indent) + field.label
+}
+
+type styledConfigFieldValueOptions struct {
+	value  string
+	secret bool
+}
+
+func styledConfigFieldValue(opts styledConfigFieldValueOptions) string {
+	if opts.value == "" {
+		return ""
+	}
+	plain := ansiEscRe.ReplaceAllString(opts.value, "")
+	if plain == "(not set)" || plain == "(optional)" {
+		return "\033[2m" + plain + "\033[0m"
+	}
+	if opts.secret {
+		return "\033[1;33m" + opts.value + "\033[0m"
+	}
+	return "\033[1m" + opts.value + "\033[0m"
+}
+
+func styledConfigCursor(cursor string) string {
+	return "\033[36;1m" + cursor + "\033[0m"
+}
+
 func styledUserMsg(content string) string {
 	// Style each line individually so \n splits in buildBlockRows preserve it.
 	lines := strings.Split(renderInlineMarkdown(content), "\n")

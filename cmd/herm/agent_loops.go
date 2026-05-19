@@ -560,7 +560,7 @@ func (a *Agent) runLoop(ctx context.Context, opts runLoopOptions) {
 	}
 
 	// Handle max_tokens truncation with no usable content. When langdag
-	// skips node creation for an empty max_tokens response (Phase 4b), the
+	// skips node creation for an empty max_tokens response, the
 	// error flows through drainStream and retryableStream. As a
 	// defence-in-depth, also check here in case a max_tokens stop reaches
 	// us with an empty nodeID and no tool calls.

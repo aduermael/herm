@@ -24,26 +24,7 @@ func (a *App) routingTabReadOnlyRows() []string {
 }
 
 func routingSummaryRows(policy *RoutingPolicy) []string {
-	rows := []string{"Routing rules are global and scoped to a provider or model."}
-	if policy != nil && policy.Default != nil {
-		rows = append(rows, "Unmatched models use the advanced JSON default route.")
-	} else {
-		rows = append(rows, "Unmatched models use the default model provider/deployment automatically.")
-	}
-	if routingPolicyIsEmpty(policy) {
-		return append(rows, "No routing rules. Using default model provider/deployment.")
-	}
-	if policy.Default != nil {
-		rows = append(rows, "Advanced JSON default route is configured.")
-	}
-	if len(policy.Providers) == 0 && len(policy.Models) == 0 {
-		if policy.Default != nil {
-			rows = append(rows, "No scoped routing rules. The advanced JSON default route handles unmatched models.")
-		} else {
-			rows = append(rows, "No scoped routing rules. Using default model provider/deployment for unmatched models.")
-		}
-	}
-	return rows
+	return []string{"Set custom routing, per provider or model (advanced)."}
 }
 
 func sortedRoutingStageKeys(values map[string][]RoutingStage) []string {

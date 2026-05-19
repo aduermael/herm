@@ -277,6 +277,115 @@ func wrapString(opts wrapStringOptions) []string {
 	return rows
 }
 
+type statusSegment struct {
+	text  string
+	width int
+}
+
+func newStatusSegment(text string) statusSegment {
+	return statusSegment{text: text, width: visibleWidth(text)}
+}
+
+func dimStatusSegment(text string) statusSegment {
+	return statusSegment{text: "\033[2m" + text + "\033[0m", width: visibleWidth(text)}
+}
+
+type wrapStatusSegmentsOptions struct {
+	segments       []statusSegment
+	width          int
+	separator      string
+	rightAlignLast bool
+}
+
+func wrapStatusSegments(opts wrapStatusSegmentsOptions) []string {
+	if opts.width <= 0 {
+		return nil
+	}
+
+	separator := opts.separator
+	if separator == "" {
+		separator = " "
+	}
+	separatorWidth := visibleWidth(separator)
+
+	segments := make([]statusSegment, 0, len(opts.segments))
+	for _, seg := range opts.segments {
+		if seg.width == 0 {
+			continue
+		}
+		text := seg.text
+		width := seg.width
+		if width > opts.width {
+			text = truncateVisual(truncateVisualOptions{s: text, maxCols: opts.width})
+			if strings.Contains(text, "\033[") && !strings.HasSuffix(text, "\033[0m") {
+				text += "\033[0m"
+			}
+			width = visibleWidth(text)
+		}
+		segments = append(segments, statusSegment{text: text, width: width})
+	}
+	if len(segments) == 0 {
+		return nil
+	}
+
+	if opts.rightAlignLast {
+		totalWidth := 0
+		for i, seg := range segments {
+			if i > 0 {
+				totalWidth += separatorWidth
+			}
+			totalWidth += seg.width
+		}
+		if totalWidth <= opts.width {
+			var row strings.Builder
+			padding := opts.width - totalWidth
+			for i, seg := range segments {
+				switch {
+				case i == 0 && len(segments) == 1:
+					row.WriteString(strings.Repeat(" ", padding))
+				case i == len(segments)-1:
+					row.WriteString(strings.Repeat(" ", padding))
+					row.WriteString(separator)
+				case i > 0:
+					row.WriteString(separator)
+				}
+				row.WriteString(seg.text)
+			}
+			return []string{row.String()}
+		}
+	}
+
+	var rows []string
+	var cur strings.Builder
+	curWidth := 0
+
+	for _, seg := range segments {
+		text := seg.text
+		width := seg.width
+		sepWidth := 0
+		if curWidth > 0 {
+			sepWidth = separatorWidth
+		}
+		if curWidth > 0 && curWidth+sepWidth+width > opts.width {
+			rows = append(rows, cur.String())
+			cur.Reset()
+			curWidth = 0
+			sepWidth = 0
+		}
+		if sepWidth > 0 {
+			cur.WriteString(separator)
+			curWidth += sepWidth
+		}
+		cur.WriteString(text)
+		curWidth += width
+	}
+
+	if curWidth > 0 {
+		rows = append(rows, cur.String())
+	}
+	return rows
+}
+
 // toolGroupEntry represents a single tool call (and optional result) within a grouped block.
 type toolGroupEntry struct {
 	summary  string        // tool call summary text (e.g. "~ $ ls", "~ edit foo.go")
@@ -310,7 +419,7 @@ func collectToolGroup(opts collectToolGroupOptions) toolGroup {
 	var g toolGroup
 	i := startIdx
 
-	// Phase 1: collect all consecutive tool calls and results (no other kinds).
+	// Pass 1: collect all consecutive tool calls and results (no other kinds).
 	var calls []int   // indices of msgToolCall messages
 	var results []int // indices of msgToolResult messages
 	for i < len(messages) {
@@ -329,7 +438,7 @@ func collectToolGroup(opts collectToolGroupOptions) toolGroup {
 	}
 done:
 
-	// Phase 2: build entries by pairing calls with results positionally.
+	// Pass 2: build entries by pairing calls with results positionally.
 	for ci, callIdx := range calls {
 		entry := toolGroupEntry{
 			summary:  strings.ReplaceAll(messages[callIdx].content, "\r", ""),
@@ -469,28 +578,50 @@ func (a *App) buildBlockRows() []string {
 		// Paused: show dim elapsed while waiting for user approval
 		elapsed := a.agentElapsedTime()
 		text := funnyTexts[a.agentTextIndex]
-		label := fmt.Sprintf("\033[2;3m⏸ %s | %d 🛠️  | %.2fs | ↑%s ↓%s\033[0m",
-			text, a.mainAgentToolCount, elapsed.Seconds(),
-			formatTokenCount(int(math.Round(a.agentDisplayInTok))),
-			formatTokenCount(int(math.Round(a.agentDisplayOutTok))))
-		rows = append(rows, wrapString(wrapStringOptions{s: label, w: a.width})...)
+		style := "\033[2;3m"
+		rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
+			segments: []statusSegment{
+				newStatusSegment(style + "⏸ " + text + "\033[0m"),
+				newStatusSegment(fmt.Sprintf("%s%d 🛠️ \033[0m", style, a.mainAgentToolCount)),
+				newStatusSegment(fmt.Sprintf("%s%.2fs\033[0m", style, elapsed.Seconds())),
+				newStatusSegment(fmt.Sprintf("%s↑%s ↓%s\033[0m", style,
+					formatTokenCount(int(math.Round(a.agentDisplayInTok))),
+					formatTokenCount(int(math.Round(a.agentDisplayOutTok))))),
+			},
+			width:     a.width,
+			separator: " | ",
+		})...)
 		rows = append(rows, "")
 	} else if a.agentRunning {
 		elapsed := a.agentElapsedTime()
 		text := funnyTexts[a.agentTextIndex]
 		spinner := brailleSpinner(elapsed)
-		label := fmt.Sprintf("%s %s%s | %d 🛠️  | %.2fs | ↑%s ↓%s\033[0m",
-			spinner, runningStatusStyle(elapsed), text, a.mainAgentToolCount, elapsed.Seconds(),
-			formatTokenCount(int(math.Round(a.agentDisplayInTok))),
-			formatTokenCount(int(math.Round(a.agentDisplayOutTok))))
-		rows = append(rows, wrapString(wrapStringOptions{s: label, w: a.width})...)
+		style := runningStatusStyle(elapsed)
+		rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
+			segments: []statusSegment{
+				newStatusSegment(spinner + " " + style + text + "\033[0m"),
+				newStatusSegment(fmt.Sprintf("%s%d 🛠️ \033[0m", style, a.mainAgentToolCount)),
+				newStatusSegment(fmt.Sprintf("%s%.2fs\033[0m", style, elapsed.Seconds())),
+				newStatusSegment(fmt.Sprintf("%s↑%s ↓%s\033[0m", style,
+					formatTokenCount(int(math.Round(a.agentDisplayInTok))),
+					formatTokenCount(int(math.Round(a.agentDisplayOutTok))))),
+			},
+			width:     a.width,
+			separator: " | ",
+		})...)
 		rows = append(rows, "")
 	} else if a.agentElapsed > 0 {
-		elapsed := fmt.Sprintf("\033[32m✓\033[2m %d 🛠️  | %.2fs | ↑%s ↓%s\033[0m",
-			a.mainAgentToolCount, a.agentElapsed.Seconds(),
-			formatTokenCount(a.mainAgentInputTokens),
-			formatTokenCount(a.mainAgentOutputTokens))
-		rows = append(rows, wrapString(wrapStringOptions{s: elapsed, w: a.width})...)
+		rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
+			segments: []statusSegment{
+				newStatusSegment(fmt.Sprintf("\033[32m✓\033[0m\033[2m %d 🛠️ \033[0m", a.mainAgentToolCount)),
+				newStatusSegment(fmt.Sprintf("\033[2m%.2fs\033[0m", a.agentElapsed.Seconds())),
+				newStatusSegment(fmt.Sprintf("\033[2m↑%s ↓%s\033[0m",
+					formatTokenCount(a.mainAgentInputTokens),
+					formatTokenCount(a.mainAgentOutputTokens))),
+			},
+			width:     a.width,
+			separator: " | ",
+		})...)
 		rows = append(rows, "")
 	}
 	return collapseBlankRows(rows)
@@ -646,48 +777,37 @@ func (a *App) buildInputRows() []string {
 
 	// Status indicators (only when no action is active)
 	if !hasAction {
-		// Line 1: branch: <name> -del/+add ↓behind↑ahead $cost [progress]
-		branchLabel := ""
-		branchTextWidth := 0
+		// Status components wrap between components so terminal autowrap never
+		// splits compact indicators like ↓0↑0.
+		var segments []statusSegment
 		if a.status.Branch != "" {
-			branchLabel = "\033[2mbranch: " + a.status.Branch + "\033[0m"
-			branchTextWidth = 8 + len(a.status.Branch) // "branch: " + name
+			segments = append(segments, dimStatusSegment("branch: "+a.status.Branch))
 		}
-		diffLabel := ""
-		diffTextWidth := 0
 		if a.status.DiffDel > 0 || a.status.DiffAdd > 0 {
 			delStr := fmt.Sprintf("-%d", a.status.DiffDel)
 			addStr := fmt.Sprintf("+%d", a.status.DiffAdd)
-			// red for deletions, green for additions, dim
-			diffLabel = " \033[2;31m" + delStr + "\033[0m\033[2m/\033[0m\033[2;32m" + addStr + "\033[0m"
-			diffTextWidth = 1 + len(delStr) + 1 + len(addStr) // space + del + "/" + add
+			segments = append(segments, newStatusSegment(
+				"\033[2;31m"+delStr+"\033[0m\033[2m/\033[0m\033[2;32m"+addStr+"\033[0m",
+			))
 		}
-		commitLabel := ""
-		commitTextWidth := 0
 		if a.status.HasUpstream {
 			commitStr := fmt.Sprintf(" ↓%d↑%d", a.status.Behind, a.status.Ahead)
-			commitLabel = "\033[2m" + commitStr + "\033[0m"
-			commitTextWidth = uniseg.StringWidth(commitStr)
+			segments = append(segments, dimStatusSegment(strings.TrimSpace(commitStr)))
 		}
-		costLabel := ""
-		costTextWidth := 0
 		if a.sessionCostUSD > 0 {
-			costStr := formatCost(a.sessionCostUSD)
-			costLabel = " \033[2m" + costStr + "\033[0m"
-			costTextWidth = 1 + len(costStr)
+			segments = append(segments, dimStatusSegment(formatCost(a.sessionCostUSD)))
 		}
 		contextTokens := a.lastInputTokens + len(a.input)/charsPerToken
 		contextWindow := 200000
 		if m := findModelByID(findModelByIDOptions{models: a.models, id: a.config.resolveActiveModel(a.models)}); m != nil {
 			contextWindow = m.ContextWindow
 		}
-		bar := progressBar(progressBarOptions{n: contextTokens, max: contextWindow})
-		barWidth := 3
-		padding := a.width - branchTextWidth - diffTextWidth - commitTextWidth - costTextWidth - barWidth - 1
-		if padding < 0 {
-			padding = 0
-		}
-		rows = append(rows, branchLabel+diffLabel+commitLabel+costLabel+strings.Repeat(" ", padding)+bar+" ")
+		segments = append(segments, newStatusSegment(progressBar(progressBarOptions{n: contextTokens, max: contextWindow})))
+		rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
+			segments:       segments,
+			width:          a.width,
+			rightAlignLast: true,
+		})...)
 
 		// Debug mode: show trace file path
 		if a.traceFilePath != "" {
@@ -697,7 +817,10 @@ func (a *App) buildInputRows() []string {
 					relPath = r
 				}
 			}
-			rows = append(rows, "\033[2mdebug: "+relPath+"\033[0m\033[K")
+			rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
+				segments: []statusSegment{dimStatusSegment("debug: " + relPath)},
+				width:    a.width,
+			})...)
 		}
 
 		// Line 2: container status (always shown when we have status text)
@@ -706,12 +829,18 @@ func (a *App) buildInputRows() []string {
 			if a.containerErr != nil {
 				style = "\033[31m" // red
 			}
-			rows = append(rows, style+"container: "+a.containerStatusText+"\033[0m\033[K")
+			rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
+				segments: []statusSegment{newStatusSegment(style + "container: " + a.containerStatusText + "\033[0m")},
+				width:    a.width,
+			})...)
 		}
 
 		// Line 3: worktree: <name> (only when actually in a worktree)
 		if a.status.WorktreeName != "" && a.isInWorktree() {
-			rows = append(rows, "\033[2mworktree: "+a.status.WorktreeName+"\033[0m\033[K")
+			rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
+				segments: []statusSegment{dimStatusSegment("worktree: " + a.status.WorktreeName)},
+				width:    a.width,
+			})...)
 		}
 	}
 
@@ -723,16 +852,13 @@ func (a *App) positionCursor(buf *strings.Builder) {
 	if a.cfgActive {
 		if a.cfgEditing {
 			// Position cursor in the edit field:
-			// separator + tab bar (1) + optional effective-provider row (API Keys tab) + cursor row
-			extraRows := 0
-			if a.cfgTab == 0 {
-				extraRows = 1
-			}
+			// separator + tab bar (1) + any tab-specific intro rows + cursor row
+			extraRows := a.configRowsBeforeFields()
 			fieldRow := a.sepRow + 1 + extraRows + a.cfgCursor + 1 // +1 for tab bar row
 			fields := a.cfgCurrentFields()
 			col := 0
 			if a.cfgCursor < len(fields) {
-				col = len(fields[a.cfgCursor].label) + 2 // "label: "
+				col = len(configFieldLabel(fields[a.cfgCursor])) + 2 // "label: "
 			}
 			col += a.cfgEditCursor
 			buf.WriteString("\033[?25h")

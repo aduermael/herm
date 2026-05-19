@@ -13,25 +13,25 @@ import (
 	"langdag.com/langdag/types"
 )
 
-func phase6CatalogWithRouteDependentPricing() *langdag.ModelCatalog {
+func catalogWithRouteDependentPricing() *langdag.ModelCatalog {
 	catalog := langdag.ReferenceCatalogV1()
 	generatedAt := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
 	catalog.GeneratedAt = generatedAt
 	catalog.StaleAfter = generatedAt.Add(30 * 24 * time.Hour)
 	catalog.Models = map[string]*langdag.ModelV1{
-		"openai/gpt-phase6": {
-			ID:            "openai/gpt-phase6",
+		"openai/gpt-route-priced": {
+			ID:            "openai/gpt-route-priced",
 			ProviderID:    "openai",
-			Name:          "GPT Phase 6",
+			Name:          "GPT Route Priced",
 			ContextWindow: 128000,
 		},
 	}
 	catalog.Offerings = []langdag.ModelOfferingV1{
 		{
-			ID:               "openai-direct:gpt-phase6",
-			CanonicalModelID: "openai/gpt-phase6",
+			ID:               "openai-direct:gpt-route-priced",
+			CanonicalModelID: "openai/gpt-route-priced",
 			DeploymentID:     "openai-direct",
-			NativeModelID:    "gpt-phase6",
+			NativeModelID:    "gpt-route-priced",
 			Pricing: langdag.PricingV1{
 				Status:   langdag.PricingKnown,
 				Currency: "USD",
@@ -42,10 +42,10 @@ func phase6CatalogWithRouteDependentPricing() *langdag.ModelCatalog {
 			},
 		},
 		{
-			ID:               "openrouter:openai/gpt-phase6",
-			CanonicalModelID: "openai/gpt-phase6",
+			ID:               "openrouter:openai/gpt-route-priced",
+			CanonicalModelID: "openai/gpt-route-priced",
 			DeploymentID:     "openrouter",
-			NativeModelID:    "openai/gpt-phase6",
+			NativeModelID:    "openai/gpt-route-priced",
 			Pricing: langdag.PricingV1{
 				Status:   langdag.PricingKnown,
 				Currency: "USD",
@@ -60,13 +60,13 @@ func phase6CatalogWithRouteDependentPricing() *langdag.ModelCatalog {
 	return catalog
 }
 
-func TestPhase6CanonicalCatalogRowsAndRoutePriceRange(t *testing.T) {
-	models := modelsFromCatalog(phase6CatalogWithRouteDependentPricing())
-	model := findModelByID(findModelByIDOptions{models: models, id: "openai/gpt-phase6"})
+func TestCatalogCanonicalCatalogRowsAndRoutePriceRange(t *testing.T) {
+	models := modelsFromCatalog(catalogWithRouteDependentPricing())
+	model := findModelByID(findModelByIDOptions{models: models, id: "openai/gpt-route-priced"})
 	if model == nil {
 		t.Fatal("canonical model row not found")
 	}
-	if model.ID != "openai/gpt-phase6" || model.Provider != "openai" {
+	if model.ID != "openai/gpt-route-priced" || model.Provider != "openai" {
 		t.Fatalf("model identity = %+v", *model)
 	}
 	if len(model.Deployments) != 2 {
@@ -75,16 +75,16 @@ func TestPhase6CanonicalCatalogRowsAndRoutePriceRange(t *testing.T) {
 	if !model.RouteDependentPricing || model.PriceLabel != "$2-$3/$8-$15/M" {
 		t.Fatalf("price summary = routeDependent:%v label:%q", model.RouteDependentPricing, model.PriceLabel)
 	}
-	if findModelByID(findModelByIDOptions{models: models, id: "gpt-phase6"}) == nil {
+	if findModelByID(findModelByIDOptions{models: models, id: "gpt-route-priced"}) == nil {
 		t.Fatal("native model ID should resolve to the canonical row for old-node fallback")
 	}
 	_, lines := formatModelMenuLines(formatModelMenuLinesOptions{models: []ModelDef{*model}, activeID: model.ID})
-	if len(lines) != 1 || !strings.Contains(lines[0], "openai/gpt-phase6") || !strings.Contains(lines[0], "$2-$3/$8-$15/M") {
+	if len(lines) != 1 || !strings.Contains(lines[0], "openai/gpt-route-priced") || !strings.Contains(lines[0], "$2-$3/$8-$15/M") {
 		t.Fatalf("picker line does not show canonical row and route range: %q", lines)
 	}
 }
 
-func TestPhase6AvailabilityUsesOpenRouterAndAzureDeployments(t *testing.T) {
+func TestCatalogAvailabilityUsesOpenRouterAndAzureDeployments(t *testing.T) {
 	openRouterOnly := ModelDef{
 		Provider:      "z-ai",
 		OwnerProvider: "z-ai",
@@ -144,7 +144,7 @@ func TestPhase6AvailabilityUsesOpenRouterAndAzureDeployments(t *testing.T) {
 	}
 }
 
-func TestPhase7AvailabilityHonorsAuthoritativeRoutingWithoutHidingMixedRoutes(t *testing.T) {
+func TestDeploymentRoutingAvailabilityHonorsAuthoritativeRoutingWithoutHidingMixedRoutes(t *testing.T) {
 	model := ModelDef{
 		Provider:      ProviderOpenAI,
 		OwnerProvider: ProviderOpenAI,
@@ -188,7 +188,7 @@ func TestPhase7AvailabilityHonorsAuthoritativeRoutingWithoutHidingMixedRoutes(t 
 	}
 }
 
-func TestPhase7RoutingValidationIndexCapturesAzureMappingAvailability(t *testing.T) {
+func TestDeploymentRoutingRoutingValidationIndexCapturesAzureMappingAvailability(t *testing.T) {
 	model := ModelDef{
 		Provider:      ProviderOpenAI,
 		OwnerProvider: ProviderOpenAI,
@@ -224,7 +224,7 @@ func TestPhase7RoutingValidationIndexCapturesAzureMappingAvailability(t *testing
 	}
 }
 
-func TestPhase6EnvOnlyDeploymentConfiguresAvailability(t *testing.T) {
+func TestCatalogEnvOnlyDeploymentConfiguresAvailability(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-env")
 	cfg := Config{}
 	if !cfg.configuredProviders()[ProviderOpenAI] {
@@ -253,7 +253,7 @@ func TestPhase6EnvOnlyDeploymentConfiguresAvailability(t *testing.T) {
 	}
 }
 
-func TestPhase6ConfiguredProviderUsesEligibleDeployment(t *testing.T) {
+func TestCatalogConfiguredProviderUsesEligibleDeployment(t *testing.T) {
 	model := ModelDef{
 		Provider:      "openai",
 		OwnerProvider: "openai",
@@ -281,7 +281,7 @@ func TestPhase6ConfiguredProviderUsesEligibleDeployment(t *testing.T) {
 	}
 }
 
-func TestPhase6ConfigRowsShowCanonicalOpenRouterSelection(t *testing.T) {
+func TestCatalogConfigRowsShowCanonicalOpenRouterSelection(t *testing.T) {
 	model := ModelDef{
 		Provider:      "z-ai",
 		OwnerProvider: "z-ai",
@@ -297,7 +297,7 @@ func TestPhase6ConfigRowsShowCanonicalOpenRouterSelection(t *testing.T) {
 		}},
 	}
 	cfg := Config{OpenRouterAPIKey: "sk-or", ActiveModel: model.ID}
-	app := &App{cfgDraft: cfg, models: []ModelDef{model}, cfgTab: 2, width: 100}
+	app := &App{cfgDraft: cfg, models: []ModelDef{model}, cfgTab: cfgTabGlobal, width: 100}
 	rows := strings.Join(app.buildConfigRows(), "\n")
 	if !strings.Contains(rows, model.ID) {
 		t.Fatalf("config rows should show canonical OpenRouter selection, got:\n%s", rows)
@@ -325,7 +325,7 @@ func TestPhase6ConfigRowsShowCanonicalOpenRouterSelection(t *testing.T) {
 	}
 }
 
-func TestPhase6ServerToolsUseEligibleDeploymentsOnly(t *testing.T) {
+func TestCatalogServerToolsUseEligibleDeploymentsOnly(t *testing.T) {
 	model := ModelDef{
 		Provider:      "anthropic",
 		OwnerProvider: "anthropic",
@@ -363,17 +363,17 @@ func TestPhase6ServerToolsUseEligibleDeploymentsOnly(t *testing.T) {
 	}
 }
 
-func TestPhase6OpenRouterDynamicMergeAvoidsDuplicateCanonicalRows(t *testing.T) {
-	base := modelsFromCatalog(phase6CatalogWithRouteDependentPricing())
+func TestCatalogOpenRouterDynamicMergeAvoidsDuplicateCanonicalRows(t *testing.T) {
+	base := modelsFromCatalog(catalogWithRouteDependentPricing())
 	dynamic := []ModelDef{{
 		Provider:      ProviderOpenRouter,
 		OwnerProvider: "openai",
-		ID:            "openai/gpt-phase6",
-		CanonicalID:   "openai/gpt-phase6",
+		ID:            "openai/gpt-route-priced",
+		CanonicalID:   "openai/gpt-route-priced",
 		Deployments: []ModelDeploymentDef{{
 			DeploymentID:  "openrouter",
-			OfferingID:    "openrouter:openai/gpt-phase6",
-			NativeModelID: "openai/gpt-phase6",
+			OfferingID:    "openrouter:openai/gpt-route-priced",
+			NativeModelID: "openai/gpt-route-priced",
 			PricingSnapshot: types.PricingSnapshot{
 				Status:     types.CostStatusKnown,
 				Currency:   "USD",
@@ -381,25 +381,25 @@ func TestPhase6OpenRouterDynamicMergeAvoidsDuplicateCanonicalRows(t *testing.T) 
 				RatesPer1M: map[string]float64{"input_tokens": 3, "output_tokens": 15},
 			},
 		}},
-		NativeModelIDs: []string{"openai/gpt-phase6"},
+		NativeModelIDs: []string{"openai/gpt-route-priced"},
 	}}
 	merged := mergeDynamicModels(mergeDynamicModelsOptions{base: base, dynamic: dynamic})
 	var count int
 	for _, model := range merged {
-		if model.ID == "openai/gpt-phase6" {
+		if model.ID == "openai/gpt-route-priced" {
 			count++
 		}
 	}
 	if count != 1 {
 		t.Fatalf("canonical OpenRouter merge produced %d rows, want 1: %+v", count, merged)
 	}
-	result := computeCostResult(computeCostOptions{models: merged, modelID: "openai/gpt-phase6", usage: types.Usage{InputTokens: 1000, OutputTokens: 500}})
+	result := computeCostResult(computeCostOptions{models: merged, modelID: "openai/gpt-route-priced", usage: types.Usage{InputTokens: 1000, OutputTokens: 500}})
 	if result.Status != types.CostStatusUnknown || len(result.MissingDimensions) == 0 || !strings.HasPrefix(result.MissingDimensions[0], "route_dependent_pricing:") {
 		t.Fatalf("route-dependent canonical fallback should be explicit unknown, got %+v", result)
 	}
 }
 
-func TestPhase6LoadedConfigMigratesOldModelIDs(t *testing.T) {
+func TestCatalogLoadedConfigMigratesOldModelIDs(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, configDir)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -418,7 +418,7 @@ func TestPhase6LoadedConfigMigratesOldModelIDs(t *testing.T) {
 	}
 }
 
-func TestPhase6LoadedConfigPreservesUnknownOllamaAsCanonical(t *testing.T) {
+func TestCatalogLoadedConfigPreservesUnknownOllamaAsCanonical(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, configDir)
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
@@ -437,7 +437,7 @@ func TestPhase6LoadedConfigPreservesUnknownOllamaAsCanonical(t *testing.T) {
 	}
 }
 
-func TestPhase6LangdagDeploymentsAndRoutingPolicy(t *testing.T) {
+func TestCatalogLangdagDeploymentsAndRoutingPolicy(t *testing.T) {
 	cfg := Config{
 		OpenAIAPIKey:     "sk-openai",
 		OpenRouterAPIKey: "sk-or",
@@ -467,7 +467,7 @@ func TestPhase6LangdagDeploymentsAndRoutingPolicy(t *testing.T) {
 	}
 }
 
-func TestPhase6ExactProviderCostAndOldNodeFallback(t *testing.T) {
+func TestCatalogExactProviderCostAndOldNodeFallback(t *testing.T) {
 	metadata := types.AssistantNodeMetadata{
 		NormalizedUsage: &types.NormalizedUsage{InputTokens: 1000, OutputTokens: 500},
 		PricingSnapshot: &types.PricingSnapshot{
@@ -504,7 +504,7 @@ func TestPhase6ExactProviderCostAndOldNodeFallback(t *testing.T) {
 	}
 }
 
-func TestPhase6StructuredUnknownCostIsAuthoritative(t *testing.T) {
+func TestCatalogStructuredUnknownCostIsAuthoritative(t *testing.T) {
 	metadata := types.AssistantNodeMetadata{
 		NormalizedUsage: &types.NormalizedUsage{InputTokens: 1000, OutputTokens: 500},
 		PricingSnapshot: &types.PricingSnapshot{
@@ -537,7 +537,7 @@ func TestPhase6StructuredUnknownCostIsAuthoritative(t *testing.T) {
 	}
 }
 
-func TestPhase6AggregateCostKeepsUnknownStatus(t *testing.T) {
+func TestCatalogAggregateCostKeepsUnknownStatus(t *testing.T) {
 	app := &App{models: []ModelDef{{
 		Provider:              "openai",
 		OwnerProvider:         "openai",

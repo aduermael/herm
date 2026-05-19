@@ -58,7 +58,7 @@ func (t *blockingTool) Execute(ctx context.Context, _ json.RawMessage) (string, 
 }
 
 func (t *blockingTool) RequiresApproval(_ json.RawMessage) bool { return false }
-func (t *blockingTool) HostTool() bool                        { return false }
+func (t *blockingTool) HostTool() bool                          { return false }
 
 // --- Task 1a: NewAgent with option funcs ---
 
@@ -341,9 +341,9 @@ func (p *scriptedProvider) Complete(_ context.Context, _ *types.CompletionReques
 	if idx >= len(p.responses) {
 		return &types.CompletionResponse{
 			ID: "resp-test", Model: p.model,
-			Content: []types.ContentBlock{{Type: "text", Text: "ok"}},
+			Content:    []types.ContentBlock{{Type: "text", Text: "ok"}},
 			StopReason: "end_turn",
-			Usage: types.Usage{InputTokens: 100, OutputTokens: 50},
+			Usage:      types.Usage{InputTokens: 100, OutputTokens: 50},
 		}, nil
 	}
 	r := p.responses[idx]
@@ -423,7 +423,7 @@ func (p *scriptedProvider) Stream(_ context.Context, req *types.CompletionReques
 	return ch, nil
 }
 
-func (p *scriptedProvider) Name() string             { return "mock" }
+func (p *scriptedProvider) Name() string              { return "mock" }
 func (p *scriptedProvider) Models() []types.ModelInfo { return nil }
 
 // drainEvents collects all agent events until EventDone, with a timeout.
@@ -918,7 +918,7 @@ func TestEmitUsageMissingNode(t *testing.T) {
 	}
 }
 
-// --- Phase 4: Parallel agent execution ---
+// --- Parallel agent execution ---
 
 // parallelTracker is a tool that tracks concurrent execution. Each Execute call
 // increments a running counter, blocks on a gate channel, then decrements.
@@ -959,7 +959,7 @@ func (t *parallelTracker) Execute(ctx context.Context, _ json.RawMessage) (strin
 }
 
 func (t *parallelTracker) RequiresApproval(_ json.RawMessage) bool { return false }
-func (t *parallelTracker) HostTool() bool                        { return false }
+func (t *parallelTracker) HostTool() bool                          { return false }
 
 func TestRunParallelAgentCalls(t *testing.T) {
 	// LLM returns 3 agent tool calls in one response.
@@ -1179,7 +1179,7 @@ func TestRunParallelAgentEventIDs(t *testing.T) {
 	}
 }
 
-// --- Phase 5: Token budget awareness ---
+// --- Token budget awareness ---
 
 func TestSystemPromptIsStatic(t *testing.T) {
 	client := newTestClient("ok")
@@ -1433,7 +1433,7 @@ func TestBuildPromptOptsMaxTokensDefault(t *testing.T) {
 	}
 }
 
-// --- Phase: Fix agent silent stops ---
+// --- Agent silent-stop fixes ---
 
 // panicTool is a tool that panics during Execute to test panic recovery.
 type panicTool struct {
@@ -1450,7 +1450,7 @@ func (t *panicTool) Execute(_ context.Context, _ json.RawMessage) (string, error
 }
 
 func (t *panicTool) RequiresApproval(_ json.RawMessage) bool { return false }
-func (t *panicTool) HostTool() bool                        { return false }
+func (t *panicTool) HostTool() bool                          { return false }
 
 func TestEmitNonBlockingWhenChannelFull(t *testing.T) {
 	client := newTestClient("ok")
@@ -1558,7 +1558,7 @@ func TestSubAgentManyEventsNoDeadlock(t *testing.T) {
 	<-drainDone
 }
 
-// --- Phase 6b: End-to-end exploration test ---
+// --- End-to-end exploration test ---
 
 func TestExplorationFlowOutlineThenReadThenAgent(t *testing.T) {
 	// Simulates: LLM calls outline → reads file → spawns sub-agent → synthesizes.
@@ -1596,7 +1596,7 @@ func TestExplorationFlowOutlineThenReadThenAgent(t *testing.T) {
 			},
 			// Response 3: after agent result → final synthesis
 			{
-				text: "The code uses structured error handling with log.Printf and os.Exit.",
+				text:     "The code uses structured error handling with log.Printf and os.Exit.",
 				tokensIn: 500, tokensOut: 100,
 			},
 		},
@@ -1680,7 +1680,7 @@ func TestExplorationFlowParallelSubAgents(t *testing.T) {
 				tokensIn: 200, tokensOut: 50,
 			},
 			{
-				text: "Module A handles auth, Module B handles data processing.",
+				text:     "Module A handles auth, Module B handles data processing.",
 				tokensIn: 400, tokensOut: 100,
 			},
 		},
@@ -1734,15 +1734,15 @@ func TestExplorationFlowParallelSubAgents(t *testing.T) {
 	}
 }
 
-// --- Phase 6c: Resilience tests ---
+// --- Resilience tests ---
 
 // failThenSucceedProvider returns errors on specified call indices, then succeeds.
 type failThenSucceedProvider struct {
 	mu          sync.Mutex
 	callIdx     int
-	failOnCalls map[int]error          // call index → error to return
-	responses   []scriptedResponse     // responses for successful calls
-	successIdx  int                    // tracks which response to use next
+	failOnCalls map[int]error      // call index → error to return
+	responses   []scriptedResponse // responses for successful calls
+	successIdx  int                // tracks which response to use next
 	model       string
 }
 
@@ -1816,7 +1816,7 @@ func (p *failThenSucceedProvider) Stream(_ context.Context, req *types.Completio
 	return ch, nil
 }
 
-func (p *failThenSucceedProvider) Name() string             { return "mock" }
+func (p *failThenSucceedProvider) Name() string              { return "mock" }
 func (p *failThenSucceedProvider) Models() []types.ModelInfo { return nil }
 
 func TestResilienceRetrySucceedsAfterTransientError(t *testing.T) {
@@ -2037,7 +2037,7 @@ func TestResilienceNoDeadlockOnMultipleFailures(t *testing.T) {
 	}
 }
 
-// --- Phase 1: Stream timeout tests ---
+// --- Stream timeout tests ---
 
 func TestDrainStreamTimeout(t *testing.T) {
 	// A stream that sends a few chunks then stalls should trigger a timeout.
@@ -2154,7 +2154,7 @@ func TestDrainStreamErrorChunk(t *testing.T) {
 	}
 }
 
-// --- Phase 2: doneCh tests ---
+// --- doneCh tests ---
 
 func TestDoneChClosedOnEventDone(t *testing.T) {
 	// Verify that doneCh is closed when EventDone is emitted.
@@ -2352,7 +2352,7 @@ check:
 	}
 }
 
-// --- Phase 3: Stream retry tests ---
+// --- Stream retry tests ---
 
 // streamFailThenSucceedProvider sends partial chunks then a StreamEventError
 // (simulating a mid-stream network failure) on specified call indices. On other
@@ -2429,7 +2429,7 @@ func (p *streamFailThenSucceedProvider) Stream(_ context.Context, req *types.Com
 	return ch, nil
 }
 
-func (p *streamFailThenSucceedProvider) Name() string             { return "mock" }
+func (p *streamFailThenSucceedProvider) Name() string              { return "mock" }
 func (p *streamFailThenSucceedProvider) Models() []types.ModelInfo { return nil }
 
 func TestStreamRetrySucceedsAfterInterruption(t *testing.T) {
@@ -2657,7 +2657,7 @@ func TestStreamRetryDuringToolLoop(t *testing.T) {
 	}
 }
 
-// --- Phase 5: Integration Tests ---
+// --- Integration tests ---
 
 // stallThenSucceedProvider sends partial text chunks then stalls (no Done, no
 // error, no close) on specified calls. This simulates a provider that hangs
@@ -2669,7 +2669,7 @@ type stallThenSucceedProvider struct {
 	stallOnCalls map[int]bool       // call indices where stream should stall
 	responses    []scriptedResponse // responses for all calls
 	model        string
-	cleanup      chan struct{}       // close to release stalled goroutines (test cleanup)
+	cleanup      chan struct{} // close to release stalled goroutines (test cleanup)
 }
 
 func (p *stallThenSucceedProvider) Complete(_ context.Context, _ *types.CompletionRequest) (*types.CompletionResponse, error) {
@@ -2737,7 +2737,7 @@ func (p *stallThenSucceedProvider) Stream(_ context.Context, req *types.Completi
 	return ch, nil
 }
 
-func (p *stallThenSucceedProvider) Name() string             { return "mock" }
+func (p *stallThenSucceedProvider) Name() string              { return "mock" }
 func (p *stallThenSucceedProvider) Models() []types.ModelInfo { return nil }
 
 func TestIntegrationStreamStallRetrySucceeds(t *testing.T) {
@@ -2747,7 +2747,7 @@ func TestIntegrationStreamStallRetrySucceeds(t *testing.T) {
 		model:        "test-model",
 		stallOnCalls: map[int]bool{0: true},
 		responses: []scriptedResponse{
-			{text: "chunk one two three", tokensIn: 100, tokensOut: 50}, // call 0: stalls after sending chunks
+			{text: "chunk one two three", tokensIn: 100, tokensOut: 50},            // call 0: stalls after sending chunks
 			{text: "Complete response after retry.", tokensIn: 100, tokensOut: 50}, // call 1: succeeds
 		},
 		cleanup: make(chan struct{}),
@@ -2984,11 +2984,11 @@ func TestAgentInjectBackgroundResultConcurrent(t *testing.T) {
 	}
 }
 
-// --- Phase 5: max_tokens handling in herm agent loop ---
+// --- max_tokens handling in herm agent loop ---
 
 func TestRunMaxTokensEmptyResponse(t *testing.T) {
 	// When the model returns max_tokens with no usable content, langdag's
-	// Phase 4b emits an error (no node saved). The agent should surface an
+	// The max-token error path emits an error (no node saved). The agent should surface an
 	// error event to the user rather than silently succeeding.
 	prov := &scriptedProvider{
 		model: "test-model",
@@ -3075,7 +3075,7 @@ func TestRunMaxTokensCrashChain_ConversationNotCorrupted(t *testing.T) {
 	// 2. Verify agent emits appropriate error
 	// 3. Verify the conversation state is not corrupted — a follow-up prompt works
 	//
-	// The scriptedProvider goes through langdag, so Phase 4b intercepts the
+	// The scriptedProvider goes through langdag, so the max-token guard intercepts the
 	// empty max_tokens response. The agent should see errors and complete gracefully.
 	// Then a second Run() on the same client should succeed normally.
 
@@ -3144,7 +3144,7 @@ func TestRunMaxTokensCrashChain_ConversationNotCorrupted(t *testing.T) {
 	}
 }
 
-// --- Phase 6: Agent Loop Silent Failures & Edge Cases ---
+// --- Agent loop silent failures and edge cases ---
 
 // --- Task 6a: Audit silent error paths ---
 
@@ -3405,8 +3405,8 @@ func TestMaybeCompact_AgentContinuesAfterFailure(t *testing.T) {
 // returns the original content for various malformed inputs.
 func TestReplaceToolResultContent_MalformedJSON(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
+		name  string
+		input string
 	}{
 		{"empty string", ""},
 		{"plain text", "just some text"},
@@ -3827,7 +3827,7 @@ func (p *alwaysToolProvider) Stream(_ context.Context, req *types.CompletionRequ
 	return ch, nil
 }
 
-func (p *alwaysToolProvider) Name() string             { return "mock" }
+func (p *alwaysToolProvider) Name() string              { return "mock" }
 func (p *alwaysToolProvider) Models() []types.ModelInfo { return nil }
 
 // TestMaxToolIterations verifies that when the agent reaches exactly
@@ -3887,7 +3887,7 @@ func TestMaxToolIterations_DefaultValue(t *testing.T) {
 	}
 }
 
-// --- Phase 13: Integration — End-to-End Error Chains ---
+// --- Integration: end-to-end error chains ---
 
 // TestE2EPermanentErrorChain verifies the full error chain when a provider
 // returns a non-retryable error (401): provider → langdag retry (skipped) →
@@ -4053,7 +4053,7 @@ func TestE2EMidStreamFailureRetryChain(t *testing.T) {
 		model:           "test-model",
 		failStreamCalls: map[int]bool{0: true}, // first call fails mid-stream
 		responses: []scriptedResponse{
-			{text: "The quick brown fox", tokensIn: 100, tokensOut: 50},       // partial (fails)
+			{text: "The quick brown fox", tokensIn: 100, tokensOut: 50},        // partial (fails)
 			{text: "The quick brown fox jumps!", tokensIn: 150, tokensOut: 60}, // retry succeeds
 		},
 	}
@@ -4066,11 +4066,11 @@ func TestE2EMidStreamFailureRetryChain(t *testing.T) {
 
 	// Verify the event sequence ordering: partial text → error → clear → retry → full text → usage → done.
 	var (
-		clearIdx  = -1
-		retryIdx  = -1
-		hasDone   bool
-		hasUsage  bool
-		usageIn   int
+		clearIdx = -1
+		retryIdx = -1
+		hasDone  bool
+		hasUsage bool
+		usageIn  int
 	)
 
 	// Collect text before and after StreamClear to verify no duplication.
@@ -4610,7 +4610,7 @@ func TestE2EGracefulExhaustionWithBackgroundSubAgent(t *testing.T) {
 	}
 }
 
-// --- Phase 1c: background completion tests ---
+// --- Background completion tests ---
 
 func TestBackgroundCompletionWaitsForPendingAgents(t *testing.T) {
 	// Scenario: LLM returns end_turn (no tool calls) on the initial call,
@@ -4755,7 +4755,7 @@ func TestBackgroundCompletionCycleCap(t *testing.T) {
 	}
 }
 
-// --- Phase 4: Integration test — full background lifecycle ---
+// --- Integration test: full background lifecycle ---
 
 // gatedProvider returns pre-defined responses, optionally blocking on per-call
 // gates. A gate is a channel that must be closed before the response is sent.
@@ -4829,7 +4829,7 @@ func (p *gatedProvider) Stream(ctx context.Context, _ *types.CompletionRequest) 
 	return ch, nil
 }
 
-func (p *gatedProvider) Name() string             { return "gated" }
+func (p *gatedProvider) Name() string              { return "gated" }
 func (p *gatedProvider) Models() []types.ModelInfo { return nil }
 
 // TestE2EBackgroundLifecycleThreeAgents exercises the complete scenario from
@@ -4957,7 +4957,7 @@ func TestE2EBackgroundLifecycleThreeAgents(t *testing.T) {
 		}
 	}
 
-	// Completed agents should still be visible (Phase 2 fix).
+	// Completed agents should still be visible.
 	lines := app.subAgentDisplayLines()
 	if len(lines) == 0 {
 		t.Error("subAgentDisplayLines should show completed agents, not return nil")
@@ -5262,7 +5262,7 @@ func TestSetTurnProgressThreadSafe(t *testing.T) {
 		go func(turn int) {
 			defer wg.Done()
 			agent.SetTurnProgress(SetTurnProgressOptions{Used: turn, Max: maxT})
-			agent.SetTokenProgress(SetTokenProgressOptions{InputTokens: turn*1000, OutputTokens: turn*200})
+			agent.SetTokenProgress(SetTokenProgressOptions{InputTokens: turn * 1000, OutputTokens: turn * 200})
 			_ = agent.budgetReminderBlock()
 		}(i)
 	}
@@ -5270,7 +5270,7 @@ func TestSetTurnProgressThreadSafe(t *testing.T) {
 	// If we get here without a race detector complaint, the test passes.
 }
 
-// --- Phase 4: Main agent budget visibility ---
+// --- Main agent budget visibility ---
 
 func TestContextWindowUtilizationShown(t *testing.T) {
 	client := newTestClient("ok")
