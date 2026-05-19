@@ -155,7 +155,7 @@ func langdagRoutingPolicyFromConfig(policy *RoutingPolicy) *langdag.RoutingPolic
 }
 
 func langdagRoutingStagesFromConfig(stages []RoutingStage) []langdag.RoutingStage {
-	if len(stages) == 0 {
+	if stages == nil {
 		return nil
 	}
 	converted := make([]langdag.RoutingStage, 0, len(stages))

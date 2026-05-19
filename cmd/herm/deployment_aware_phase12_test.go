@@ -189,6 +189,10 @@ func TestPhase12ExplicitEmptyAdvancedDefaultRouteIsPreserved(t *testing.T) {
 	if !strings.Contains(string(data), `"default":[]`) {
 		t.Fatalf("explicit empty routing.default was not preserved in JSON: %s", data)
 	}
+	langdagPolicy := langdagRoutingPolicyFromConfig(cfg.Routing)
+	if langdagPolicy == nil || langdagPolicy.Default == nil || len(langdagPolicy.Default) != 0 {
+		t.Fatalf("explicit empty routing.default was not preserved for langdag: %+v", langdagPolicy)
+	}
 }
 
 func TestPhase12RoutingTabShowsScopedActionsAndNoDefaultStep(t *testing.T) {

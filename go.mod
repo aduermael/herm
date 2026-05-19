@@ -6,7 +6,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/term v0.40.0
-	langdag.com/langdag v0.8.3
+	langdag.com/langdag v0.8.4-0.20260518225953-9090fb299f56
 )
 
 require (

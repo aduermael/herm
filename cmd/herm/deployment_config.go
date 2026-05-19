@@ -404,6 +404,7 @@ func defaultModelIDMigrationOfferings() []ModelIDMigrationOffering {
 	offerings := []ModelIDMigrationOffering{
 		{CanonicalModelID: "anthropic/claude-sonnet-4-20250514", DeploymentID: "anthropic-direct", NativeModelID: "claude-sonnet-4-20250514"},
 		{CanonicalModelID: "anthropic/claude-sonnet-4-6", DeploymentID: "anthropic-direct", NativeModelID: "claude-sonnet-4-6"},
+		{CanonicalModelID: "anthropic/claude-opus-4-6", DeploymentID: "anthropic-direct", NativeModelID: "claude-opus-4-6"},
 		{CanonicalModelID: "anthropic/claude-haiku-4-5", DeploymentID: "anthropic-direct", NativeModelID: "claude-haiku-4-5"},
 		{CanonicalModelID: "openai/gpt-4.1-2025-04-14", DeploymentID: "openai-direct", NativeModelID: "gpt-4.1-2025-04-14"},
 		{CanonicalModelID: "openai/gpt-4.1-mini-2025-04-14", DeploymentID: "openai-direct", NativeModelID: "gpt-4.1-mini-2025-04-14"},
