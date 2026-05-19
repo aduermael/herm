@@ -1094,6 +1094,9 @@ func TestSubAgentBackgroundForwardsEvents(t *testing.T) {
 	if !gotDelta {
 		t.Error("expected at least one EventSubAgentDelta")
 	}
+	if !tool.DrainGoroutines(10 * time.Second) {
+		t.Fatal("background sub-agent goroutine did not exit")
+	}
 }
 
 // waitForBgAgent polls until a background agent completes or the timeout expires.
