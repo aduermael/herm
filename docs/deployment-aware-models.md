@@ -161,14 +161,15 @@ canonical model.
 
 Herm loads model data from the langdag catalog in this order:
 
-1. A valid cache at `~/.herm/model_catalog.json`.
-2. The embedded catalog bundled with the app.
-3. A best-effort background refresh from langdag's static catalog artifact.
+1. The embedded catalog bundled with langdag.
+2. A best-effort background refresh from langdag's static catalog artifact.
 
-Startup never blocks on the remote refresh. Invalid, stale, or partially
-generated remote data cannot replace the local cache. Users can disable refresh
-with `LANGDAG_MODEL_CATALOG_REFRESH=false`, point to another catalog with
-`LANGDAG_MODEL_CATALOG_URL`, or adjust the fetch limit with
+Startup never blocks on the remote refresh, and Herm does not read or write
+`~/.herm/model_catalog.json` during catalog startup. A stale local catalog file
+therefore cannot override the bundled langdag snapshot. Invalid, stale, or
+partially generated remote data cannot replace the in-memory startup catalog.
+Users can disable refresh with `LANGDAG_MODEL_CATALOG_REFRESH=false`, point to
+another catalog with `LANGDAG_MODEL_CATALOG_URL`, or adjust the fetch limit with
 `LANGDAG_MODEL_CATALOG_TIMEOUT`.
 
 ## Usage And Cost

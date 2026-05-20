@@ -315,6 +315,31 @@ func TestModelsFromCatalogServerTools(t *testing.T) {
 	}
 }
 
+func TestModelsFromCatalogUsesOfferingAPIProtocolOverride(t *testing.T) {
+	catalog := langdag.ReferenceCatalogV1()
+	for i := range catalog.Offerings {
+		if catalog.Offerings[i].ID == "openai-direct:gpt-4.1-2025-04-14" {
+			catalog.Offerings[i].APIProtocolID = "openai-chat-completions"
+		}
+	}
+
+	models := modelsFromCatalog(catalog)
+	model := findModelByID(findModelByIDOptions{models: models, id: "openai/gpt-4.1-2025-04-14"})
+	if model == nil {
+		t.Fatal("openai/gpt-4.1-2025-04-14 not found")
+	}
+	var got string
+	for _, deployment := range model.Deployments {
+		if deployment.DeploymentID == "openai-direct" {
+			got = deployment.APIProtocolID
+			break
+		}
+	}
+	if got != "openai-chat-completions" {
+		t.Fatalf("openai-direct APIProtocolID = %q, want offering override openai-chat-completions", got)
+	}
+}
+
 func TestModelsFromCatalogNil(t *testing.T) {
 	models := modelsFromCatalog(nil)
 	if models != nil {

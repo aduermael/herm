@@ -327,7 +327,7 @@ func TestLoadProjectConfigMalformedJSON(t *testing.T) {
 func TestProjectConfigRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	original := ProjectConfig{
-		ActiveModel:      "gpt-4",
+		ActiveModel:      "openai/gpt-4",
 		Personality:      "concise",
 		SubAgentMaxTurns: 10,
 	}

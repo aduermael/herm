@@ -3,8 +3,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -259,13 +257,4 @@ func formatModelMenuLines(opts formatModelMenuLinesOptions) (string, []string) {
 			marker)
 	}
 	return header, lines
-}
-
-// catalogCachePath returns the path to the langdag model catalog cache file.
-func catalogCachePath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".herm", "model_catalog.json")
 }

@@ -114,50 +114,49 @@ func clearDeploymentCredentialEnv(t *testing.T) {
 	}
 }
 
-func TestHermCatalogCatalogStartupSourcesIntegration(t *testing.T) {
+func TestHermCatalogStartupUsesEmbeddedThenRemoteRefresh(t *testing.T) {
 	clearDeploymentCredentialEnv(t)
 
-	embedded, err := langdag.LoadModelCatalogWithOptions(langdag.CatalogLoadOptions{
-		CachePath: filepath.Join(t.TempDir(), "missing-catalog.json"),
-	})
+	cachePath := filepath.Join(t.TempDir(), "model_catalog.json")
+	cachedCatalog := hermDeploymentCatalog("openai/gpt-cached-catalog", "gpt-cached-catalog", "openai/gpt-cached-catalog")
+	writeHermDeploymentCatalogCache(t, cachePath, cachedCatalog)
+	cachedBefore, err := os.ReadFile(cachePath)
 	if err != nil {
-		t.Fatalf("Load embedded fallback: %v", err)
+		t.Fatalf("read cache: %v", err)
+	}
+
+	embedded, err := loadStartupModelCatalog()
+	if err != nil {
+		t.Fatalf("load startup catalog: %v", err)
 	}
 	if embedded.Source != langdag.CatalogSourceEmbedded {
-		t.Fatalf("embedded source = %q", embedded.Source)
+		t.Fatalf("startup catalog source = %q, want embedded", embedded.Source)
+	}
+	if embedded.CachePath != "" {
+		t.Fatalf("startup catalog cache path = %q, want empty", embedded.CachePath)
 	}
 	app := &App{resultCh: make(chan any, 8)}
 	app.handleResult(catalogMsg{catalog: embedded.Catalog, source: embedded.Source, diagnostics: embedded.Diagnostics})
 	if app.modelCatalog == nil || len(app.models) == 0 {
 		t.Fatalf("embedded catalog did not populate app models")
 	}
-
-	cachePath := filepath.Join(t.TempDir(), "model_catalog.json")
-	cachedCatalog := hermDeploymentCatalog("openai/gpt-cached-catalog", "gpt-cached-catalog", "openai/gpt-cached-catalog")
-	writeHermDeploymentCatalogCache(t, cachePath, cachedCatalog)
-	cached, err := langdag.LoadModelCatalogWithOptions(langdag.CatalogLoadOptions{CachePath: cachePath})
-	if err != nil {
-		t.Fatalf("Load cached catalog: %v", err)
-	}
-	if cached.Source != langdag.CatalogSourceCache {
-		t.Fatalf("cached source = %q", cached.Source)
-	}
-	app.handleResult(catalogMsg{catalog: cached.Catalog, source: cached.Source, diagnostics: cached.Diagnostics})
-	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-cached-catalog"}) == nil {
-		t.Fatalf("cached catalog model not available after startup handling")
+	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-cached-catalog"}) != nil {
+		t.Fatalf("unexpectedly loaded stale Herm cache during startup")
 	}
 
 	remoteCatalog := hermDeploymentCatalog("openai/gpt-remote-catalog", "gpt-remote-catalog", "openai/gpt-remote-catalog")
 	server := serveHermDeploymentCatalog(t, remoteCatalog)
 	defer server.Close()
-	refreshed, err := langdag.RefreshModelCatalogCache(context.Background(), langdag.CatalogRefreshOptions{
-		CachePath: cachePath,
-		Endpoint:  server.URL,
-		Timeout:   time.Second,
-		Now:       func() time.Time { return remoteCatalog.GeneratedAt.Add(time.Hour) },
+	refreshed, err := langdag.LoadRemoteModelCatalog(context.Background(), langdag.CatalogRefreshOptions{
+		Endpoint: server.URL,
+		Timeout:  time.Second,
+		Now:      func() time.Time { return remoteCatalog.GeneratedAt.Add(time.Hour) },
 	})
 	if err != nil {
-		t.Fatalf("RefreshModelCatalogCache: %v", err)
+		t.Fatalf("LoadRemoteModelCatalog: %v", err)
+	}
+	if refreshed.ReplacedCache || refreshed.CachePath != "" {
+		t.Fatalf("remote refresh wrote cache: replaced=%v path=%q", refreshed.ReplacedCache, refreshed.CachePath)
 	}
 	app.handleResult(catalogMsg{catalog: refreshed.Catalog, source: refreshed.Source, diagnostics: refreshed.Diagnostics})
 	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-remote-catalog"}) == nil {
@@ -165,6 +164,13 @@ func TestHermCatalogCatalogStartupSourcesIntegration(t *testing.T) {
 	}
 	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-cached-catalog"}) != nil {
 		t.Fatalf("stale cached model remained after refreshed catalog replacement")
+	}
+	cachedAfter, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("read cache after refresh: %v", err)
+	}
+	if string(cachedAfter) != string(cachedBefore) {
+		t.Fatalf("remote refresh rewrote Herm catalog cache")
 	}
 }
 

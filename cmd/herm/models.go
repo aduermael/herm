@@ -144,7 +144,7 @@ func modelDeploymentFromOffering(offering *langdag.ModelOfferingV1) ModelDeploym
 	if offering == nil {
 		return ModelDeploymentDef{}
 	}
-	providerID, protocolID := deploymentProviderAndProtocol(offering.Deployment)
+	providerID, protocolID := offeringProviderAndProtocol(offering)
 	return ModelDeploymentDef{
 		DeploymentID:    offering.DeploymentID,
 		ProviderID:      providerID,
@@ -161,7 +161,7 @@ func modelDeploymentFromTemplate(template *langdag.ModelOfferingTemplateV1) Mode
 	if template == nil {
 		return ModelDeploymentDef{}
 	}
-	providerID, protocolID := deploymentProviderAndProtocol(template.Deployment)
+	providerID, protocolID := templateProviderAndProtocol(template)
 	return ModelDeploymentDef{
 		DeploymentID:    template.DeploymentID,
 		ProviderID:      providerID,
@@ -178,6 +178,26 @@ func deploymentProviderAndProtocol(deployment *langdag.DeploymentV1) (string, st
 		return "", ""
 	}
 	return deployment.ProviderID, deployment.APIProtocolID
+}
+
+func offeringProviderAndProtocol(offering *langdag.ModelOfferingV1) (string, string) {
+	providerID, protocolID := deploymentProviderAndProtocol(offering.Deployment)
+	if offering.APIProtocolID != "" {
+		protocolID = offering.APIProtocolID
+	} else if offering.APIProtocol != nil {
+		protocolID = offering.APIProtocol.ID
+	}
+	return providerID, protocolID
+}
+
+func templateProviderAndProtocol(template *langdag.ModelOfferingTemplateV1) (string, string) {
+	providerID, protocolID := deploymentProviderAndProtocol(template.Deployment)
+	if template.APIProtocolID != "" {
+		protocolID = template.APIProtocolID
+	} else if template.APIProtocol != nil {
+		protocolID = template.APIProtocol.ID
+	}
+	return providerID, protocolID
 }
 
 func supportedServerToolsFromCapabilities(capabilities langdag.CapabilitySetV1) []string {
