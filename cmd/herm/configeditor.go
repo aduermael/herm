@@ -366,35 +366,6 @@ func (a *App) configSelectedField() (cfgField, bool) {
 	return fields[a.cfgCursor], true
 }
 
-func (a *App) configHelpLine() string {
-	if a.cfgEditing {
-		return "\033[2mEnter=confirm  Esc=cancel\033[0m"
-	}
-	parts := []string{"←/→=tab"}
-	fields := a.cfgCurrentFields()
-	if len(fields) > 0 {
-		parts = append(parts, "↑/↓=select")
-		enterHint := "Enter=edit"
-		if a.cfgTab == cfgTabRouting {
-			enterHint = "Enter=select"
-		} else if field, ok := a.configSelectedField(); ok && (field.action != nil || field.picker != nil || field.toggle != nil) {
-			enterHint = "Enter=select"
-		}
-		parts = append(parts, enterHint)
-	}
-	if a.cfgTab == cfgTabProject && a.projectConfigRoot() != "" {
-		if field, ok := a.configSelectedField(); ok && field.set != nil && field.get != nil && field.get(a.cfgDraft) != "" {
-			parts = append(parts, "Backspace=unset")
-		}
-	}
-	parts = append(parts, "Esc=close")
-	line := "\033[2m" + strings.Join(parts, "  ")
-	if a.hasUnsavedConfigDrafts() {
-		line += "  " + runningStatusStyle(a.configAnimationElapsed()) + "Ctrl+S=save\033[0m\033[2m"
-	}
-	return line + "\033[0m"
-}
-
 func (a *App) resolvedExplorationDisplay(c Config) string {
 	if c.ExplorationModel != "" {
 		return c.ExplorationModel
@@ -590,7 +561,7 @@ func (a *App) buildConfigRows() []string {
 	if isProjectTab {
 		if projectRoot == "" {
 			rows = append(rows, "\033[2mNo project detected (not in a git repository)\033[0m")
-			rows = append(rows, a.configHelpLine())
+			rows = append(rows, a.configHelpRows()...)
 			return rows
 		}
 		rows = append(rows, fmt.Sprintf("\033[2mOverriding global config for current project (%s).\033[0m", projectRoot))
@@ -623,9 +594,9 @@ func (a *App) buildConfigRows() []string {
 		last := end
 		rows = append(rows, fmt.Sprintf("\033[2m(%d->%d / %d)\033[0m", first, last, total))
 		if a.menuModels != nil {
-			rows = append(rows, "\033[2mEnter=choose  Esc=close\033[0m")
+			rows = append(rows, layoutDimInlineBlocks(w, "Enter=choose", "Esc=close")...)
 		} else {
-			rows = append(rows, "\033[2m↑/↓=select  Enter=choose  Esc=close\033[0m")
+			rows = append(rows, layoutDimInlineBlocks(w, "↑/↓=select", "Enter=choose", "Esc=close")...)
 		}
 		return rows
 	}
@@ -719,7 +690,7 @@ func (a *App) buildConfigRows() []string {
 		}
 	}
 
-	rows = append(rows, a.configHelpLine())
+	rows = append(rows, a.configHelpRows()...)
 
 	return rows
 }

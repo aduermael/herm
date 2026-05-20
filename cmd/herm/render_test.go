@@ -544,6 +544,135 @@ func TestBuildInputRows(t *testing.T) {
 	}
 }
 
+func TestLayoutInlineBlocks(t *testing.T) {
+	strip := func(rows []string) []string {
+		out := make([]string, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, ansiEscRe.ReplaceAllString(row, ""))
+		}
+		return out
+	}
+
+	t.Run("wraps only between blocks", func(t *testing.T) {
+		first := "Using openai/gpt-5.5-2026-04-23"
+		second := "exploration: anthropic/claude-haiku-4-5"
+		width := max(visibleWidth(first), visibleWidth(second))
+		rows := layoutInlineBlocks(layoutInlineBlocksOptions{
+			blocks: []inlineBlock{
+				styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: first}),
+				styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: second}),
+			},
+			width: width,
+		})
+		plain := strip(rows)
+		want := []string{first, second}
+		if fmt.Sprint(plain) != fmt.Sprint(want) {
+			t.Fatalf("rows = %#v, want %#v", plain, want)
+		}
+		for _, row := range rows {
+			if got := visibleWidth(row); got > width {
+				t.Fatalf("row %q width = %d, want <= %d", ansiEscRe.ReplaceAllString(row, ""), got, width)
+			}
+		}
+	})
+
+	t.Run("uses one-space gaps", func(t *testing.T) {
+		rows := layoutInlineBlocks(layoutInlineBlocksOptions{
+			blocks: []inlineBlock{newInlineBlock("alpha"), newInlineBlock("beta"), newInlineBlock("gamma")},
+			width:  80,
+		})
+		plain := strings.Join(strip(rows), "\n")
+		if plain != "alpha beta gamma" {
+			t.Fatalf("plain rows = %q, want one-space gaps", plain)
+		}
+	})
+
+	t.Run("ellipsizes overwide block on its own row", func(t *testing.T) {
+		rows := layoutInlineBlocks(layoutInlineBlocksOptions{
+			blocks: []inlineBlock{newInlineBlock("ok"), newInlineBlock("exploration: anthropic/claude-haiku-4-5")},
+			width:  18,
+		})
+		plain := strip(rows)
+		if len(plain) != 2 {
+			t.Fatalf("rows = %#v, want 2 rows", plain)
+		}
+		if plain[0] != "ok" {
+			t.Fatalf("first row = %q, want ok", plain[0])
+		}
+		if !strings.Contains(plain[1], "…") {
+			t.Fatalf("second row = %q, want ellipsis", plain[1])
+		}
+		if got := visibleWidth(rows[1]); got > 18 {
+			t.Fatalf("ellipsized row width = %d, want <= 18", got)
+		}
+	})
+
+	t.Run("resets style at every block boundary", func(t *testing.T) {
+		rows := layoutInlineBlocks(layoutInlineBlocksOptions{
+			blocks: []inlineBlock{newInlineBlock("\033[31mred"), newInlineBlock("plain")},
+			width:  80,
+		})
+		if len(rows) != 1 {
+			t.Fatalf("rows = %#v, want one row", rows)
+		}
+		if !strings.HasPrefix(rows[0], ansiReset) {
+			t.Fatalf("row should start with reset: %q", rows[0])
+		}
+		if !strings.Contains(rows[0], " "+ansiReset+"plain") {
+			t.Fatalf("second block should start with reset after separator: %q", rows[0])
+		}
+	})
+}
+
+func TestModelDisplayLineUsesInlineBlocks(t *testing.T) {
+	model := "openai/gpt-5.5-2026-04-23"
+	exploration := "anthropic/claude-haiku-4-5"
+	content, blocks := modelDisplayLine(modelDisplayLineOptions{modelID: model, explorationID: exploration})
+	if content != "Using "+model+" exploration: "+exploration {
+		t.Fatalf("content = %q", content)
+	}
+
+	first := "Using " + model
+	second := "exploration: " + exploration
+	width := max(visibleWidth(first), visibleWidth(second))
+	rows := layoutInlineBlocks(layoutInlineBlocksOptions{blocks: blocks, width: width})
+	if len(rows) != 2 {
+		t.Fatalf("rows = %#v, want active and exploration on separate rows", rows)
+	}
+	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	if plain != first+"\n"+second {
+		t.Fatalf("plain rows = %q", plain)
+	}
+}
+
+func TestBuildBlockRowsRendersInlineMessageBlocks(t *testing.T) {
+	model := "openai/gpt-5.5-2026-04-23"
+	exploration := "anthropic/claude-haiku-4-5"
+	content, blocks := modelDisplayLine(modelDisplayLineOptions{modelID: model, explorationID: exploration})
+	first := "Using " + model
+	second := "exploration: " + exploration
+	app := &App{
+		width: max(visibleWidth(first), visibleWidth(second)),
+		messages: []chatMessage{{
+			kind:         msgInfo,
+			content:      content,
+			inlineBlocks: blocks,
+		}},
+	}
+
+	rows := app.buildBlockRows()
+	var plainRows []string
+	for _, row := range rows {
+		plainRows = append(plainRows, ansiEscRe.ReplaceAllString(row, ""))
+	}
+	for i := 0; i+1 < len(plainRows); i++ {
+		if plainRows[i] == first && plainRows[i+1] == second {
+			return
+		}
+	}
+	t.Fatalf("did not find adjacent model blocks in rows: %#v", plainRows)
+}
+
 func TestWrapStatusSegmentsKeepsAtomicComponents(t *testing.T) {
 	rows := wrapStatusSegments(wrapStatusSegmentsOptions{
 		segments: []statusSegment{

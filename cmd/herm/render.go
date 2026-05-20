@@ -277,115 +277,6 @@ func wrapString(opts wrapStringOptions) []string {
 	return rows
 }
 
-type statusSegment struct {
-	text  string
-	width int
-}
-
-func newStatusSegment(text string) statusSegment {
-	return statusSegment{text: text, width: visibleWidth(text)}
-}
-
-func dimStatusSegment(text string) statusSegment {
-	return statusSegment{text: "\033[2m" + text + "\033[0m", width: visibleWidth(text)}
-}
-
-type wrapStatusSegmentsOptions struct {
-	segments       []statusSegment
-	width          int
-	separator      string
-	rightAlignLast bool
-}
-
-func wrapStatusSegments(opts wrapStatusSegmentsOptions) []string {
-	if opts.width <= 0 {
-		return nil
-	}
-
-	separator := opts.separator
-	if separator == "" {
-		separator = " "
-	}
-	separatorWidth := visibleWidth(separator)
-
-	segments := make([]statusSegment, 0, len(opts.segments))
-	for _, seg := range opts.segments {
-		if seg.width == 0 {
-			continue
-		}
-		text := seg.text
-		width := seg.width
-		if width > opts.width {
-			text = truncateVisual(truncateVisualOptions{s: text, maxCols: opts.width})
-			if strings.Contains(text, "\033[") && !strings.HasSuffix(text, "\033[0m") {
-				text += "\033[0m"
-			}
-			width = visibleWidth(text)
-		}
-		segments = append(segments, statusSegment{text: text, width: width})
-	}
-	if len(segments) == 0 {
-		return nil
-	}
-
-	if opts.rightAlignLast {
-		totalWidth := 0
-		for i, seg := range segments {
-			if i > 0 {
-				totalWidth += separatorWidth
-			}
-			totalWidth += seg.width
-		}
-		if totalWidth <= opts.width {
-			var row strings.Builder
-			padding := opts.width - totalWidth
-			for i, seg := range segments {
-				switch {
-				case i == 0 && len(segments) == 1:
-					row.WriteString(strings.Repeat(" ", padding))
-				case i == len(segments)-1:
-					row.WriteString(strings.Repeat(" ", padding))
-					row.WriteString(separator)
-				case i > 0:
-					row.WriteString(separator)
-				}
-				row.WriteString(seg.text)
-			}
-			return []string{row.String()}
-		}
-	}
-
-	var rows []string
-	var cur strings.Builder
-	curWidth := 0
-
-	for _, seg := range segments {
-		text := seg.text
-		width := seg.width
-		sepWidth := 0
-		if curWidth > 0 {
-			sepWidth = separatorWidth
-		}
-		if curWidth > 0 && curWidth+sepWidth+width > opts.width {
-			rows = append(rows, cur.String())
-			cur.Reset()
-			curWidth = 0
-			sepWidth = 0
-		}
-		if sepWidth > 0 {
-			cur.WriteString(separator)
-			curWidth += sepWidth
-		}
-		cur.WriteString(text)
-		curWidth += width
-	}
-
-	if curWidth > 0 {
-		rows = append(rows, cur.String())
-	}
-	return rows
-}
-
 // toolGroupEntry represents a single tool call (and optional result) within a grouped block.
 type toolGroupEntry struct {
 	summary  string        // tool call summary text (e.g. "~ $ ls", "~ edit foo.go")
@@ -524,23 +415,30 @@ func (a *App) buildBlockRows() []string {
 		}
 
 		{
-			rendered := renderMessage(msg)
-			for _, logLine := range strings.Split(rendered, "\n") {
-				wasInCodeBlock := inCodeBlock
-				if msg.kind == msgAssistant {
-					var skip bool
-					logLine, inCodeBlock, skip = processMarkdownLine(processMarkdownLineOptions{line: logLine, inCodeBlock: inCodeBlock})
-					if skip {
-						continue
-					}
+			if len(msg.inlineBlocks) > 0 {
+				if msg.leadBlank {
+					rows = append(rows, "")
 				}
-				wrapped := wrapString(wrapStringOptions{s: logLine, w: a.width})
-				if wasInCodeBlock && msg.kind == msgAssistant {
-					for j := range wrapped {
-						wrapped[j] = padCodeBlockRow(padCodeBlockRowOptions{row: wrapped[j], width: a.width})
+				rows = append(rows, layoutInlineBlocks(layoutInlineBlocksOptions{blocks: msg.inlineBlocks, width: a.width})...)
+			} else {
+				rendered := renderMessage(msg)
+				for _, logLine := range strings.Split(rendered, "\n") {
+					wasInCodeBlock := inCodeBlock
+					if msg.kind == msgAssistant {
+						var skip bool
+						logLine, inCodeBlock, skip = processMarkdownLine(processMarkdownLineOptions{line: logLine, inCodeBlock: inCodeBlock})
+						if skip {
+							continue
+						}
 					}
+					wrapped := wrapString(wrapStringOptions{s: logLine, w: a.width})
+					if wasInCodeBlock && msg.kind == msgAssistant {
+						for j := range wrapped {
+							wrapped[j] = padCodeBlockRow(padCodeBlockRowOptions{row: wrapped[j], width: a.width})
+						}
+					}
+					rows = append(rows, wrapped...)
 				}
-				rows = append(rows, wrapped...)
 			}
 		}
 
@@ -728,8 +626,7 @@ func (a *App) buildInputRows() []string {
 		indicator := fmt.Sprintf("(%d->%d / %d)", first, last, total)
 		rows = append(rows, fmt.Sprintf("\033[2m%s\033[0m", truncateWithEllipsis(truncateWithEllipsisOptions{s: indicator, maxLen: w})))
 		if a.menuModels != nil {
-			hints := "←/→ sort column  Tab flip order  Enter select  Esc close"
-			rows = append(rows, fmt.Sprintf("\033[2m%s\033[0m", truncateWithEllipsis(truncateWithEllipsisOptions{s: hints, maxLen: w})))
+			rows = append(rows, layoutDimInlineBlocks(w, "←/→ sort column", "Tab flip order", "Enter select", "Esc close")...)
 		}
 		rows = append(rows, sep)
 		return rows

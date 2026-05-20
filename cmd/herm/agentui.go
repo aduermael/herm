@@ -67,18 +67,12 @@ func (a *App) showModelChange(modelID string) {
 		return
 	}
 	explorationID := a.config.resolveExplorationModel(a.models)
-	line := "Using " + modelID
 	offline := a.ollamaFetched && a.config.ollamaBaseURL() != "" && a.isOllamaOffline(modelID)
-	if offline {
-		line += " \033[33m(offline)\033[34;3m"
-	}
-	if explorationID != "" && explorationID != modelID {
-		line += "  exploration: " + explorationID
-	}
+	line, blocks := modelDisplayLine(modelDisplayLineOptions{modelID: modelID, explorationID: explorationID, offline: offline})
 	if line == a.lastModelDisplayLine {
 		return
 	}
-	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: line})
+	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: line, inlineBlocks: blocks})
 	if offline {
 		a.showOllamaOfflineNotice()
 	} else {
@@ -86,6 +80,28 @@ func (a *App) showModelChange(modelID string) {
 	}
 	a.lastModelID = modelID
 	a.lastModelDisplayLine = line
+}
+
+type modelDisplayLineOptions struct {
+	modelID       string
+	explorationID string
+	offline       bool
+}
+
+func modelDisplayLine(opts modelDisplayLineOptions) (string, []inlineBlock) {
+	modelID, explorationID, offline := opts.modelID, opts.explorationID, opts.offline
+	content := "Using " + modelID
+	activeText := "\033[34;3mUsing " + modelID
+	if offline {
+		content += " (offline)"
+		activeText += " \033[33m(offline)"
+	}
+	blocks := []inlineBlock{newInlineBlock(activeText)}
+	if explorationID != "" && explorationID != modelID {
+		content += " exploration: " + explorationID
+		blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "exploration: " + explorationID}))
+	}
+	return content, blocks
 }
 
 func (a *App) showOllamaOfflineNotice() {
@@ -158,9 +174,21 @@ func (a *App) maybeShowInitialModels() {
 	}
 	a.normalizeProjectConfigWithCurrentModels()
 	a.shownInitialModel = true
-	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "v" + Version + " (container: " + hermImageTag + ")"})
+	a.messages = append(a.messages, versionDisplayMessage())
 	a.showProjectModelDiagnostics()
 	a.showModelChange(a.config.resolveActiveModel(a.models))
+}
+
+func versionDisplayMessage() chatMessage {
+	content := "v" + Version + " (container: " + hermImageTag + ")"
+	return chatMessage{
+		kind:    msgInfo,
+		content: content,
+		inlineBlocks: []inlineBlock{
+			styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "v" + Version}),
+			styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "(container: " + hermImageTag + ")"}),
+		},
+	}
 }
 
 func (a *App) refreshResolvedModelDisplay() {

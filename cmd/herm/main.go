@@ -45,12 +45,13 @@ const (
 )
 
 type chatMessage struct {
-	kind      chatMsgKind
-	content   string
-	isError   bool          // for tool results
-	duration  time.Duration // tool execution duration
-	leadBlank bool          // blank line before this message
-	toolName  string        // original tool name (for tool call grouping/output rules)
+	kind         chatMsgKind
+	content      string
+	inlineBlocks []inlineBlock // optional atomic one-line UI blocks for terminal layout
+	isError      bool          // for tool results
+	duration     time.Duration // tool execution duration
+	leadBlank    bool          // blank line before this message
+	toolName     string        // original tool name (for tool call grouping/output rules)
 }
 
 // ─── App modes ───

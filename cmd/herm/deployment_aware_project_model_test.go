@@ -1025,7 +1025,7 @@ func TestProjectModelDynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 	app.refreshResolvedModelDisplay()
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(rows, "Using openai/gpt-4.1-2025-04-14  exploration: vendor/fast-model") {
+	if !strings.Contains(rows, "Using openai/gpt-4.1-2025-04-14 exploration: vendor/fast-model") {
 		t.Fatalf("dynamic model refresh did not update exploration display:\n%s", rows)
 	}
 }
