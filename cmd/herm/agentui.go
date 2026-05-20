@@ -127,7 +127,7 @@ func (a *App) normalizeProjectConfigWithCurrentModels() {
 		return
 	}
 	a.projectConfig = normalized
-	a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
+	a.rebuildEffectiveConfig()
 }
 
 func (a *App) showProjectModelDiagnostics() {
@@ -720,6 +720,16 @@ func (a *App) handleAgentEvent(event AgentEvent) {
 
 	case EventApprovalReq:
 		debugLog("approval_req: %s", event.ApprovalDesc)
+		if a.headless {
+			if a.traceCollector != nil {
+				a.traceCollector.AddApproval(AddApprovalOptions{toolID: event.ToolID, desc: event.ApprovalDesc, approved: false})
+			}
+			if a.agent != nil {
+				a.agent.Approve(ApprovalResponse{Approved: false})
+			}
+			a.messages = append(a.messages, chatMessage{kind: msgError, content: "Tool approval is unavailable in headless mode; denied " + approvalShortDesc(approvalShortDescOptions{toolName: event.ToolName, input: event.ToolInput})})
+			return
+		}
 		a.awaitingApproval = true
 		a.approvalPauseStart = time.Now()
 		a.approvalToolID = event.ToolID

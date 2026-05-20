@@ -97,7 +97,19 @@ func newLangdagClientForProvider(opts newLangdagClientForProviderOptions) (*lang
 	}
 	applyLegacyLangdagFields(applyLegacyLangdagFieldsOptions{langdagCfg: &langdagCfg, cfg: opts.cfg})
 
-	return langdag.New(langdagCfg)
+	client, err := langdag.New(langdagCfg)
+	if err != nil {
+		return nil, err
+	}
+	if opts.cfg.RequestCacheDir == "" {
+		return client, nil
+	}
+	cachedProvider, err := newRequestCacheProvider(newRequestCacheProviderOptions{inner: client.Provider(), dir: opts.cfg.RequestCacheDir, cfg: opts.cfg})
+	if err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return langdag.NewWithDeps(client.Storage(), cachedProvider), nil
 }
 
 func supportedHermProvider(provider string) bool {

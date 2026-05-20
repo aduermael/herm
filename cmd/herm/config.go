@@ -13,6 +13,7 @@ const configFile = "config.json"
 type Config struct {
 	ConfigVersion         int                         `json:"config_version,omitempty"`
 	PasteCollapseMinChars int                         `json:"paste_collapse_min_chars"`
+	RequestCacheDir       string                      `json:"-"`
 	AnthropicAPIKey       string                      `json:"anthropic_api_key,omitempty"`
 	GrokAPIKey            string                      `json:"grok_api_key,omitempty"`
 	OpenRouterAPIKey      string                      `json:"openrouter_api_key,omitempty"`

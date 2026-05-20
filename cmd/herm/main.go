@@ -223,9 +223,12 @@ type App struct {
 	cancelSent bool
 
 	// CLI flags
-	cliDebug  bool   // --debug flag
-	cliPrompt string // --prompt flag (non-interactive mode)
-	headless  bool   // true when running in --prompt mode (no TUI)
+	cliDebug           bool   // --debug flag
+	cliPrompt          string // --prompt/-p flag (non-interactive mode)
+	cliContinueID      string // --continue/--from node ID for headless continuation
+	cliConfigOverrides string // --config-overrides JSON object
+	cliCacheDir        string // --cache directory for request cache
+	headless           bool   // true when running in --prompt mode (no TUI)
 
 	// JSON trace debug file
 	traceCollector *TraceCollector
@@ -303,7 +306,7 @@ func (a *App) refreshModelMenu() {
 	// Persist sort preferences (global-only)
 	a.globalConfig.ModelSortCol = sortColNames[a.menuSortCol]
 	a.globalConfig.ModelSortDirs = sortAscToMap(a.menuSortAsc)
-	a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
+	a.rebuildEffectiveConfig()
 	_ = saveConfig(a.globalConfig)
 }
 
@@ -372,6 +375,7 @@ func (a *App) Run() error {
 	}()
 
 	// Start async initialization
+	a.rebuildEffectiveConfig()
 	a.startInit()
 
 	// Initial render
@@ -452,103 +456,6 @@ func (a *App) Run() error {
 done:
 
 	a.cleanup()
-	return nil
-}
-
-// RunHeadless runs herm in non-interactive mode: submits the --prompt text,
-// waits for the agent to finish, and exits. No TUI, no stdin, no resize handling.
-func (a *App) RunHeadless() error {
-	a.startInit()
-
-	// Wait for essential initialization: config, API client, models, and container.
-	timeout := time.After(60 * time.Second)
-	for {
-		select {
-		case result := <-a.resultCh:
-			a.handleResult(result)
-			if a.configReady && a.langdagClient != nil && a.models != nil &&
-				(a.containerReady || a.containerErr != nil) {
-				goto ready
-			}
-		case <-timeout:
-			if a.langdagClient == nil {
-				fmt.Fprintln(os.Stderr, "error: timed out waiting for initialization")
-				return fmt.Errorf("initialization timeout")
-			}
-			goto ready
-		}
-	}
-ready:
-
-	if a.langdagClient == nil {
-		fmt.Fprintln(os.Stderr, "error: no API key configured — use herm /config to add one")
-		return fmt.Errorf("no API key configured")
-	}
-
-	// Print debug file path to stderr so the calling process can locate it.
-	if a.traceFilePath != "" {
-		fmt.Fprintf(os.Stderr, "debug: %s\n", a.traceFilePath)
-	}
-
-	// Submit the prompt.
-	a.messages = append(a.messages, chatMessage{kind: msgUser, content: a.cliPrompt, leadBlank: true})
-	a.startAgent(a.cliPrompt)
-
-	if !a.agentRunning {
-		// startAgent failed (e.g. no model found).
-		for _, msg := range a.messages {
-			if msg.kind == msgError {
-				fmt.Fprintln(os.Stderr, "error: "+msg.content)
-			}
-		}
-		a.cleanup()
-		return fmt.Errorf("agent failed to start")
-	}
-
-	// Process agent events and async results until the agent is done
-	// and all sub-agents have finished.
-	for a.agentRunning || a.hasActiveSubAgents() {
-		select {
-		case event, ok := <-a.agent.Events():
-			if !ok {
-				a.agentRunning = false
-				break
-			}
-			a.handleAgentEvent(event)
-		case result := <-a.resultCh:
-			a.handleResult(result)
-			a.drainAgentEvents()
-		}
-	}
-
-	// Collect assistant text and print to stdout.
-	var out strings.Builder
-	for _, msg := range a.messages {
-		if msg.kind == msgAssistant {
-			if out.Len() > 0 {
-				out.WriteString("\n")
-			}
-			out.WriteString(msg.content)
-		}
-	}
-	if out.Len() > 0 {
-		fmt.Println(out.String())
-	}
-
-	// Print any agent errors to stderr.
-	var hasError bool
-	for _, msg := range a.messages {
-		if msg.kind == msgError {
-			fmt.Fprintln(os.Stderr, "error: "+msg.content)
-			hasError = true
-		}
-	}
-
-	a.cleanup()
-
-	if hasError {
-		return fmt.Errorf("agent encountered errors")
-	}
 	return nil
 }
 
@@ -853,7 +760,7 @@ func (a *App) handleResult(result any) {
 		} else {
 			a.projectConfig = loadRawProjectConfig(a.projectConfigRoot())
 		}
-		a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
+		a.rebuildEffectiveConfig()
 		a.configReady = true
 		a.initAppDebugLog()
 		a.history = newHistory(newHistoryOptions{projectDir: msg.worktreePath, maxSize: a.config.effectiveMaxHistory()})

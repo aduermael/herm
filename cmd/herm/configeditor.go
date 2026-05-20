@@ -130,7 +130,7 @@ func (a *App) exitConfigMode(save bool) {
 		a.cfgDraft = a.globalConfig
 		a.projectConfig = normalizeProjectConfigForModels(normalizeProjectConfigForModelsOptions{pc: a.cfgProjectDraft, models: a.models})
 		a.cfgProjectDraft = a.projectConfig
-		a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
+		a.rebuildEffectiveConfig()
 		// Re-initialize debug log if debug mode changed
 		if a.debugActive() && a.traceCollector == nil {
 			a.initAppDebugLog()

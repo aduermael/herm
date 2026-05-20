@@ -542,7 +542,7 @@ func (a *App) openRoutingGlobalConfigEditor() {
 	a.globalConfig = cfg
 	a.cfgDraft = cfg
 	a.cfgProjectDraft = a.projectConfig
-	a.config = mergeConfigs(mergeConfigsOptions{global: a.globalConfig, project: a.projectConfig})
+	a.rebuildEffectiveConfig()
 	a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Global config JSON reloaded."})
 }
 

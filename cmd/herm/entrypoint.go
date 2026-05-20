@@ -3,34 +3,51 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"strings"
 )
+
+type cliOptions struct {
+	debug           bool
+	help            bool
+	version         bool
+	prompt          string
+	continueID      string
+	configOverrides string
+	cacheDir        string
+}
 
 func main() {
 	log.SetOutput(io.Discard)
 
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-v" {
-			fmt.Println("herm " + Version + " (container: " + hermImageTag + ")")
-			os.Exit(0)
-		}
+	opts, err := parseCLI(parseCLIOptions{args: os.Args[1:], stderr: os.Stderr})
+	if err != nil {
+		os.Exit(2)
+	}
+	if opts.help {
+		printCLIUsage(os.Stdout)
+		return
+	}
+	if opts.version {
+		fmt.Println("herm " + Version + " (container: " + hermImageTag + ")")
+		return
 	}
 
 	app := newApp()
-
-	for i, arg := range os.Args[1:] {
-		switch arg {
-		case "--debug":
-			app.cliDebug = true
-		case "--prompt":
-			if i+1 < len(os.Args[1:]) {
-				app.cliPrompt = os.Args[i+2] // i is 0-based in the slice, +2 to get next arg in os.Args
-			}
-		}
+	app.cliDebug = opts.debug
+	app.cliPrompt = opts.prompt
+	app.cliContinueID = opts.continueID
+	app.cliConfigOverrides = opts.configOverrides
+	app.cliCacheDir = opts.cacheDir
+	if _, err := effectiveConfig(effectiveConfigOptions{global: app.globalConfig, project: app.projectConfig, overridesJSON: app.cliConfigOverrides, cacheDir: app.cliCacheDir}); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
 	}
+	app.rebuildEffectiveConfig()
 
 	if app.cliPrompt != "" {
 		app.headless = true
@@ -44,4 +61,83 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+type parseCLIOptions struct {
+	args   []string
+	stderr io.Writer
+}
+
+func parseCLI(opts parseCLIOptions) (cliOptions, error) {
+	var parsed cliOptions
+	if len(opts.args) == 1 && opts.args[0] == "help" {
+		parsed.help = true
+		return parsed, nil
+	}
+	fs := flag.NewFlagSet("herm", flag.ContinueOnError)
+	fs.SetOutput(opts.stderr)
+	fs.Usage = func() { printCLIUsage(opts.stderr) }
+	fs.BoolVar(&parsed.help, "help", false, "show help")
+	fs.BoolVar(&parsed.help, "h", false, "show help")
+	fs.BoolVar(&parsed.version, "version", false, "show version")
+	fs.BoolVar(&parsed.version, "v", false, "show version")
+	fs.BoolVar(&parsed.debug, "debug", false, "write a JSON debug trace")
+	fs.StringVar(&parsed.prompt, "prompt", "", "run one prompt without the TUI")
+	fs.StringVar(&parsed.prompt, "p", "", "run one prompt without the TUI")
+	fs.StringVar(&parsed.continueID, "continue", "", "continue from a conversation node ID, prefix, or alias")
+	fs.StringVar(&parsed.continueID, "from", "", "continue from a conversation node ID, prefix, or alias")
+	fs.StringVar(&parsed.configOverrides, "config-overrides", "", "JSON object overlaid onto the effective config")
+	fs.StringVar(&parsed.cacheDir, "cache", "", "directory for cached model responses")
+	if err := fs.Parse(opts.args); err != nil {
+		return parsed, err
+	}
+	if fs.NArg() > 0 {
+		if parsed.prompt != "" {
+			for _, arg := range fs.Args() {
+				if strings.HasPrefix(arg, "-") {
+					err := fmt.Errorf("flag-like argument %q appeared after an unquoted prompt; put flags before -p or quote the prompt", arg)
+					fmt.Fprintln(opts.stderr, "Error:", err)
+					fs.Usage()
+					return parsed, err
+				}
+			}
+			parts := append([]string{parsed.prompt}, fs.Args()...)
+			parsed.prompt = strings.Join(parts, " ")
+			return parsed, nil
+		}
+		err := fmt.Errorf("unexpected argument: %s", fs.Arg(0))
+		fmt.Fprintln(opts.stderr, "Error:", err)
+		fs.Usage()
+		return parsed, err
+	}
+	return parsed, nil
+}
+
+func printCLIUsage(w io.Writer) {
+	fmt.Fprintf(w, `Usage:
+  herm [flags]
+  herm --prompt "prompt" [flags]
+
+Flags:
+  -h, --help                       Show this help.
+  -v, --version                    Show version information.
+      --debug                      Write a JSON debug trace to .herm/debug/.
+  -p, --prompt string              Send one prompt without starting the TUI.
+      --continue node              Continue from a previous node ID, prefix, or alias.
+      --from node                  Alias for --continue.
+      --config-overrides json      Overlay config fields for this run only.
+      --cache path                 Cache successful model responses in path.
+
+Examples:
+  herm -p say ok
+  herm -p 'Hey!'
+  herm --continue 4f3a2c1b -p continue this
+  herm --cache /tmp/herm-cache -p say ok
+  herm --config-overrides '{"active_model":"openai/gpt-4.1-mini-2025-04-14"}' -p say ok
+
+Shell note:
+  If a prompt contains ! or nested quotes, prefer single quotes or leave the
+  prompt unquoted after -p. Put flags before an unquoted multi-word prompt.
+  A dquote> prompt is your shell waiting for a closing quote before Herm starts.
+`)
 }
