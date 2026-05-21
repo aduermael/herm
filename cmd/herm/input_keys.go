@@ -10,7 +10,17 @@ import (
 	"unicode/utf8"
 )
 
+const interruptTapWindow = 2 * time.Second
+
 // ─── Key dispatch and byte handling ───
+
+func isInterruptByte(ch byte) bool {
+	return ch == '\033' || ch == 3 || ch == 4
+}
+
+func (a *App) hasCancelableAgentWork() bool {
+	return a.agentRunning || a.hasActiveSubAgents()
+}
 
 type handleByteOptions struct {
 	ch       byte
@@ -29,8 +39,7 @@ func (a *App) handleByte(opts handleByteOptions) bool {
 
 	// Escape sequence
 	if ch == '\033' {
-		a.handleEscapeSequence(handleEscapeSequenceOptions{stdinCh: stdinCh, readByte: readByte})
-		return false
+		return a.handleEscapeSequence(handleEscapeSequenceOptions{stdinCh: stdinCh, readByte: readByte})
 	}
 
 	// Ctrl+D: immediate quit
@@ -38,25 +47,24 @@ func (a *App) handleByte(opts handleByteOptions) bool {
 		return true
 	}
 
-	// Ctrl+C: double-tap to stop agent (when running) or exit (when idle)
+	// Ctrl+C: double-tap to stop agent (when running) or exit (when idle).
+	// After a cancel request, the next Ctrl+C force-quits.
 	if ch == 3 {
-		if a.agentRunning {
-			// When agent is running, double-tap Ctrl+C stops the agent.
-			// If Cancel was already sent and agent is still running,
-			// force-quit immediately (safety net for stuck agents).
-			if a.ctrlCHint && time.Since(a.ctrlCTime) < 2*time.Second {
-				if a.cancelSent {
-					return true // force quit — Cancel() didn't work
-				}
-				a.agent.Cancel()
-				a.cancelSent = true
-				a.ctrlCHint = false
-				a.ctrlCTime = time.Time{}
+		if a.hasCancelableAgentWork() {
+			if a.cancelSent {
+				return true
+			}
+			if a.ctrlCHint && time.Since(a.ctrlCTime) < interruptTapWindow {
+				a.requestAgentCancel()
+				a.ctrlCHint = true
+				a.ctrlCTime = time.Now()
+				a.renderInput()
+				a.scheduleCtrlCExpiry()
 				return false
 			}
 		} else {
 			// Second Ctrl+C within 2 seconds: quit
-			if a.ctrlCHint && time.Since(a.ctrlCTime) < 2*time.Second {
+			if a.ctrlCHint && time.Since(a.ctrlCTime) < interruptTapWindow {
 				return true
 			}
 		}
@@ -66,15 +74,7 @@ func (a *App) handleByte(opts handleByteOptions) bool {
 		a.ctrlCHint = true
 		a.ctrlCTime = time.Now()
 		a.renderInput()
-		// Schedule hint removal after 2 seconds
-		ch := a.resultCh
-		go func() {
-			time.Sleep(2 * time.Second)
-			select {
-			case ch <- ctrlCExpiredMsg{}:
-			default:
-			}
-		}()
+		a.scheduleCtrlCExpiry()
 		return false
 	}
 
@@ -212,33 +212,61 @@ func (a *App) handleByte(opts handleByteOptions) bool {
 
 // ─── Escape sequence handling ───
 
-func (a *App) handlePlainEscape() {
+func (a *App) requestAgentCancel() {
+	if a.agent != nil {
+		a.agent.Cancel()
+	}
+	a.cancelSent = true
+}
+
+func (a *App) scheduleCtrlCExpiry() {
+	ch := a.resultCh
+	go func() {
+		time.Sleep(interruptTapWindow)
+		select {
+		case ch <- ctrlCExpiredMsg{}:
+		default:
+		}
+	}()
+}
+
+func (a *App) scheduleEscExpiry() {
+	ch := a.resultCh
+	go func() {
+		time.Sleep(interruptTapWindow)
+		select {
+		case ch <- escExpiredMsg{}:
+		default:
+		}
+	}()
+}
+
+func (a *App) handlePlainEscape() bool {
 	if a.awaitingApproval {
 		a.handleApprovalByte('n')
+		if !a.hasCancelableAgentWork() {
+			return false
+		}
 	}
-	// When agent is running, double-tap ESC to stop it.
-	// If Cancel was already sent and agent is still running, cancel again
-	// (force the context) so the user is never truly stuck.
-	if a.agentRunning {
-		if a.escHint && time.Since(a.escTime) < 2*time.Second {
-			a.agent.Cancel()
-			a.cancelSent = true
-			a.escHint = false
-			a.escTime = time.Time{}
-			return
+	// ESC mirrors Ctrl+C for running agents: double-tap to cancel, then tap
+	// again to force-quit if cancellation does not complete.
+	if a.hasCancelableAgentWork() {
+		if a.cancelSent {
+			return true
+		}
+		if a.escHint && time.Since(a.escTime) < interruptTapWindow {
+			a.requestAgentCancel()
+			a.escHint = true
+			a.escTime = time.Now()
+			a.renderInput()
+			a.scheduleEscExpiry()
+			return false
 		}
 		a.escHint = true
 		a.escTime = time.Now()
 		a.renderInput()
-		ch := a.resultCh
-		go func() {
-			time.Sleep(2 * time.Second)
-			select {
-			case ch <- escExpiredMsg{}:
-			default:
-			}
-		}()
-		return
+		a.scheduleEscExpiry()
+		return false
 	}
 	if a.menuActive {
 		a.menuLines = nil
@@ -248,11 +276,12 @@ func (a *App) handlePlainEscape() {
 		a.menuCursor = 0
 		a.menuScrollOffset = 0
 		a.renderInput()
-		return
+		return false
 	}
 	a.resetInput()
 	a.autocompleteIdx = 0
 	a.renderInput()
+	return false
 }
 
 type handleEscapeSequenceOptions struct {
@@ -260,7 +289,7 @@ type handleEscapeSequenceOptions struct {
 	readByte func() (byte, bool)
 }
 
-func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
+func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) bool {
 	stdinCh, readByte := opts.stdinCh, opts.readByte
 	// Use a short timeout to distinguish plain ESC from escape sequences.
 	// Escape sequences (arrow keys, etc.) send bytes in rapid succession,
@@ -270,12 +299,18 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
 	select {
 	case b, ok = <-stdinCh:
 		if !ok {
-			return
+			return false
 		}
 	case <-time.After(50 * time.Millisecond):
 		// Plain ESC key — no sequence followed
-		a.handlePlainEscape()
-		return
+		return a.handlePlainEscape()
+	}
+
+	if b == '\033' {
+		if a.handlePlainEscape() {
+			return true
+		}
+		return a.handlePlainEscape()
 	}
 
 	// Alt+Enter: ESC CR
@@ -284,7 +319,7 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
 			a.insertAtCursor('\n')
 			a.renderInput()
 		}
-		return
+		return false
 	}
 
 	if b == 0x7F {
@@ -293,7 +328,7 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
 			a.deleteWordBackward()
 			a.renderInput()
 		}
-		return
+		return false
 	}
 
 	// SS3 sequence: ESC O <letter>
@@ -303,18 +338,17 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
 	if b == 'O' {
 		ss3, ok := readByte()
 		if !ok {
-			return
+			return false
 		}
 		if !a.awaitingApproval {
 			a.handleNavKey(handleNavKeyOptions{final: ss3})
 		}
-		return
+		return false
 	}
 
 	if b != '[' {
 		// ESC followed by non-[ byte (e.g. Alt+key) — treat as plain escape
-		a.handlePlainEscape()
-		return
+		return a.handlePlainEscape()
 	}
 
 	// CSI sequence: ESC [
@@ -328,7 +362,7 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
 	for {
 		b, ok = readByte()
 		if !ok {
-			return
+			return false
 		}
 		if isCSIFinal(b) {
 			final = b
@@ -336,7 +370,7 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
 		}
 		params = append(params, b)
 		if len(params) > 128 {
-			return // safety limit for malformed sequences
+			return false // safety limit for malformed sequences
 		}
 	}
 
@@ -356,22 +390,23 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) {
 			if strings.HasPrefix(ps, "27;") {
 				var mod, code int
 				if n, _ := fmt.Sscanf(ps[3:], "%d;%d", &mod, &code); n == 2 {
-					a.handleModifyOtherKeys(handleModifyOtherKeysOptions{mod: mod, code: code})
+					return a.handleModifyOtherKeys(handleModifyOtherKeysOptions{mod: mod, code: code})
 				}
 			}
 			// All other tilde sequences (Insert, PgUp, etc.) silently consumed
 		}
-		return
+		return false
 	}
 
 	if a.awaitingApproval {
-		return
+		return false
 	}
 
 	// Navigation keys (arrows, Home, End) — shared by CSI and SS3
 	a.handleNavKey(handleNavKeyOptions{final: final, params: params})
 	// Unknown final bytes (mode responses, etc.): already fully consumed by
 	// the collection loop above — silently discarded.
+	return false
 }
 
 type handleNavKeyOptions struct {
@@ -498,10 +533,13 @@ type handleModifyOtherKeysOptions struct {
 // With modifyOtherKeys mode 2, the terminal encodes modified keys that would
 // otherwise be ambiguous (e.g., Ctrl+C as CSI 27;5;99~ instead of byte 0x03).
 // We translate these back to the actions the app already handles.
-func (a *App) handleModifyOtherKeys(opts handleModifyOtherKeysOptions) {
+func (a *App) handleModifyOtherKeys(opts handleModifyOtherKeysOptions) bool {
 	mod, code := opts.mod, opts.code
+	if code == '\033' {
+		return a.handlePlainEscape()
+	}
 	if a.awaitingApproval {
-		return
+		return false
 	}
 	mod-- // CSI modifier encoding
 	isAlt := mod&2 != 0
@@ -520,6 +558,7 @@ func (a *App) handleModifyOtherKeys(opts handleModifyOtherKeysOptions) {
 		ctrlByte := byte(code - 'a' + 1)
 		go func() { a.stdinCh <- ctrlByte }()
 	}
+	return false
 }
 
 // readBracketedPaste reads paste content until the end marker ESC [ 2 0 1 ~.

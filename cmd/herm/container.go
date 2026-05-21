@@ -17,12 +17,12 @@ import (
 
 // Container error codes.
 const (
-	ErrDockerNotFound    = "DockerNotFound"
-	ErrDockerNotRunning  = "DockerNotRunning"
-	ErrStartFailed       = "StartFailed"
-	ErrExecFailed        = "ExecFailed"
-	ErrStopFailed        = "StopFailed"
-	ErrNotRunning        = "NotRunning"
+	ErrDockerNotFound   = "DockerNotFound"
+	ErrDockerNotRunning = "DockerNotRunning"
+	ErrStartFailed      = "StartFailed"
+	ErrExecFailed       = "ExecFailed"
+	ErrStopFailed       = "StopFailed"
+	ErrNotRunning       = "NotRunning"
 )
 
 // ContainerError is a typed error from the container client.
@@ -103,6 +103,7 @@ func (c *ContainerClient) CheckDocker() error {
 
 // containerStartOptions is the parameter bundle for (*ContainerClient).Start.
 type containerStartOptions struct {
+	ctx       context.Context
 	workspace string
 	mounts    []MountSpec
 }
@@ -129,7 +130,11 @@ func (c *ContainerClient) Start(opts containerStartOptions) error {
 	}
 	args = append(args, c.config.Image, "sleep", "infinity")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	parent := opts.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 120*time.Second)
 	defer cancel()
 
 	cmd := dockerCommand(ctx, "docker", args...)
@@ -152,6 +157,7 @@ func (c *ContainerClient) Start(opts containerStartOptions) error {
 
 // containerExecOptions is the parameter bundle for (*ContainerClient).Exec.
 type containerExecOptions struct {
+	ctx     context.Context
 	command string
 	timeout int
 }
@@ -160,16 +166,22 @@ type containerExecOptions struct {
 func (c *ContainerClient) Exec(opts containerExecOptions) (CommandResult, error) {
 	command, timeout := opts.command, opts.timeout
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.running {
+		c.mu.Unlock()
 		return CommandResult{}, &ContainerError{Code: ErrNotRunning, Message: "container not running"}
 	}
+	containerID := c.containerID
+	workDir := c.workDir
+	c.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	parent := opts.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	cmd := dockerCommand(ctx, "docker", "exec", "-w", c.workDir, c.containerID, "sh", "-c", command)
+	cmd := dockerCommand(ctx, "docker", "exec", "-w", workDir, containerID, "sh", "-c", command)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -177,6 +189,12 @@ func (c *ContainerClient) Exec(opts containerExecOptions) (CommandResult, error)
 	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CommandResult{}, &ContainerError{
+				Code:    ErrExecFailed,
+				Message: fmt.Sprintf("docker exec canceled: %v", ctxErr),
+			}
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
@@ -196,6 +214,7 @@ func (c *ContainerClient) Exec(opts containerExecOptions) (CommandResult, error)
 
 // containerExecWithStdinOptions is the parameter bundle for (*ContainerClient).ExecWithStdin.
 type containerExecWithStdinOptions struct {
+	ctx     context.Context
 	stdin   []byte
 	timeout int
 }
@@ -207,16 +226,22 @@ type containerExecWithStdinOptions struct {
 func (c *ContainerClient) ExecWithStdin(opts containerExecWithStdinOptions, args ...string) (CommandResult, error) {
 	stdin, timeout := opts.stdin, opts.timeout
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.running {
+		c.mu.Unlock()
 		return CommandResult{}, &ContainerError{Code: ErrNotRunning, Message: "container not running"}
 	}
+	containerID := c.containerID
+	workDir := c.workDir
+	c.mu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	parent := opts.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	fullArgs := append([]string{"exec", "-i", "-w", c.workDir, c.containerID}, args...)
+	fullArgs := append([]string{"exec", "-i", "-w", workDir, containerID}, args...)
 	cmd := dockerCommand(ctx, "docker", fullArgs...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
@@ -226,6 +251,12 @@ func (c *ContainerClient) ExecWithStdin(opts containerExecWithStdinOptions, args
 	err := cmd.Run()
 	exitCode := 0
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CommandResult{}, &ContainerError{
+				Code:    ErrExecFailed,
+				Message: fmt.Sprintf("docker exec canceled: %v", ctxErr),
+			}
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
@@ -281,19 +312,25 @@ fi`
 // Stop stops and removes the Docker container.
 func (c *ContainerClient) Stop() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.running {
+		c.mu.Unlock()
 		return nil
 	}
+	containerID := c.containerID
+	c.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Force-remove the container in one step (kills and removes).
-	rm := dockerCommand(ctx, "docker", "rm", "-f", c.containerID)
+	rm := dockerCommand(ctx, "docker", "rm", "-f", containerID)
 	_ = rm.Run()
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.containerID != containerID {
+		return nil
+	}
 	c.running = false
 	c.containerID = ""
 	return nil
@@ -329,6 +366,7 @@ func (c *ContainerClient) Status() (ContainerStatus, error) {
 
 // containerRebuildOptions is the parameter bundle for (*ContainerClient).Rebuild.
 type containerRebuildOptions struct {
+	ctx            context.Context
 	imageName      string
 	dockerfilePath string
 	workspace      string
@@ -341,7 +379,11 @@ type containerRebuildOptions struct {
 func (c *ContainerClient) Rebuild(opts containerRebuildOptions) error {
 	imageName, dockerfilePath, workspace, mounts := opts.imageName, opts.dockerfilePath, opts.workspace, opts.mounts
 
-	buildCtx, buildCancel := context.WithTimeout(context.Background(), 300*time.Second)
+	parent := opts.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	buildCtx, buildCancel := context.WithTimeout(parent, 300*time.Second)
 	defer buildCancel()
 
 	buildCmd := dockerCommand(buildCtx, "docker", "build",
@@ -368,7 +410,7 @@ func (c *ContainerClient) Rebuild(opts containerRebuildOptions) error {
 	c.mu.Unlock()
 
 	if wasRunning {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stopCtx, stopCancel := context.WithTimeout(parent, 10*time.Second)
 		defer stopCancel()
 		rm := dockerCommand(stopCtx, "docker", "rm", "-f", oldID)
 		_ = rm.Run()
@@ -384,7 +426,7 @@ func (c *ContainerClient) Rebuild(opts containerRebuildOptions) error {
 	c.config.Image = imageName
 	c.mu.Unlock()
 
-	return c.Start(containerStartOptions{workspace: workspace, mounts: mounts})
+	return c.Start(containerStartOptions{ctx: parent, workspace: workspace, mounts: mounts})
 }
 
 // randomID generates a short random hex string for container naming.

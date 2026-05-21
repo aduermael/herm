@@ -218,8 +218,8 @@ type App struct {
 	escTime time.Time
 	escHint bool
 
-	// Force-quit: tracks whether Cancel() was already issued so a
-	// subsequent double-tap CTRL-C or ESC forces an immediate exit.
+	// Force-quit: tracks whether Cancel() was already issued so a subsequent
+	// Ctrl-C or ESC forces an immediate exit.
 	cancelSent bool
 
 	// CLI flags
@@ -331,6 +331,10 @@ func (a *App) Run() error {
 		}
 	}()
 
+	saveTerminalTitle(os.Stdout)
+	setHermTerminalTitle(os.Stdout)
+	defer restoreTerminalTitle(os.Stdout)
+
 	// Enable bracketed paste and modifyOtherKeys (no alt screen — use main buffer
 	// so native terminal scrollback works)
 	fmt.Print("\033[?2004h")
@@ -394,9 +398,7 @@ func (a *App) Run() error {
 				if !ok {
 					goto done
 				}
-				a.drainResults()
-				a.drainAgentEvents()
-				if a.handleByte(handleByteOptions{ch: ch, stdinCh: a.stdinCh, readByte: a.readByte}) {
+				if a.handleInputByte(ch) {
 					goto done
 				}
 			case event, ok := <-a.agent.Events():
@@ -417,9 +419,7 @@ func (a *App) Run() error {
 				if !ok {
 					goto done
 				}
-				a.drainResults()
-				a.drainAgentEvents()
-				if a.handleByte(handleByteOptions{ch: ch, stdinCh: a.stdinCh, readByte: a.readByte}) {
+				if a.handleInputByte(ch) {
 					goto done
 				}
 			case event, ok := <-a.agent.Events():
@@ -443,9 +443,7 @@ func (a *App) Run() error {
 				if !ok {
 					goto done
 				}
-				a.drainResults()
-				a.drainAgentEvents()
-				if a.handleByte(handleByteOptions{ch: ch, stdinCh: a.stdinCh, readByte: a.readByte}) {
+				if a.handleInputByte(ch) {
 					goto done
 				}
 			case result := <-a.resultCh:
@@ -457,6 +455,21 @@ done:
 
 	a.cleanup()
 	return nil
+}
+
+func (a *App) handleInputByte(ch byte) bool {
+	opts := handleByteOptions{ch: ch, stdinCh: a.stdinCh, readByte: a.readByte}
+	if isInterruptByte(ch) {
+		if a.handleByte(opts) {
+			return true
+		}
+		a.drainResults()
+		a.drainAgentEvents()
+		return false
+	}
+	a.drainResults()
+	a.drainAgentEvents()
+	return a.handleByte(opts)
 }
 
 // Attachment, clipboard, tmp-dir, and startup-fanout helpers live in wiring.go.
@@ -630,7 +643,7 @@ func (a *App) handleResult(result any) {
 		return
 	case ctrlCExpiredMsg:
 		_ = msg
-		if a.ctrlCHint {
+		if a.ctrlCHint && time.Since(a.ctrlCTime) >= interruptTapWindow {
 			a.ctrlCHint = false
 			a.ctrlCTime = time.Time{}
 			a.renderInput()
@@ -638,7 +651,7 @@ func (a *App) handleResult(result any) {
 		return
 	case escExpiredMsg:
 		_ = msg
-		if a.escHint {
+		if a.escHint && time.Since(a.escTime) >= interruptTapWindow {
 			a.escHint = false
 			a.escTime = time.Time{}
 			a.renderInput()

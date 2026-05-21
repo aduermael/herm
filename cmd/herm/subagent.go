@@ -109,24 +109,24 @@ type SubAgentTool struct {
 	explorationModel string // cheap model for "explore" mode and summarization; empty = use truncation fallback
 	exploreMaxTurns  int    // turn budget for explore-mode sub-agents
 	generalMaxTurns  int    // turn budget for general-mode sub-agents
-	maxDepth       int    // maximum nesting depth from this level
-	currentDepth   int    // current nesting depth (0 = spawned by main agent)
-	workDir        string
-	personality    string
-	containerImage string
-	doneTimeout    time.Duration    // max time to wait for goroutine after stream ends
-	streamTimeout  time.Duration    // stream chunk inactivity timeout for inner agents; 0 = default
-	parentEvents   chan<- AgentEvent // set after construction; forwards live events to TUI
-	onBgComplete   func(string)     // set after construction; called when a background sub-agent finishes
+	maxDepth         int    // maximum nesting depth from this level
+	currentDepth     int    // current nesting depth (0 = spawned by main agent)
+	workDir          string
+	personality      string
+	containerImage   string
+	doneTimeout      time.Duration     // max time to wait for goroutine after stream ends
+	streamTimeout    time.Duration     // stream chunk inactivity timeout for inner agents; 0 = default
+	parentEvents     chan<- AgentEvent // set after construction; forwards live events to TUI
+	onBgComplete     func(string)      // set after construction; called when a background sub-agent finishes
 
 	mu         sync.Mutex
 	agentNodes map[string]agentNodeState // agentID → state (nodeID + mode for resume)
-	bgAgents   map[string]*bgAgentState // background sub-agents
-	bgWg       sync.WaitGroup           // tracks running background goroutines
+	bgAgents   map[string]*bgAgentState  // background sub-agents
+	bgWg       sync.WaitGroup            // tracks running background goroutines
 
-	snapMu    sync.Mutex        // guards snapshot cache
-	snapCache *projectSnapshot  // cached project snapshot; nil = not cached
-	snapTime  time.Time         // when snapCache was fetched
+	snapMu    sync.Mutex       // guards snapshot cache
+	snapCache *projectSnapshot // cached project snapshot; nil = not cached
+	snapTime  time.Time        // when snapCache was fetched
 }
 
 // NewSubAgentTool creates a SubAgentTool from the given configuration.
@@ -422,6 +422,10 @@ const bgWaitPollInterval = 250 * time.Millisecond
 // completion order (the order they are observed as done during polling).
 // Returns nil if there are no background agents.
 func (t *SubAgentTool) WaitForBackgroundAgents(timeout time.Duration) []string {
+	return t.WaitForBackgroundAgentsContext(context.Background(), timeout)
+}
+
+func (t *SubAgentTool) WaitForBackgroundAgentsContext(ctx context.Context, timeout time.Duration) []string {
 	t.mu.Lock()
 	agents := make(map[string]*bgAgentState, len(t.bgAgents))
 	for id, st := range t.bgAgents {
@@ -433,9 +437,44 @@ func (t *SubAgentTool) WaitForBackgroundAgents(timeout time.Duration) []string {
 		return nil
 	}
 
-	deadline := time.After(timeout)
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
 	var results []string
 	collected := make(map[string]bool)
+	collectDone := func() []string {
+		for id, st := range agents {
+			if collected[id] {
+				continue
+			}
+			st.mu.Lock()
+			done := st.done
+			result := st.result
+			st.mu.Unlock()
+			if done {
+				results = append(results, result)
+				collected[id] = true
+			}
+		}
+		return results
+	}
+	collectRemaining := func(status string) []string {
+		for id, st := range agents {
+			if collected[id] {
+				continue
+			}
+			st.mu.Lock()
+			done := st.done
+			result := st.result
+			task := st.task
+			st.mu.Unlock()
+			if done {
+				results = append(results, result)
+			} else {
+				results = append(results, fmt.Sprintf("[agent %s] %s — task: %s", id, status, task))
+			}
+		}
+		return results
+	}
 
 	for len(collected) < len(agents) {
 		for id, st := range agents {
@@ -455,24 +494,11 @@ func (t *SubAgentTool) WaitForBackgroundAgents(timeout time.Duration) []string {
 			break
 		}
 		select {
-		case <-deadline:
+		case <-ctx.Done():
+			return collectDone()
+		case <-deadline.C:
 			// Timeout: collect whatever is done, note the rest as timed out.
-			for id, st := range agents {
-				if collected[id] {
-					continue
-				}
-				st.mu.Lock()
-				done := st.done
-				result := st.result
-				task := st.task
-				st.mu.Unlock()
-				if done {
-					results = append(results, result)
-				} else {
-					results = append(results, fmt.Sprintf("[agent %s] timed out waiting — task: %s", id, task))
-				}
-			}
-			return results
+			return collectRemaining("timed out waiting")
 		case <-time.After(bgWaitPollInterval):
 			// Poll again.
 		}

@@ -486,6 +486,7 @@ func (a *App) enterShellMode() {
 	// Re-enable bracketed paste, modifyOtherKeys
 	fmt.Print("\033[?2004h")
 	fmt.Print("\033[>4;2m")
+	setHermTerminalTitle(os.Stdout)
 
 	// Restart the stdin reader goroutine
 	a.startStdinReader()

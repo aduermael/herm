@@ -649,14 +649,20 @@ func (a *App) buildInputRows() []string {
 
 	// Ctrl+C / ESC hint (below separator, above status)
 	if a.ctrlCHint {
-		if a.agentRunning {
+		if a.hasCancelableAgentWork() && a.cancelSent {
+			rows = append(rows, fmt.Sprintf("\033[1;38;5;%dmStopping agent... Press Ctrl-C again to force exit\033[0m", 4))
+		} else if a.hasCancelableAgentWork() {
 			rows = append(rows, fmt.Sprintf("\033[1;38;5;%dmPress Ctrl-C again to stop the agent\033[0m", 4))
 		} else {
 			rows = append(rows, fmt.Sprintf("\033[1;38;5;%dmPress Ctrl-C again to exit\033[0m", 4))
 		}
 	}
 	if a.escHint {
-		rows = append(rows, fmt.Sprintf("\033[1;38;5;%dmPress ESC again to stop the agent\033[0m", 4))
+		if a.cancelSent {
+			rows = append(rows, fmt.Sprintf("\033[1;38;5;%dmStopping agent... Press ESC again to force exit\033[0m", 4))
+		} else {
+			rows = append(rows, fmt.Sprintf("\033[1;38;5;%dmPress ESC again to stop the agent\033[0m", 4))
+		}
 	}
 
 	// Autocomplete (shown below input)

@@ -31,6 +31,20 @@ type backgroundCompletionOptions struct {
 	remainingIter int
 }
 
+// waitForBackgroundAgentsOptions is the parameter bundle for waitForBackgroundAgents.
+type waitForBackgroundAgentsOptions struct {
+	ctx     context.Context
+	waiter  BackgroundWaiter
+	timeout time.Duration
+}
+
+func waitForBackgroundAgents(opts waitForBackgroundAgentsOptions) []string {
+	if cbw, ok := opts.waiter.(ContextBackgroundWaiter); ok {
+		return cbw.WaitForBackgroundAgentsContext(opts.ctx, opts.timeout)
+	}
+	return opts.waiter.WaitForBackgroundAgents(opts.timeout)
+}
+
 // backgroundCompletion is called when the LLM chose to stop (end_turn) but
 // background sub-agents are still running. It waits for them, injects their
 // results, and re-calls the LLM with tools enabled so it can continue working.
@@ -51,7 +65,7 @@ func (a *Agent) backgroundCompletion(ctx context.Context, opts backgroundComplet
 		}
 
 		debugLog("background completion cycle %d: waiting for pending agents", cycle+1)
-		bw.WaitForBackgroundAgents(backgroundCompletionTimeout)
+		waitForBackgroundAgents(waitForBackgroundAgentsOptions{ctx: ctx, waiter: bw, timeout: backgroundCompletionTimeout})
 
 		bgResults := a.drainBackgroundResults()
 		if len(bgResults) == 0 {
@@ -60,7 +74,7 @@ func (a *Agent) backgroundCompletion(ctx context.Context, opts backgroundComplet
 
 		// Build a message informing the model that background agents finished.
 		var msg strings.Builder
-		if reminder := a.budgetReminderBlock(); reminder.Text != "" {
+		if reminder := a.followupReminderBlock(); reminder.Text != "" {
 			msg.WriteString(reminder.Text)
 			msg.WriteString("\n\n")
 		}
@@ -155,7 +169,7 @@ func (a *Agent) backgroundCompletion(ctx context.Context, opts backgroundComplet
 			}
 
 			promptOpts = a.buildPromptOpts()
-			if reminder := a.budgetReminderBlock(); reminder.Text != "" {
+			if reminder := a.followupReminderBlock(); reminder.Text != "" {
 				toolResults = append(toolResults, reminder)
 			}
 			toolResultJSON, marshalErr := json.Marshal(toolResults)
@@ -197,7 +211,7 @@ func (a *Agent) gracefulExhaustion(ctx context.Context, lastNodeID string) strin
 	ctx = a.retryCtx(ctx)
 	// Wait for any running background sub-agents to finish.
 	if bw := a.findBackgroundWaiter(); bw != nil {
-		bw.WaitForBackgroundAgents(gracefulExhaustionTimeout)
+		waitForBackgroundAgents(waitForBackgroundAgentsOptions{ctx: ctx, waiter: bw, timeout: gracefulExhaustionTimeout})
 	}
 
 	// Drain background results that arrived since the last LLM call.
@@ -395,8 +409,8 @@ func (a *Agent) maybeCompact(ctx context.Context, opts maybeCompactOptions) stri
 // Note: WithSystemPrompt is required for the initial Prompt() call (sets the
 // root node's system prompt). On follow-up PromptFrom() calls, langdag ignores
 // it (always uses the root node's stored prompt), but it's harmless to include
-// and documents intent. Dynamic per-turn stats are injected via
-// budgetReminderBlock() as a user-message <system-reminder> instead.
+// and documents intent. Dynamic follow-up reminders are injected via
+// followupReminderBlock() as a user-message <system-reminder> instead.
 func (a *Agent) buildPromptOpts() []langdag.PromptOption {
 	opts := []langdag.PromptOption{
 		langdag.WithSystemPrompt(a.systemPrompt),
@@ -551,7 +565,7 @@ func (a *Agent) runLoop(ctx context.Context, opts runLoopOptions) {
 		if opts.parentNodeID == "" {
 			return a.client.Prompt(ctx, opts.userMessage, promptOpts...)
 		}
-		return a.client.PromptFrom(ctx, opts.parentNodeID, opts.userMessage, promptOpts...)
+		return a.client.PromptFrom(ctx, opts.parentNodeID, currentTurnMessage(opts.userMessage), promptOpts...)
 	})
 	if err != nil {
 		a.emit(AgentEvent{Type: EventError, Error: fmt.Errorf("prompt: %w", err)})
@@ -786,11 +800,11 @@ func (a *Agent) runLoop(ctx context.Context, opts runLoopOptions) {
 		}
 
 		// Build tool results message and re-call LLM.
-		// Budget stats are injected as a <system-reminder> text block in the
-		// user message (not the system prompt) to preserve prompt caching.
+		// Follow-up reminders are injected as a <system-reminder> text block in
+		// the user message (not the system prompt) to preserve prompt caching.
 		a.currentIteration = iteration
 		promptOpts = a.buildPromptOpts()
-		if reminder := a.budgetReminderBlock(); reminder.Text != "" {
+		if reminder := a.followupReminderBlock(); reminder.Text != "" {
 			toolResults = append(toolResults, reminder)
 		}
 		toolResultJSON, marshalErr := json.Marshal(toolResults)

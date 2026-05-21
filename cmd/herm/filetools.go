@@ -126,7 +126,7 @@ func (t *GlobTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	cmd := fmt.Sprintf("cd %s && rg --files -g %s --sort path 2>&1",
 		shellQuote(searchDir), shellQuote(in.Pattern))
 
-	result, err := t.container.Exec(containerExecOptions{command: cmd, timeout: 30})
+	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: cmd, timeout: 30})
 	if err != nil {
 		return "", err
 	}
@@ -273,7 +273,7 @@ func (t *GrepTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	cmd := fmt.Sprintf("cd %s && %s %s 2>&1",
 		shellQuote(t.container.WorkDir()), strings.Join(args, " "), shellQuote(searchDir))
 
-	result, err := t.container.Exec(containerExecOptions{command: cmd, timeout: 30})
+	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: cmd, timeout: 30})
 	if err != nil {
 		return "", err
 	}
@@ -382,7 +382,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	cmd := fmt.Sprintf("awk 'NR>=%d && NR<=%d { printf \"%%6d\\t%%s\\n\", NR, (length>%d ? substr($0,1,%d)\"…\" : $0) } NR>%d { exit }' %s 2>&1",
 		offset, endLine, readFileMaxLineWidth, readFileMaxLineWidth, endLine, shellQuote(filePath))
 
-	result, err := t.container.Exec(containerExecOptions{command: cmd, timeout: 30})
+	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: cmd, timeout: 30})
 	if err != nil {
 		return "", err
 	}
@@ -396,7 +396,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	if output == "" {
 		// Check if file exists but range is past end, or file is empty.
 		checkCmd := fmt.Sprintf("wc -l < %s 2>&1", shellQuote(filePath))
-		checkResult, checkErr := t.container.Exec(containerExecOptions{command: checkCmd, timeout: 5})
+		checkResult, checkErr := t.container.Exec(containerExecOptions{ctx: ctx, command: checkCmd, timeout: 5})
 		if checkErr != nil || checkResult.ExitCode != 0 {
 			return fmt.Sprintf("error: cannot read %s", in.FilePath), nil
 		}
@@ -411,7 +411,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	outputLines := strings.Count(output, "\n") + 1
 	if outputLines >= limit {
 		wcCmd := fmt.Sprintf("wc -l < %s 2>&1", shellQuote(filePath))
-		wcResult, wcErr := t.container.Exec(containerExecOptions{command: wcCmd, timeout: 5})
+		wcResult, wcErr := t.container.Exec(containerExecOptions{ctx: ctx, command: wcCmd, timeout: 5})
 		if wcErr == nil && wcResult.ExitCode == 0 {
 			total := strings.TrimSpace(wcResult.Stdout)
 			output += fmt.Sprintf("\n[showing lines %d-%d of %s]", offset, offset+outputLines-1, total)
@@ -511,7 +511,7 @@ func (t *EditFileTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		return "", fmt.Errorf("marshalling edit-file input: %w", err)
 	}
 
-	result, err := t.container.ExecWithStdin(containerExecWithStdinOptions{stdin: inputJSON, timeout: 30}, "edit-file")
+	result, err := t.container.ExecWithStdin(containerExecWithStdinOptions{ctx: ctx, stdin: inputJSON, timeout: 30}, "edit-file")
 	if err != nil {
 		return "", err
 	}
@@ -607,7 +607,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, input json.RawMessage) (str
 		return "", fmt.Errorf("marshalling write-file input: %w", err)
 	}
 
-	result, err := t.container.ExecWithStdin(containerExecWithStdinOptions{stdin: inputJSON, timeout: 30}, "write-file")
+	result, err := t.container.ExecWithStdin(containerExecWithStdinOptions{ctx: ctx, stdin: inputJSON, timeout: 30}, "write-file")
 	if err != nil {
 		return "", err
 	}
@@ -706,13 +706,13 @@ func (t *OutlineTool) Execute(ctx context.Context, input json.RawMessage) (strin
 
 	// Single file — return directly (no header).
 	if len(paths) == 1 {
-		return t.outlineOne(paths[0])
+		return t.outlineOne(ctx, paths[0])
 	}
 
 	// Multiple files — combine with headers.
 	var parts []string
 	for _, p := range paths {
-		result, err := t.outlineOne(p)
+		result, err := t.outlineOne(ctx, p)
 		if err != nil {
 			return "", err
 		}
@@ -722,13 +722,13 @@ func (t *OutlineTool) Execute(ctx context.Context, input json.RawMessage) (strin
 }
 
 // outlineOne outlines a single file and returns its output or an inline error string.
-func (t *OutlineTool) outlineOne(displayPath string) (string, error) {
+func (t *OutlineTool) outlineOne(ctx context.Context, displayPath string) (string, error) {
 	filePath := displayPath
 	if !strings.HasPrefix(filePath, "/") {
 		filePath = t.container.WorkDir() + "/" + filePath
 	}
 
-	result, err := t.container.Exec(containerExecOptions{command: fmt.Sprintf("outline %s", shellQuote(filePath)), timeout: 15})
+	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: fmt.Sprintf("outline %s", shellQuote(filePath)), timeout: 15})
 	if err != nil {
 		return "", err
 	}
@@ -738,7 +738,7 @@ func (t *OutlineTool) outlineOne(displayPath string) (string, error) {
 
 	// Binary not found (old container image) — fall back to grep.
 	if result.ExitCode == 127 || (result.ExitCode != 0 && strings.Contains(stderr, "not found")) {
-		return t.outlineFallback(outlineFallbackOptions{filePath: filePath, displayPath: displayPath})
+		return t.outlineFallback(ctx, outlineFallbackOptions{filePath: filePath, displayPath: displayPath})
 	}
 
 	if result.ExitCode != 0 {
@@ -762,7 +762,7 @@ type outlineFallbackOptions struct {
 }
 
 // outlineFallback uses grep when the outline binary is missing (old container image).
-func (t *OutlineTool) outlineFallback(opts outlineFallbackOptions) (string, error) {
+func (t *OutlineTool) outlineFallback(ctx context.Context, opts outlineFallbackOptions) (string, error) {
 	filePath := opts.filePath
 	displayPath := opts.displayPath
 	ext := ""
@@ -787,7 +787,7 @@ func (t *OutlineTool) outlineFallback(opts outlineFallbackOptions) (string, erro
 
 	if pattern != "" {
 		cmd := fmt.Sprintf("grep -n -E %s %s 2>&1 | head -n 101", shellQuote(pattern), shellQuote(filePath))
-		result, err := t.container.Exec(containerExecOptions{command: cmd, timeout: 15})
+		result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: cmd, timeout: 15})
 		if err != nil {
 			return "", err
 		}
@@ -800,7 +800,7 @@ func (t *OutlineTool) outlineFallback(opts outlineFallbackOptions) (string, erro
 
 	// Unknown language — head + tail.
 	cmd := fmt.Sprintf("(head -n 20 %s && echo '---' && tail -n 20 %s) 2>&1", shellQuote(filePath), shellQuote(filePath))
-	result, err := t.container.Exec(containerExecOptions{command: cmd, timeout: 10})
+	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: cmd, timeout: 10})
 	if err != nil {
 		return "", err
 	}

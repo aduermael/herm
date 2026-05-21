@@ -21,10 +21,10 @@ import (
 
 // Output truncation limits for BashTool.
 const (
-	bashMaxLines    = 80
-	bashMaxBytes    = 12 * 1024 // 12KB
-	truncHeadLines  = 20        // lines to keep from the beginning
-	truncTailLines  = 60        // lines to keep from the end
+	bashMaxLines   = 80
+	bashMaxBytes   = 12 * 1024 // 12KB
+	truncHeadLines = 20        // lines to keep from the beginning
+	truncTailLines = 60        // lines to keep from the end
 )
 
 // BashTool executes commands inside the Docker container via ContainerClient.
@@ -95,7 +95,7 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	// (e.g. && → &amp;&amp;). Unescape before execution.
 	command := html.UnescapeString(in.Command)
 
-	result, err := t.container.Exec(containerExecOptions{command: command, timeout: timeout})
+	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: command, timeout: timeout})
 	if err != nil {
 		return "", err
 	}
@@ -381,7 +381,7 @@ func (t *DevEnvTool) Execute(ctx context.Context, input json.RawMessage) (string
 	case "write":
 		return t.writeDockerfile(in.Content)
 	case "build":
-		return t.buildAndReplace()
+		return t.buildAndReplace(ctx)
 	default:
 		return "", fmt.Errorf("unknown action %q: must be read, write, or build", in.Action)
 	}
@@ -472,7 +472,7 @@ func (t *DevEnvTool) writeDockerfile(content string) (string, error) {
 	return "Dockerfile written to .herm/Dockerfile. Use the 'build' action to build and apply it.", nil
 }
 
-func (t *DevEnvTool) buildAndReplace() (string, error) {
+func (t *DevEnvTool) buildAndReplace(ctx context.Context) (string, error) {
 	dfPath := t.dockerfilePath()
 	if _, err := os.Stat(dfPath); os.IsNotExist(err) {
 		return "", fmt.Errorf("no Dockerfile at .herm/Dockerfile — use 'write' first")
@@ -516,7 +516,7 @@ func (t *DevEnvTool) buildAndReplace() (string, error) {
 	if t.onStatus != nil {
 		t.onStatus("rebuilding…")
 	}
-	if err := t.container.Rebuild(containerRebuildOptions{imageName: imageName, dockerfilePath: tmpFile.Name(), workspace: t.workspace, mounts: t.mounts}); err != nil {
+	if err := t.container.Rebuild(containerRebuildOptions{ctx: ctx, imageName: imageName, dockerfilePath: tmpFile.Name(), workspace: t.workspace, mounts: t.mounts}); err != nil {
 		if t.onStatus != nil {
 			t.onStatus("rebuild failed")
 		}

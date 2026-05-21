@@ -43,6 +43,14 @@ func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
+	if f := os.Getenv("FAKE_STARTED_FILE"); f != "" {
+		_ = os.WriteFile(f, []byte("started"), 0644)
+	}
+	if ms := os.Getenv("FAKE_SLEEP_MS"); ms != "" {
+		var d int
+		fmt.Sscanf(ms, "%d", &d)
+		time.Sleep(time.Duration(d) * time.Millisecond)
+	}
 	// Capture stdin to file when requested (used by ExecWithStdin tests).
 	// Only read stdin for "exec -i" calls to avoid blocking other commands.
 	if f := os.Getenv("FAKE_STDIN_FILE"); f != "" {
@@ -80,6 +88,43 @@ func fakeDockerCommandWithStdin(handler func(args []string) (string, string, int
 		}
 		cmd.Env = env
 		return cmd
+	}
+}
+
+func fakeSleepingCommand(ctx context.Context, name string, args ...string) *exec.Cmd {
+	return fakeSleepingCommandWithStartFile(ctx, "", name, args...)
+}
+
+func fakeSleepingCommandWithStartFile(ctx context.Context, startedFile string, name string, args ...string) *exec.Cmd {
+	fullArgs := append([]string{name}, args...)
+	cs := []string{"-test.run=TestHelperProcess", "--"}
+	cs = append(cs, fullArgs...)
+	env := append(os.Environ(),
+		"GO_WANT_HELPER_PROCESS=1",
+		"FAKE_SLEEP_MS=5000",
+	)
+	if startedFile != "" {
+		env = append(env, fmt.Sprintf("FAKE_STARTED_FILE=%s", startedFile))
+	}
+	cmd := exec.CommandContext(ctx, os.Args[0], cs...)
+	cmd.Env = env
+	return cmd
+}
+
+func waitForStartedFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.After(1 * time.Second)
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatal("fake command did not start")
+		case <-tick.C:
+		}
 	}
 }
 
@@ -600,6 +645,90 @@ func TestContainerClient_ExecDockerFailure(t *testing.T) {
 	// Error message must be descriptive, not just "exec failed"
 	if !strings.Contains(cerr.Message, "docker exec:") {
 		t.Errorf("error should mention 'docker exec:', got: %s", cerr.Message)
+	}
+}
+
+func TestContainerClient_ExecHonorsContextCancellation(t *testing.T) {
+	orig := dockerCommand
+	defer func() { dockerCommand = orig }()
+
+	startedFile := filepath.Join(t.TempDir(), "started")
+	dockerCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if len(args) > 0 && args[0] == "exec" {
+			return fakeSleepingCommandWithStartFile(ctx, startedFile, name, args...)
+		}
+		return fakeDockerCommand(func(a []string) (string, string, int) { return "", "", 0 })(ctx, name, args...)
+	}
+
+	c := NewContainerClient(ContainerConfig{Image: "alpine:latest"})
+	c.running = true
+	c.containerID = "cid123"
+	c.workDir = "/workspace"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Exec(containerExecOptions{ctx: ctx, command: "sleep", timeout: 60})
+		done <- err
+	}()
+
+	waitForStartedFile(t, startedFile)
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected cancellation error")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Exec did not return promptly after context cancellation")
+	}
+}
+
+func TestContainerClient_StopDoesNotWaitForRunningExec(t *testing.T) {
+	orig := dockerCommand
+	defer func() { dockerCommand = orig }()
+
+	startedFile := filepath.Join(t.TempDir(), "started")
+	dockerCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if len(args) > 0 && args[0] == "exec" {
+			return fakeSleepingCommandWithStartFile(ctx, startedFile, name, args...)
+		}
+		return fakeDockerCommand(func(a []string) (string, string, int) { return "", "", 0 })(ctx, name, args...)
+	}
+
+	c := NewContainerClient(ContainerConfig{Image: "alpine:latest"})
+	c.running = true
+	c.containerID = "cid123"
+	c.workDir = "/workspace"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_, _ = c.Exec(containerExecOptions{ctx: ctx, command: "sleep", timeout: 60})
+		close(done)
+	}()
+	waitForStartedFile(t, startedFile)
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- c.Stop()
+	}()
+
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		cancel()
+		t.Fatal("Stop waited for running Exec")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("Exec did not finish after cleanup cancellation")
 	}
 }
 

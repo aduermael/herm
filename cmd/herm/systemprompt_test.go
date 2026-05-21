@@ -61,6 +61,44 @@ func (s stubHostTool) RequiresApproval(_ json.RawMessage) bool {
 
 func (s stubHostTool) HostTool() bool { return true }
 
+func TestSystemPromptTreatsProjectContextAsBackground(t *testing.T) {
+	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: nil, serverTools: nil, skills: nil, workDir: "/work", personality: "", containerImage: "alpine:latest", worktreeBranch: "", snap: nil})
+	for _, want := range []string{
+		"Treat the Environment and Project context as background only",
+		"The current user message defines the task",
+		"Do not inspect files, run commands, continue prior work, or act on uncommitted changes unless",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("system prompt missing passive-context guidance %q", want)
+		}
+	}
+}
+
+func TestSystemPromptSeparatesProjectContextFromRole(t *testing.T) {
+	snap := &projectSnapshot{GitStatus: "?? cmd/herm/terminal_title_test.go"}
+	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: nil, serverTools: nil, skills: nil, workDir: "/work", personality: "", containerImage: "alpine:latest", worktreeBranch: "", snap: snap})
+	if strings.Contains(prompt, "cmd/herm/terminal_title_test.goYou") {
+		t.Fatal("system prompt should not concatenate project context with role text")
+	}
+	if !strings.Contains(prompt, "cmd/herm/terminal_title_test.go\n## Role\n\nYou are an expert coding agent") {
+		t.Fatal("system prompt should separate project context from role text with an explicit role boundary")
+	}
+}
+
+func TestSubAgentSystemPromptSeparatesProjectContextFromRole(t *testing.T) {
+	snap := &projectSnapshot{GitStatus: "?? cmd/herm/subagent.go"}
+	prompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{tools: nil, serverTools: nil, workDir: "/work", containerImage: "alpine:latest", snap: snap})
+	if strings.Contains(prompt, "cmd/herm/subagent.goYou") {
+		t.Fatal("sub-agent prompt should not concatenate project context with role text")
+	}
+	if !strings.Contains(prompt, "cmd/herm/subagent.go\n## Role\n\nYou are a sub-agent") {
+		t.Fatal("sub-agent prompt should separate project context from role text with an explicit role boundary")
+	}
+	if !strings.Contains(prompt, "Treat the snapshot as background for the assigned task, not as a separate task list") {
+		t.Fatal("sub-agent prompt should treat project snapshots as background")
+	}
+}
+
 func TestBuildSystemPromptAllTools(t *testing.T) {
 	tools := []Tool{
 		stubTool{"bash"},

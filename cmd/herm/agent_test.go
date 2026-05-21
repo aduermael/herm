@@ -330,14 +330,25 @@ type scriptedProvider struct {
 	responses []scriptedResponse
 	callIdx   int
 	model     string
+	requests  []types.CompletionRequest
 }
 
-func (p *scriptedProvider) Complete(_ context.Context, _ *types.CompletionRequest) (*types.CompletionResponse, error) {
+func (p *scriptedProvider) recordRequest(req *types.CompletionRequest) int {
 	p.mu.Lock()
 	idx := p.callIdx
 	p.callIdx++
+	if req != nil {
+		clone := *req
+		clone.Messages = append([]types.Message(nil), req.Messages...)
+		clone.Tools = append([]types.ToolDefinition(nil), req.Tools...)
+		p.requests = append(p.requests, clone)
+	}
 	p.mu.Unlock()
+	return idx
+}
 
+func (p *scriptedProvider) Complete(_ context.Context, req *types.CompletionRequest) (*types.CompletionResponse, error) {
+	idx := p.recordRequest(req)
 	if idx >= len(p.responses) {
 		return &types.CompletionResponse{
 			ID: "resp-test", Model: p.model,
@@ -365,10 +376,7 @@ func (p *scriptedProvider) Complete(_ context.Context, _ *types.CompletionReques
 }
 
 func (p *scriptedProvider) Stream(_ context.Context, req *types.CompletionRequest) (<-chan types.StreamEvent, error) {
-	p.mu.Lock()
-	idx := p.callIdx
-	p.callIdx++
-	p.mu.Unlock()
+	idx := p.recordRequest(req)
 
 	ch := make(chan types.StreamEvent, 20)
 	go func() {
@@ -425,6 +433,32 @@ func (p *scriptedProvider) Stream(_ context.Context, req *types.CompletionReques
 
 func (p *scriptedProvider) Name() string              { return "mock" }
 func (p *scriptedProvider) Models() []types.ModelInfo { return nil }
+
+func requestText(t *testing.T, req types.CompletionRequest) string {
+	t.Helper()
+	if len(req.Messages) == 0 {
+		t.Fatal("request has no messages")
+	}
+	raw := req.Messages[len(req.Messages)-1].Content
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var blocks []types.ContentBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		t.Fatalf("unmarshal request content: %v", err)
+	}
+	var b strings.Builder
+	for _, block := range blocks {
+		if block.Text != "" {
+			b.WriteString(block.Text)
+		}
+		if block.Content != "" {
+			b.WriteString(block.Content)
+		}
+	}
+	return b.String()
+}
 
 // drainEvents collects all agent events until EventDone, with a timeout.
 func drainEvents(t *testing.T, ch <-chan AgentEvent, timeout time.Duration) []AgentEvent {
@@ -487,6 +521,41 @@ func TestRunTextStreaming(t *testing.T) {
 	}
 }
 
+func TestRunContinuationAddsCurrentTaskReminder(t *testing.T) {
+	prov := &scriptedProvider{
+		model:     "test-model",
+		responses: []scriptedResponse{{text: "Hey", tokensIn: 100, tokensOut: 20}},
+	}
+	store := newMockStorage()
+	root := &types.Node{
+		ID:           "root",
+		NodeType:     types.NodeTypeUser,
+		Content:      "previous task",
+		Status:       "completed",
+		SystemPrompt: "system",
+		CreatedAt:    time.Now(),
+	}
+	if err := store.CreateNode(context.Background(), root); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	client := langdag.NewWithDeps(store, prov)
+	agent := NewAgent(NewAgentOptions{Client: client, Tools: nil, ServerTools: nil, SystemPrompt: "system", Model: "test-model", ContextWindow: 0})
+
+	go agent.Run(context.Background(), RunOptions{UserMessage: "Hey man!", ParentNodeID: "root"})
+	drainEvents(t, agent.Events(), 5*time.Second)
+
+	if len(prov.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(prov.requests))
+	}
+	got := requestText(t, prov.requests[0])
+	if !strings.Contains(got, currentTaskReminder) {
+		t.Fatal("continuation request should include current-task reminder")
+	}
+	if !strings.Contains(got, "Hey man!") {
+		t.Fatal("continuation request should preserve the exact user message")
+	}
+}
+
 func TestRunToolCallDispatch(t *testing.T) {
 	// Call 0: return a tool call, call 1: return text (after tool result).
 	prov := &scriptedProvider{
@@ -542,6 +611,12 @@ func TestRunToolCallDispatch(t *testing.T) {
 	}
 	if !hasToolResult {
 		t.Error("expected EventToolResult")
+	}
+	if len(prov.requests) < 2 {
+		t.Fatalf("requests = %d, want at least 2", len(prov.requests))
+	}
+	if got := requestText(t, prov.requests[1]); !strings.Contains(got, currentTaskReminder) {
+		t.Fatal("tool-result follow-up should include current-task reminder")
 	}
 }
 
