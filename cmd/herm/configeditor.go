@@ -726,59 +726,11 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			a.exitConfigMode(false)
 			return
 		}
-		b, ok = readByte()
+		seq, ok := readCSISequence(readByte)
 		if !ok {
 			return
 		}
-		switch b {
-		case 'A': // Up
-			if a.cfgCursor > 0 {
-				a.cfgCursor--
-			} else {
-				fields := a.cfgCurrentFields()
-				if len(fields) > 0 {
-					a.cfgCursor = len(fields) - 1
-				}
-			}
-			a.cfgTabCursor[a.cfgTab] = a.cfgCursor
-			a.renderInput()
-		case 'B': // Down
-			fields := a.cfgCurrentFields()
-			if a.cfgCursor < len(fields)-1 {
-				a.cfgCursor++
-			} else {
-				a.cfgCursor = 0
-			}
-			a.cfgTabCursor[a.cfgTab] = a.cfgCursor
-			a.renderInput()
-		case 'C': // Right - next tab
-			a.cfgTabCursor[a.cfgTab] = a.cfgCursor
-			a.cfgTab++
-			if a.cfgTab >= len(cfgTabNames) {
-				a.cfgTab = cfgTabDeployments
-			}
-			a.cfgCursor = a.cfgTabCursor[a.cfgTab]
-			a.clampConfigCursor()
-			a.renderInput()
-		case 'D': // Left - prev tab
-			a.cfgTabCursor[a.cfgTab] = a.cfgCursor
-			a.cfgTab--
-			if a.cfgTab < 0 {
-				a.cfgTab = len(cfgTabNames) - 1
-			}
-			a.cfgCursor = a.cfgTabCursor[a.cfgTab]
-			a.clampConfigCursor()
-			a.renderInput()
-		case '2': // modifyOtherKeys (Ctrl+S, Ctrl+C, etc.)
-			a.handleCSIDigit2(handleCSIDigit2Options{readByte: readByte, onPaste: func(string) {}})
-		default:
-			// Consume modified key sequences (ESC [ 1 ; mod letter)
-			if b == '1' {
-				readByte() // ;
-				readByte() // mod
-				readByte() // letter
-			}
-		}
+		a.handleConfigCSISequence(handleConfigCSISequenceOptions{seq: seq, readByte: readByte})
 
 	case ch == '\r': // Enter - toggle, picker, or start editing current field
 		if a.cfgTab == cfgTabProject && a.projectConfigRoot() == "" {
@@ -853,51 +805,11 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 			a.renderInput()
 			return
 		}
-		b, ok = readByte()
+		seq, ok := readCSISequence(readByte)
 		if !ok {
 			return
 		}
-		switch b {
-		case 'C': // Right
-			if a.cfgEditCursor < len(a.cfgEditBuf) {
-				a.cfgEditCursor++
-				a.renderInput()
-			}
-		case 'D': // Left
-			if a.cfgEditCursor > 0 {
-				a.cfgEditCursor--
-				a.renderInput()
-			}
-		case 'H': // Home
-			a.cfgEditCursor = 0
-			a.renderInput()
-		case 'F': // End
-			a.cfgEditCursor = len(a.cfgEditBuf)
-			a.renderInput()
-		case '2': // Bracketed paste or modifyOtherKeys
-			a.handleCSIDigit2(handleCSIDigit2Options{readByte: readByte, onPaste: func(s string) {
-				pasted := []rune(s)
-				tail := make([]rune, len(a.cfgEditBuf[a.cfgEditCursor:]))
-				copy(tail, a.cfgEditBuf[a.cfgEditCursor:])
-				a.cfgEditBuf = append(a.cfgEditBuf[:a.cfgEditCursor], append(pasted, tail...)...)
-				a.cfgEditCursor += len(pasted)
-				a.renderInput()
-			}})
-		case '3': // Delete
-			if t, ok := readByte(); ok && t == '~' {
-				if a.cfgEditCursor < len(a.cfgEditBuf) {
-					a.cfgEditBuf = append(a.cfgEditBuf[:a.cfgEditCursor], a.cfgEditBuf[a.cfgEditCursor+1:]...)
-					a.renderInput()
-				}
-			}
-		default:
-			// consume remaining bytes of sequences
-			if b == '1' {
-				readByte()
-				readByte()
-				readByte()
-			}
-		}
+		a.handleConfigEditCSISequence(handleConfigEditCSISequenceOptions{seq: seq, readByte: readByte})
 
 	case ch == '\r': // Enter - confirm edit
 		fields := a.cfgCurrentFields()
@@ -935,15 +847,7 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 
 	case ch == 0x17: // Ctrl+W - delete word backward
 		if a.cfgEditCursor > 0 {
-			i := a.cfgEditCursor - 1
-			for i > 0 && a.cfgEditBuf[i] == ' ' {
-				i--
-			}
-			for i > 0 && a.cfgEditBuf[i-1] != ' ' {
-				i--
-			}
-			a.cfgEditBuf = append(a.cfgEditBuf[:i], a.cfgEditBuf[a.cfgEditCursor:]...)
-			a.cfgEditCursor = i
+			a.deleteConfigEditWordBackward()
 			a.renderInput()
 		}
 
@@ -961,10 +865,7 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 			}
 			r, _ = utf8.DecodeRune(b)
 		}
-		a.cfgEditBuf = append(a.cfgEditBuf, 0)
-		copy(a.cfgEditBuf[a.cfgEditCursor+1:], a.cfgEditBuf[a.cfgEditCursor:])
-		a.cfgEditBuf[a.cfgEditCursor] = r
-		a.cfgEditCursor++
+		a.insertConfigEditRune(r)
 		a.renderInput()
 	}
 }

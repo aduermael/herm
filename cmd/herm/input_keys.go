@@ -1,12 +1,14 @@
 // input_keys.go handles byte/CSI/escape-sequence dispatch and paste input:
 // handleByte, handlePlainEscape, handleEscapeSequence, handleNavKey,
-// handleModifyOtherKeys, handleCSIDigit2, handleModifiedCSI, handlePaste.
+// handleModifyOtherKeys, handlePaste.
 package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -357,26 +359,14 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) bool {
 	// unknown or unexpected CSI sequences are fully consumed and never leak
 	// trailing bytes into the input buffer (e.g. mouse/scroll events from
 	// terminals like Zed that send sequences herm does not handle).
-	var params []byte
-	var final byte
-	for {
-		b, ok = readByte()
-		if !ok {
-			return false
-		}
-		if isCSIFinal(b) {
-			final = b
-			break
-		}
-		params = append(params, b)
-		if len(params) > 128 {
-			return false // safety limit for malformed sequences
-		}
+	seq, ok := readCSISequence(readByte)
+	if !ok {
+		return false
 	}
 
 	// Tilde-terminated sequences
-	if final == '~' {
-		ps := string(params)
+	if seq.final == '~' {
+		ps := string(seq.params)
 		switch {
 		case ps == "200": // Bracketed paste: ESC [ 200 ~
 			a.handlePaste(readBracketedPaste(readByte))
@@ -387,15 +377,20 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) bool {
 			}
 		default:
 			// modifyOtherKeys: ESC [ 27 ; <mod> ; <code> ~
-			if strings.HasPrefix(ps, "27;") {
-				var mod, code int
-				if n, _ := fmt.Sscanf(ps[3:], "%d;%d", &mod, &code); n == 2 {
-					return a.handleModifyOtherKeys(handleModifyOtherKeysOptions{mod: mod, code: code})
-				}
+			if mod, code, ok := parseModifyOtherKeysParams(seq.params); ok {
+				return a.handleModifyOtherKeys(handleModifyOtherKeysOptions{mod: mod, code: code})
 			}
 			// All other tilde sequences (Insert, PgUp, etc.) silently consumed
 		}
 		return false
+	}
+
+	if seq.final == 'u' {
+		code, mod, ok := parseCSIUParams(seq.params)
+		if !ok {
+			return false
+		}
+		return a.handleModifyOtherKeys(handleModifyOtherKeysOptions{mod: mod, code: code})
 	}
 
 	if a.awaitingApproval {
@@ -403,10 +398,33 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) bool {
 	}
 
 	// Navigation keys (arrows, Home, End) — shared by CSI and SS3
-	a.handleNavKey(handleNavKeyOptions{final: final, params: params})
+	a.handleNavKey(handleNavKeyOptions{final: seq.final, params: seq.params})
 	// Unknown final bytes (mode responses, etc.): already fully consumed by
 	// the collection loop above — silently discarded.
 	return false
+}
+
+type csiSequence struct {
+	params []byte
+	final  byte
+}
+
+func readCSISequence(readByte func() (byte, bool)) (csiSequence, bool) {
+	var seq csiSequence
+	for {
+		b, ok := readByte()
+		if !ok {
+			return csiSequence{}, false
+		}
+		if isCSIFinal(b) {
+			seq.final = b
+			return seq, true
+		}
+		seq.params = append(seq.params, b)
+		if len(seq.params) > 128 {
+			return csiSequence{}, false
+		}
+	}
 }
 
 type handleNavKeyOptions struct {
@@ -424,8 +442,7 @@ func (a *App) handleNavKey(opts handleNavKeyOptions) {
 	if i := strings.LastIndexByte(string(params), ';'); i >= 0 {
 		fmt.Sscanf(string(params[i+1:]), "%d", &mod)
 	}
-	isCtrl := mod > 0 && (mod-1)&4 != 0
-	isAlt := mod > 0 && (mod-1)&2 != 0
+	_, isAlt, isCtrl := decodeCSIEncodedModifier(mod)
 
 	switch final {
 	case 'A': // Up
@@ -534,6 +551,26 @@ type handleModifyOtherKeysOptions struct {
 // otherwise be ambiguous (e.g., Ctrl+C as CSI 27;5;99~ instead of byte 0x03).
 // We translate these back to the actions the app already handles.
 func (a *App) handleModifyOtherKeys(opts handleModifyOtherKeysOptions) bool {
+	return a.handleEncodedKey(handleEncodedKeyOptions{
+		mod:                opts.mod,
+		code:               opts.code,
+		insertRune:         a.insertInputRune,
+		deleteWordBackward: a.deleteWordBackward,
+		printableBlocked:   func() bool { return a.menuActive },
+		render:             a.renderInput,
+	})
+}
+
+type handleEncodedKeyOptions struct {
+	mod                int
+	code               int
+	insertRune         func(rune)
+	deleteWordBackward func()
+	printableBlocked   func() bool
+	render             func()
+}
+
+func (a *App) handleEncodedKey(opts handleEncodedKeyOptions) bool {
 	mod, code := opts.mod, opts.code
 	if code == '\033' {
 		return a.handlePlainEscape()
@@ -541,24 +578,136 @@ func (a *App) handleModifyOtherKeys(opts handleModifyOtherKeysOptions) bool {
 	if a.awaitingApproval {
 		return false
 	}
-	mod-- // CSI modifier encoding
-	isAlt := mod&2 != 0
-	isCtrl := mod&4 != 0
+	isShift, isAlt, isCtrl := decodeCSIEncodedModifier(mod)
 
 	switch {
 	case isAlt && code == 127: // Alt+Backspace → delete word
-		a.deleteWordBackward()
-		a.renderInput()
+		if opts.deleteWordBackward != nil {
+			opts.deleteWordBackward()
+			renderEncodedKey(opts)
+		}
 	case isAlt && code == '\r': // Alt+Enter → insert newline
-		a.insertAtCursor('\n')
-		a.renderInput()
-	case isCtrl && code >= 'a' && code <= 'z':
+		if opts.insertRune != nil {
+			opts.insertRune('\n')
+			renderEncodedKey(opts)
+		}
+	case isCtrl:
 		// Translate Ctrl+letter to traditional control byte
 		// and inject into the input channel for normal processing.
-		ctrlByte := byte(code - 'a' + 1)
-		go func() { a.stdinCh <- ctrlByte }()
+		if letter, ok := asciiLetterForCtrl(code); ok {
+			ctrlByte := byte(letter - 'a' + 1)
+			go func() { a.stdinCh <- ctrlByte }()
+		}
+	case !isAlt && !isCtrl:
+		r, ok := encodedPrintableRune(encodedPrintableRuneOptions{code: code, isShift: isShift})
+		if !ok || opts.insertRune == nil {
+			return false
+		}
+		if opts.printableBlocked != nil && opts.printableBlocked() {
+			return false
+		}
+		opts.insertRune(r)
+		renderEncodedKey(opts)
 	}
 	return false
+}
+
+func renderEncodedKey(opts handleEncodedKeyOptions) {
+	if opts.render != nil {
+		opts.render()
+	}
+}
+
+func (a *App) insertInputRune(r rune) {
+	prevVal := a.inputValue()
+	a.insertAtCursor(r)
+	if a.inputValue() != prevVal {
+		a.autocompleteIdx = 0
+	}
+}
+
+func decodeCSIEncodedModifier(mod int) (isShift, isAlt, isCtrl bool) {
+	if mod <= 0 {
+		return false, false, false
+	}
+	bits := mod - 1
+	return bits&1 != 0, bits&2 != 0, bits&4 != 0
+}
+
+type encodedPrintableRuneOptions struct {
+	code    int
+	isShift bool
+}
+
+func encodedPrintableRune(opts encodedPrintableRuneOptions) (rune, bool) {
+	code, isShift := opts.code, opts.isShift
+	if code < 0 || code > utf8.MaxRune {
+		return 0, false
+	}
+	r := rune(code)
+	if isShift && r >= 'a' && r <= 'z' {
+		r -= 'a' - 'A'
+	}
+	if !unicode.IsPrint(r) {
+		return 0, false
+	}
+	return r, true
+}
+
+func asciiLetterForCtrl(code int) (int, bool) {
+	switch {
+	case code >= 'a' && code <= 'z':
+		return code, true
+	case code >= 'A' && code <= 'Z':
+		return code + ('a' - 'A'), true
+	default:
+		return 0, false
+	}
+}
+
+func parseModifyOtherKeysParams(params []byte) (mod, code int, ok bool) {
+	ps := string(params)
+	if !strings.HasPrefix(ps, "27;") {
+		return 0, 0, false
+	}
+	if n, _ := fmt.Sscanf(ps[3:], "%d;%d", &mod, &code); n == 2 {
+		return mod, code, true
+	}
+	return 0, 0, false
+}
+
+func parseCSIUParams(params []byte) (code, mod int, ok bool) {
+	parts := strings.Split(string(params), ";")
+	if len(parts) == 0 || parts[0] == "" {
+		return 0, 0, false
+	}
+	codePart := firstCSIParamValue(parts[0])
+	parsedCode, err := strconv.Atoi(codePart)
+	if err != nil {
+		return 0, 0, false
+	}
+	parsedMod := 1
+	if len(parts) > 1 && parts[1] != "" {
+		modPart := firstCSIParamValue(parts[1])
+		parsedMod, err = strconv.Atoi(modPart)
+		if err != nil {
+			return 0, 0, false
+		}
+	}
+	if len(parts) > 2 && parts[2] != "" {
+		textPart := firstCSIParamValue(parts[2])
+		if parsedText, err := strconv.Atoi(textPart); err == nil {
+			parsedCode = parsedText
+		}
+	}
+	return parsedCode, parsedMod, true
+}
+
+func firstCSIParamValue(s string) string {
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // readBracketedPaste reads paste content until the end marker ESC [ 2 0 1 ~.
@@ -604,117 +753,6 @@ func readBracketedPaste(readByte func() (byte, bool)) string {
 		}
 	}
 	return string(content)
-}
-
-type handleCSIDigit2Options struct {
-	readByte func() (byte, bool)
-	onPaste  func(string)
-}
-
-func (a *App) handleCSIDigit2(opts handleCSIDigit2Options) {
-	readByte, onPaste := opts.readByte, opts.onPaste
-	// We've read ESC [ 2, check for 0 0 ~
-	b0, ok := readByte()
-	if !ok {
-		return
-	}
-	b1, ok := readByte()
-	if !ok {
-		return
-	}
-	b2, ok := readByte()
-	if !ok {
-		return
-	}
-
-	if b0 == '0' && b1 == '0' && b2 == '~' {
-		onPaste(readBracketedPaste(readByte))
-		return
-	}
-
-	// modifyOtherKeys: ESC [ 27 ; <mod> ; <code> ~
-	// We've read ESC [ 2, b0='7', b1=';', b2=<mod digit>
-	if b0 == '7' && b1 == ';' {
-		// Read remaining: possibly more mod digits, ';', code digits, '~'
-		// Collect all remaining bytes until '~'
-		seq := []byte{b2}
-		for {
-			next, ok := readByte()
-			if !ok {
-				return
-			}
-			if next == '~' {
-				break
-			}
-			seq = append(seq, next)
-		}
-		// Parse: seq should be "<mod>;<code>" (b2 is the first byte)
-		// Full param after "27;" is string(seq), parse mod and code
-		parts := string(seq)
-		var mod, code int
-		if n, _ := fmt.Sscanf(parts, "%d;%d", &mod, &code); n == 2 {
-			a.handleModifyOtherKeys(handleModifyOtherKeysOptions{mod: mod, code: code})
-		}
-		return
-	}
-
-	// Not a bracketed paste, might be another sequence starting with 2
-	// e.g., Insert key (ESC [ 2 ~)
-	if b0 == '~' {
-		// ESC [ 2 ~ = Insert
-		return
-	}
-}
-
-func (a *App) handleModifiedCSI(readByte func() (byte, bool)) {
-	// We've read ESC [ 1, expect ; <mod> <letter>
-	semi, ok := readByte()
-	if !ok {
-		return
-	}
-	if semi != ';' {
-		return
-	}
-	modByte, ok := readByte()
-	if !ok {
-		return
-	}
-	letter, ok := readByte()
-	if !ok {
-		return
-	}
-
-	if a.awaitingApproval {
-		return
-	}
-
-	modNum := int(modByte - '0')
-	modNum-- // CSI encoding
-	isAlt := modNum&2 != 0
-	isCtrl := modNum&4 != 0
-
-	switch letter {
-	case 'C': // Right
-		if isCtrl || isAlt {
-			a.moveWordRight()
-		} else if a.cursor < len(a.input) {
-			a.cursor++
-		}
-		a.renderInput()
-	case 'D': // Left
-		if isCtrl || isAlt {
-			a.moveWordLeft()
-		} else if a.cursor > 0 {
-			a.cursor--
-		}
-		a.renderInput()
-	case 'H': // Home
-		a.cursor = 0
-		a.renderInput()
-	case 'F': // End
-		a.cursor = len(a.input)
-		a.renderInput()
-	}
 }
 
 // ─── Paste handling ───
