@@ -218,6 +218,44 @@ func TestEncodedShiftPrintableInsertsRune(t *testing.T) {
 	}
 }
 
+func TestEncodedShiftEnterInsertsNewline(t *testing.T) {
+	tests := []struct {
+		name string
+		seq  string
+	}{
+		{name: "modifyOtherKeys CR", seq: "27;2;13~"},
+		{name: "CSI u CR", seq: "13;2u"},
+		{name: "CSI u LF", seq: "10;2u"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := newInputKeyTestApp()
+			app.input = []rune("a")
+			app.cursor = len(app.input)
+
+			if handleCSISequenceForTest(t, app, tt.seq) {
+				t.Fatalf("%s sequence should not quit", tt.name)
+			}
+			if got := app.inputValue(); got != "a\n" {
+				t.Fatalf("input after %s = %q, want %q", tt.name, got, "a\n")
+			}
+		})
+	}
+}
+
+func TestEncodedShiftEnterBlockedByMenu(t *testing.T) {
+	app := newInputKeyTestApp()
+	app.menuActive = true
+
+	if handleCSISequenceForTest(t, app, "13;2u") {
+		t.Fatal("Shift+Enter CSI u sequence should not quit")
+	}
+	if got := app.inputValue(); got != "" {
+		t.Fatalf("menu should block encoded Shift+Enter, got input %q", got)
+	}
+}
+
 func TestEncodedCtrlShiftLetterUsesCtrlShortcut(t *testing.T) {
 	app := newInputKeyTestApp()
 	app.input = []rune("abc")

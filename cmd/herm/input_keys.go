@@ -586,7 +586,7 @@ func (a *App) handleEncodedKey(opts handleEncodedKeyOptions) bool {
 			opts.deleteWordBackward()
 			renderEncodedKey(opts)
 		}
-	case isAlt && code == '\r': // Alt+Enter → insert newline
+	case isAlt && isEncodedEnterCode(code): // Alt+Enter → insert newline
 		if opts.insertRune != nil {
 			opts.insertRune('\n')
 			renderEncodedKey(opts)
@@ -598,6 +598,15 @@ func (a *App) handleEncodedKey(opts handleEncodedKeyOptions) bool {
 			ctrlByte := byte(letter - 'a' + 1)
 			go func() { a.stdinCh <- ctrlByte }()
 		}
+	case !isAlt && !isCtrl && isShift && isEncodedEnterCode(code):
+		if opts.insertRune == nil {
+			return false
+		}
+		if opts.printableBlocked != nil && opts.printableBlocked() {
+			return false
+		}
+		opts.insertRune('\n')
+		renderEncodedKey(opts)
 	case !isAlt && !isCtrl:
 		r, ok := encodedPrintableRune(encodedPrintableRuneOptions{code: code, isShift: isShift})
 		if !ok || opts.insertRune == nil {
@@ -652,6 +661,10 @@ func encodedPrintableRune(opts encodedPrintableRuneOptions) (rune, bool) {
 		return 0, false
 	}
 	return r, true
+}
+
+func isEncodedEnterCode(code int) bool {
+	return code == '\r' || code == '\n'
 }
 
 func asciiLetterForCtrl(code int) (int, bool) {
