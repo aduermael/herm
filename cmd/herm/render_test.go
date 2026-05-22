@@ -2086,6 +2086,77 @@ func TestRenderFullClearSequence(t *testing.T) {
 	}
 }
 
+func TestRenderInputFullRendersWhenScrollShiftGrows(t *testing.T) {
+	// Capture stdout to verify renderInput does not partially repaint from the
+	// old separator row when the input area growth changes the visible window.
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	app := &App{
+		width:         80,
+		sepRow:        20,
+		inputStartRow: 21,
+		repoRoot:      "/tmp/herm-test-repo",
+		cfgActive:     true,
+		cfgTab:        cfgTabProject,
+		menuActive:    true,
+		menuHeader:    "Model",
+		menuLines: []string{
+			"model-01", "model-02", "model-03", "model-04", "model-05",
+			"model-06", "model-07", "model-08", "model-09", "model-10",
+			"model-11", "model-12", "model-13", "model-14", "model-15",
+		},
+		menuModels: []ModelDef{{ID: "model-01"}},
+	}
+	app.renderInput()
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if !strings.HasPrefix(output, "\033[?2026h\033[1;1H") {
+		t.Fatalf("renderInput should fall back to a full top render when scroll grows, got prefix %q", output[:min(20, len(output))])
+	}
+}
+
+func TestRenderInputPartialRendersWhenScrollShiftStable(t *testing.T) {
+	// Capture stdout to verify renderInput keeps the cheap partial repaint when
+	// the input area changes within a stable visible window.
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	app := &App{
+		width:         80,
+		sepRow:        5,
+		inputStartRow: 6,
+		cfgActive:     true,
+		cfgTab:        cfgTabGlobal,
+	}
+	app.renderInput()
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if !strings.HasPrefix(output, "\033[?2026h\033[5;1H") {
+		t.Fatalf("renderInput should partial repaint from the stable separator row, got prefix %q", output[:min(20, len(output))])
+	}
+}
+
 func TestStatusLineFormats(t *testing.T) {
 	strip := func(s string) string {
 		return ansiEscRe.ReplaceAllString(s, "")

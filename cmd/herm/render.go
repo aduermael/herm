@@ -866,8 +866,10 @@ func (a *App) renderInput() {
 		newScrollShift = totalRows - th
 	}
 
-	// If content shrank and we need to un-scroll, do a full render
-	if newScrollShift < a.scrollShift {
+	// A partial redraw is only safe while the visible scroll window is stable.
+	// If the input area grows or shrinks enough to change scroll offset, rows
+	// above the input area become newly visible and must be repainted too.
+	if newScrollShift != a.scrollShift {
 		a.render()
 		return
 	}
