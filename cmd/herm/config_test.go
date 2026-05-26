@@ -496,14 +496,10 @@ func TestProjectTabFieldGetSet(t *testing.T) {
 func TestDeploymentTabFieldsWriteDeploymentConfig(t *testing.T) {
 	var cfg Config
 	deploymentFieldByLabel(t, cfgAPIKeyFields, "OpenAI API Key").set(&cfg, "sk-openai")
-	deploymentFieldByLabel(t, cfgAPIKeyFields, "OpenAI Base URL").set(&cfg, "api.openai.example")
 	deploymentFieldByLabel(t, cfgAPIKeyFields, "Azure Model Mappings").set(&cfg, "openai/gpt-4.1-2025-04-14=my-gpt-4-1-prod")
 
 	if got := cfg.Deployments["openai-direct"].APIKey; got != "sk-openai" {
 		t.Fatalf("openai-direct api_key = %q", got)
-	}
-	if got := cfg.Deployments["openai-direct"].BaseURL; got != "http://api.openai.example" {
-		t.Fatalf("openai-direct base_url = %q", got)
 	}
 	if got := cfg.Deployments["openai-azure"].ModelMappings["openai/gpt-4.1-2025-04-14"]; got != "my-gpt-4-1-prod" {
 		t.Fatalf("azure mapping = %q", got)
@@ -515,7 +511,7 @@ func TestDeploymentTabFieldsWriteDeploymentConfig(t *testing.T) {
 
 func TestDeploymentTabLabelsRemoveDirectFromAnthropicOpenAI(t *testing.T) {
 	labels := deploymentFieldLabels(cfgAPIKeyFields)
-	for _, label := range []string{"Anthropic API Key", "OpenAI API Key", "Grok API Key", "Gemini API Key", "OpenAI Base URL"} {
+	for _, label := range []string{"Anthropic API Key", "OpenAI API Key", "Grok API Key", "Gemini API Key"} {
 		if !stringSliceContains(labels, label) {
 			t.Fatalf("deployment fields missing %q in labels: %v", label, labels)
 		}
@@ -532,12 +528,9 @@ func TestDeploymentTabOptionalFieldsGateByCredentials(t *testing.T) {
 
 	labels := deploymentFieldLabels(deploymentTabFields(Config{}))
 	for _, label := range []string{
-		"OpenAI Base URL",
 		"Azure OpenAI Endpoint",
 		"Azure OpenAI API Version",
 		"Azure Model Mappings",
-		"Grok Base URL",
-		"OpenRouter Base URL",
 		"Anthropic Bedrock Region",
 		"Anthropic Vertex Project",
 		"Anthropic Vertex Region",
@@ -547,23 +540,6 @@ func TestDeploymentTabOptionalFieldsGateByCredentials(t *testing.T) {
 		if stringSliceContains(labels, label) {
 			t.Fatalf("deploymentTabFields without cloud context should hide %q in labels: %v", label, labels)
 		}
-	}
-
-	openAILabels := deploymentFieldLabels(deploymentTabFields(Config{Deployments: map[string]DeploymentConfig{
-		"openai-direct": {APIKey: "sk-openai"},
-	}}))
-	if !stringSliceContains(openAILabels, "OpenAI Base URL") {
-		t.Fatalf("OpenAI API key should show OpenAI Base URL: %v", openAILabels)
-	}
-	if got, want := labelIndex(openAILabels, "OpenAI Base URL"), labelIndex(openAILabels, "OpenAI API Key")+1; got != want {
-		t.Fatalf("OpenAI Base URL should sit below OpenAI API Key, labels: %v", openAILabels)
-	}
-
-	grokLabels := deploymentFieldLabels(deploymentTabFields(Config{Deployments: map[string]DeploymentConfig{
-		"grok-direct": {APIKey: "xai-key"},
-	}}))
-	if got, want := labelIndex(grokLabels, "Grok Base URL"), labelIndex(grokLabels, "Grok API Key")+1; got != want {
-		t.Fatalf("Grok Base URL should sit below Grok API Key, labels: %v", grokLabels)
 	}
 
 	azureLabels := deploymentFieldLabels(deploymentTabFields(Config{Deployments: map[string]DeploymentConfig{
@@ -846,6 +822,7 @@ func TestBuildConfigRowsDeploymentValueStyling(t *testing.T) {
 		cfgTab: cfgTabDeployments,
 		cfgDraft: Config{Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "sk-openai-secret"},
+			"openai-azure":  {APIKey: "sk-azure-secret"},
 		}},
 		cfgCursor: 0,
 	}
@@ -867,14 +844,14 @@ func TestBuildConfigRowsDeploymentValueStyling(t *testing.T) {
 
 	for _, row := range rows {
 		plain := ansiEscRe.ReplaceAllString(row, "")
-		if strings.Contains(plain, "OpenAI Base URL:") {
-			if !strings.HasPrefix(plain, "  OpenAI Base URL:") {
+		if strings.Contains(plain, "Azure OpenAI Endpoint:") {
+			if !strings.HasPrefix(plain, "  Azure OpenAI Endpoint:") {
 				t.Fatalf("optional deployment setting should be indented, got %q", plain)
 			}
 			return
 		}
 	}
-	t.Fatalf("OpenAI Base URL row not found: %v", rows)
+	t.Fatalf("Azure OpenAI Endpoint row not found: %v", rows)
 }
 
 func TestEnterConfigModeSetsPreferredAPIKeyCursorFromEffectiveProvider(t *testing.T) {
