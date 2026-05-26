@@ -645,6 +645,64 @@ func TestModelDisplayLineUsesInlineBlocks(t *testing.T) {
 	}
 }
 
+func TestContainerRetryMessageUsesInlineBlocks(t *testing.T) {
+	err := &ContainerError{Code: ErrDockerNotRunning, Message: "Docker is not running. Start Docker and try again."}
+	msg := containerRetryMessage(containerRetryMessageOptions{err: err, retryInSeconds: 3})
+	if msg.kind != msgError {
+		t.Fatalf("message kind = %v, want msgError", msg.kind)
+	}
+	if len(msg.inlineBlocks) != 3 {
+		t.Fatalf("inline blocks = %d, want 3", len(msg.inlineBlocks))
+	}
+	for i, block := range msg.inlineBlocks {
+		if !strings.Contains(block.text, "\033[31;3m") {
+			t.Fatalf("inline block %d = %q, want red error style", i, block.text)
+		}
+	}
+	if strings.Contains(msg.content, "Docker not running") {
+		t.Fatalf("content = %q, should not include redundant title", msg.content)
+	}
+	if !strings.Contains(msg.content, "Docker is not running.") ||
+		!strings.Contains(msg.content, "Start Docker and try again.") ||
+		!strings.Contains(msg.content, "retry in 3s…") {
+		t.Fatalf("content = %q, want docker error and retry countdown", msg.content)
+	}
+
+	rows := layoutInlineBlocks(layoutInlineBlocksOptions{blocks: msg.inlineBlocks, width: 80})
+	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	if strings.Contains(plain, "Docker not running") {
+		t.Fatalf("plain rows = %q, should not include redundant title", plain)
+	}
+	if !strings.Contains(plain, "Docker is not running.") ||
+		!strings.Contains(plain, "Start Docker and try again.") ||
+		!strings.Contains(plain, "retry in 3s…") {
+		t.Fatalf("plain rows = %q, want inline error and retry countdown", plain)
+	}
+}
+
+func TestContainerRetryUpdatesSingleInlineMessage(t *testing.T) {
+	app := &App{headless: true, width: 80}
+	err := &ContainerError{Code: ErrDockerNotRunning, Message: "Docker is not running. Start Docker and try again."}
+
+	app.handleResult(containerRetryMsg{err: err, retryInSeconds: 3})
+	app.handleResult(containerRetryMsg{err: err, retryInSeconds: 2})
+
+	if len(app.messages) != 1 {
+		t.Fatalf("messages = %d, want one updated retry message", len(app.messages))
+	}
+	if !strings.Contains(app.messages[0].content, "retry in 2s…") {
+		t.Fatalf("message content = %q, want updated countdown", app.messages[0].content)
+	}
+	if len(app.messages[0].inlineBlocks) == 0 {
+		t.Fatal("retry message should use inline blocks")
+	}
+
+	app.handleResult(containerRetryRecoveredMsg{})
+	if app.messages[0].kind != msgSuccess || !strings.Contains(app.messages[0].content, "Docker available") {
+		t.Fatalf("recovered message = %#v, want Docker available success", app.messages[0])
+	}
+}
+
 func TestBuildBlockRowsRendersInlineMessageBlocks(t *testing.T) {
 	model := "openai/gpt-5.5-2026-04-23"
 	exploration := "anthropic/claude-haiku-4-5"

@@ -43,8 +43,23 @@ type containerReadyMsg struct {
 }
 
 type containerErrMsg struct {
-	err      error
-	retrying bool // when true, don't show in chat (status bar is enough)
+	err error
+}
+
+type containerRetryMsg struct {
+	err            error
+	retryInSeconds int
+}
+
+type containerRetryRecoveredMsg struct{}
+
+const dockerRetryInterval = 5 * time.Second
+
+func dockerStatusText(err error) string {
+	if cerr, ok := err.(*ContainerError); ok && cerr.Code == ErrDockerNotFound {
+		return "docker not installed"
+	}
+	return "docker not running"
 }
 
 type containerStatusMsg struct {
@@ -179,22 +194,29 @@ func bootContainerCmd(opts bootContainerCmdOptions) {
 	client := NewContainerClient(ContainerConfig{Image: defaultContainerImage})
 
 	if err := client.CheckDocker(); err != nil {
-		if cerr, ok := err.(*ContainerError); ok && cerr.Code == ErrDockerNotFound {
-			ch <- containerStatusMsg{text: "docker not installed"}
-		} else {
-			ch <- containerStatusMsg{text: "docker not running"}
-		}
-		ch <- containerErrMsg{err: err, retrying: true}
-		// Retry until Docker becomes available or app exits.
-		ticker := time.NewTicker(3 * time.Second)
+		ch <- containerStatusMsg{text: dockerStatusText(err)}
+		retryInSeconds := int(dockerRetryInterval / time.Second)
+		ch <- containerRetryMsg{err: err, retryInSeconds: retryInSeconds}
+
+		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-stop:
 				return
 			case <-ticker.C:
-				if client.CheckDocker() == nil {
-					goto dockerOK
+				retryInSeconds--
+				if retryInSeconds <= 0 {
+					if err = client.CheckDocker(); err == nil {
+						ch <- containerRetryRecoveredMsg{}
+						ch <- containerStatusMsg{text: "docker available"}
+						goto dockerOK
+					}
+					ch <- containerStatusMsg{text: dockerStatusText(err)}
+					retryInSeconds = int(dockerRetryInterval / time.Second)
+				}
+				if retryInSeconds > 0 {
+					ch <- containerRetryMsg{err: err, retryInSeconds: retryInSeconds}
 				}
 			}
 		}

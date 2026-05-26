@@ -115,6 +115,8 @@ type App struct {
 	containerReady          bool
 	containerErr            error
 	containerStatusText     string
+	containerRetryMsgIdx    int
+	containerRetryMsgActive bool
 	configReady             bool // true after workspace/project config has been merged
 	shownInitialModel       bool // true after the startup model line has been displayed
 	lastModelDiagnostics    string
@@ -617,6 +619,73 @@ func (a *App) drainResults() {
 	}
 }
 
+type containerRetryMessageOptions struct {
+	err            error
+	retryInSeconds int
+}
+
+func containerRetryMessage(opts containerRetryMessageOptions) chatMessage {
+	details := containerRetryDetails(opts.err)
+	retryText := "retrying…"
+	if opts.retryInSeconds > 0 {
+		retryText = fmt.Sprintf("retry in %ds…", opts.retryInSeconds)
+	}
+	contentParts := append([]string{}, details...)
+	contentParts = append(contentParts, retryText)
+	blocks := make([]inlineBlock, 0, len(contentParts))
+	for _, part := range contentParts {
+		blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: "\033[31;3m", text: part}))
+	}
+	return chatMessage{
+		kind:         msgError,
+		content:      strings.Join(contentParts, " "),
+		inlineBlocks: blocks,
+	}
+}
+
+func containerRetryDetails(err error) []string {
+	if cerr, ok := err.(*ContainerError); ok {
+		switch cerr.Code {
+		case ErrDockerNotFound:
+			return []string{"Docker is not installed.", "Install Docker and try again."}
+		case ErrDockerNotRunning:
+			return []string{"Docker is not running.", "Start Docker and try again."}
+		}
+	}
+	if err != nil {
+		return []string{err.Error()}
+	}
+	return []string{"Docker is unavailable."}
+}
+
+func containerRecoveredMessage() chatMessage {
+	return chatMessage{
+		kind:    msgSuccess,
+		content: "Docker available",
+		inlineBlocks: []inlineBlock{
+			styledInlineBlock(styledInlineBlockOptions{style: "\033[32;3m", text: "Docker available"}),
+		},
+	}
+}
+
+func (a *App) upsertContainerRetryMessage(msg chatMessage) {
+	if a.containerRetryMsgActive && a.containerRetryMsgIdx >= 0 && a.containerRetryMsgIdx < len(a.messages) {
+		a.messages[a.containerRetryMsgIdx] = msg
+		return
+	}
+	a.messages = append(a.messages, msg)
+	a.containerRetryMsgIdx = len(a.messages) - 1
+	a.containerRetryMsgActive = true
+}
+
+func (a *App) completeContainerRetryMessage(msg chatMessage) {
+	if !a.containerRetryMsgActive || a.containerRetryMsgIdx < 0 || a.containerRetryMsgIdx >= len(a.messages) {
+		return
+	}
+	a.messages[a.containerRetryMsgIdx] = msg
+	a.containerRetryMsgActive = false
+}
+
 func (a *App) handleResult(result any) {
 	switch msg := result.(type) {
 	case toolTimerTickMsg:
@@ -807,6 +876,7 @@ func (a *App) handleResult(result any) {
 		}
 		a.containerReady = true
 		a.containerErr = nil
+		a.completeContainerRetryMessage(containerRecoveredMessage())
 		if cid := msg.client.ContainerID(); cid != "" {
 			shortID := cid
 			if len(shortID) > 12 {
@@ -818,11 +888,18 @@ func (a *App) handleResult(result any) {
 	case containerStatusMsg:
 		a.containerStatusText = msg.text
 
+	case containerRetryMsg:
+		a.containerErr = msg.err
+		a.upsertContainerRetryMessage(containerRetryMessage(containerRetryMessageOptions{err: msg.err, retryInSeconds: msg.retryInSeconds}))
+
+	case containerRetryRecoveredMsg:
+		a.containerErr = nil
+		a.completeContainerRetryMessage(containerRecoveredMessage())
+
 	case containerErrMsg:
 		a.containerErr = msg.err
-		if !msg.retrying {
-			a.messages = append(a.messages, chatMessage{kind: msgError, content: msg.err.Error()})
-		}
+		a.containerRetryMsgActive = false
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: msg.err.Error()})
 
 	case worktreeListMsg:
 		if msg.err != nil {
