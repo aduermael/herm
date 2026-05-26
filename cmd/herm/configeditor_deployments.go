@@ -27,11 +27,8 @@ type deploymentFieldVisibility int
 
 const (
 	deploymentFieldAlways deploymentFieldVisibility = iota
-	deploymentFieldOpenAIContext
 	deploymentFieldAzureContext
 	deploymentFieldBedrockContext
-	deploymentFieldGrokContext
-	deploymentFieldOpenRouterContext
 	deploymentFieldVertexContext
 )
 
@@ -43,11 +40,8 @@ type deploymentFieldSpec struct {
 var cfgAPIKeyFieldSpecs = []deploymentFieldSpec{
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Anthropic API Key", deploymentID: "anthropic-direct", field: "api_key", secret: true})},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenAI API Key", deploymentID: "openai-direct", field: "api_key", secret: true})},
-	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenAI Base URL", deploymentID: "openai-direct", field: "base_url", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldOpenAIContext},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Grok API Key", deploymentID: "grok-direct", field: "api_key", secret: true})},
-	{field: deploymentTextField(deploymentTextFieldOptions{label: "Grok Base URL", deploymentID: "grok-direct", field: "base_url", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldGrokContext},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenRouter API Key", deploymentID: "openrouter", field: "api_key", secret: true})},
-	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenRouter Base URL", deploymentID: "openrouter", field: "base_url", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldOpenRouterContext},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Gemini API Key", deploymentID: "gemini-direct", field: "api_key", secret: true})},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Ollama Base URL", deploymentID: "ollama-local", field: "base_url", normalizeURL: true})},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI API Key", deploymentID: "openai-azure", field: "api_key", secret: true})},
@@ -90,16 +84,10 @@ type deploymentFieldVisibleOptions struct {
 
 func deploymentFieldVisible(opts deploymentFieldVisibleOptions) bool {
 	switch opts.visibility {
-	case deploymentFieldOpenAIContext:
-		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "openai-direct"})
 	case deploymentFieldAzureContext:
 		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "openai-azure"})
 	case deploymentFieldBedrockContext:
 		return deploymentBedrockCredentialsAvailable()
-	case deploymentFieldGrokContext:
-		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "grok-direct"})
-	case deploymentFieldOpenRouterContext:
-		return deploymentAPIKeyConfigured(deploymentAPIKeyConfiguredOptions{cfg: opts.cfg, deploymentID: "openrouter"})
 	case deploymentFieldVertexContext:
 		return deploymentVertexCredentialsAvailable()
 	default:
