@@ -843,16 +843,33 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 		a.renderInput()
 
 	case ch == 0x15: // Ctrl+U - kill to start
-		a.cfgEditBuf = a.cfgEditBuf[a.cfgEditCursor:]
-		a.cfgEditCursor = 0
+		fields := a.cfgCurrentFields()
+		if a.cfgCursor < len(fields) && fields[a.cfgCursor].secret {
+			a.cfgEditBuf = nil
+			a.cfgEditCursor = 0
+		} else {
+			a.cfgEditBuf = a.cfgEditBuf[a.cfgEditCursor:]
+			a.cfgEditCursor = 0
+		}
 		a.renderInput()
 
 	case ch == 0x0b: // Ctrl+K - kill to end
-		a.cfgEditBuf = a.cfgEditBuf[:a.cfgEditCursor]
+		fields := a.cfgCurrentFields()
+		if a.cfgCursor < len(fields) && fields[a.cfgCursor].secret {
+			a.cfgEditBuf = nil
+			a.cfgEditCursor = 0
+		} else {
+			a.cfgEditBuf = a.cfgEditBuf[:a.cfgEditCursor]
+		}
 		a.renderInput()
 
 	case ch == 0x17: // Ctrl+W - delete word backward
-		if a.cfgEditCursor > 0 {
+		fields := a.cfgCurrentFields()
+		if a.cfgCursor < len(fields) && fields[a.cfgCursor].secret {
+			a.cfgEditBuf = nil
+			a.cfgEditCursor = 0
+			a.renderInput()
+		} else if a.cfgEditCursor > 0 {
 			a.deleteConfigEditWordBackward()
 			a.renderInput()
 		}

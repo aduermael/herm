@@ -515,6 +515,26 @@ func TestMaskKey(t *testing.T) {
 	}
 }
 
+func TestSecretEditDisplay(t *testing.T) {
+	cases := []struct {
+		val  string
+		want string
+	}{
+		{"", ""},
+		{"a", "*"},
+		{"abc", "***"},
+		{"abcdef", "******"},
+		{"abcdefg", "ab***fg"},
+		{"abcdefghijkl", "ab********kl"},
+		{"abcdefghijklmnop", "abcd********mnop"},
+	}
+	for _, tc := range cases {
+		if got := secretEditDisplay(tc.val); got != tc.want {
+			t.Errorf("secretEditDisplay(%q) = %q, want %q", tc.val, got, tc.want)
+		}
+	}
+}
+
 func TestDeploymentTabFieldsWriteDeploymentConfig(t *testing.T) {
 	var cfg Config
 	deploymentFieldByLabel(t, cfgAPIKeyFields, "OpenAI API Key").set(&cfg, "sk-openai")
@@ -928,6 +948,62 @@ func TestDeleteClearsSecretField(t *testing.T) {
 	}
 	if a.cfgEditCursor != 0 {
 		t.Fatalf("cursor should be 0 after Delete on secret field, got %d", a.cfgEditCursor)
+	}
+}
+
+func newSecretFieldApp() *App {
+	a := &App{
+		cfgTab:   cfgTabDeployments,
+		cfgDraft: Config{Deployments: map[string]DeploymentConfig{"openai-direct": {APIKey: "sk-old"}}},
+	}
+	fields := a.cfgCurrentFields()
+	idx := -1
+	for i, f := range fields {
+		if f.secret {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		panic("no secret field found")
+	}
+	a.cfgCursor = idx
+	a.cfgEditing = true
+	a.cfgEditBuf = []rune("sk-new-key-to-replace")
+	a.cfgEditCursor = 5
+	return a
+}
+
+func TestCtrlUClearsSecretField(t *testing.T) {
+	a := newSecretFieldApp()
+	a.handleConfigEditByte(handleConfigEditByteOptions{ch: 0x15})
+	if len(a.cfgEditBuf) != 0 {
+		t.Fatalf("Ctrl+U should clear secret field buffer, got %q", string(a.cfgEditBuf))
+	}
+	if a.cfgEditCursor != 0 {
+		t.Fatalf("cursor should be 0 after Ctrl+U on secret field, got %d", a.cfgEditCursor)
+	}
+}
+
+func TestCtrlKClearsSecretField(t *testing.T) {
+	a := newSecretFieldApp()
+	a.handleConfigEditByte(handleConfigEditByteOptions{ch: 0x0b})
+	if len(a.cfgEditBuf) != 0 {
+		t.Fatalf("Ctrl+K should clear secret field buffer, got %q", string(a.cfgEditBuf))
+	}
+	if a.cfgEditCursor != 0 {
+		t.Fatalf("cursor should be 0 after Ctrl+K on secret field, got %d", a.cfgEditCursor)
+	}
+}
+
+func TestCtrlWClearsSecretField(t *testing.T) {
+	a := newSecretFieldApp()
+	a.handleConfigEditByte(handleConfigEditByteOptions{ch: 0x17})
+	if len(a.cfgEditBuf) != 0 {
+		t.Fatalf("Ctrl+W should clear secret field buffer, got %q", string(a.cfgEditBuf))
+	}
+	if a.cfgEditCursor != 0 {
+		t.Fatalf("cursor should be 0 after Ctrl+W on secret field, got %d", a.cfgEditCursor)
 	}
 }
 
