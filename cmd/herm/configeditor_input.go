@@ -115,10 +115,14 @@ func (a *App) handleConfigEditCSISequence(opts handleConfigEditCSISequenceOption
 			a.insertConfigEditText(readBracketedPaste(readByte))
 			a.renderInput()
 		case "3":
-			if a.cfgEditCursor < len(a.cfgEditBuf) {
+			fields := a.cfgCurrentFields()
+			if a.cfgCursor < len(fields) && fields[a.cfgCursor].secret {
+				a.cfgEditBuf = nil
+				a.cfgEditCursor = 0
+			} else if a.cfgEditCursor < len(a.cfgEditBuf) {
 				a.cfgEditBuf = append(a.cfgEditBuf[:a.cfgEditCursor], a.cfgEditBuf[a.cfgEditCursor+1:]...)
-				a.renderInput()
 			}
+			a.renderInput()
 		default:
 			if mod, code, ok := parseModifyOtherKeysParams(seq.params); ok {
 				a.handleConfigEditEncodedKey(handleConfigEditEncodedKeyOptions{mod: mod, code: code})

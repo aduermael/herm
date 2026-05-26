@@ -12,10 +12,33 @@ func maskKey(key string) string {
 	if key == "" {
 		return "(not set)"
 	}
-	if len(key) <= 8 {
-		return "****"
+	switch n := len(key); {
+	case n <= 2:
+		return strings.Repeat("*", n)
+	case n <= 4:
+		return key[:1] + "..." + key[n-1:]
+	case n <= 8:
+		return key[:2] + "..." + key[n-2:]
+	default:
+		return key[:4] + "..." + key[n-4:]
 	}
-	return key[:4] + "..." + key[len(key)-4:]
+}
+
+// secretEditDisplay returns a masked display for a secret field in edit mode,
+// showing the first and last characters with asterisks in between.
+func secretEditDisplay(val string) string {
+	n := len(val)
+	if n == 0 {
+		return ""
+	}
+	if n <= 6 {
+		return strings.Repeat("*", n)
+	}
+	show := 4
+	if n <= 12 {
+		show = 2
+	}
+	return val[:show] + strings.Repeat("*", n-show*2) + val[n-show:]
 }
 
 var cfgAPIKeyFields = deploymentFieldsFromSpecs(deploymentFieldsFromSpecsOptions{

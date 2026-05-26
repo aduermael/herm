@@ -493,6 +493,28 @@ func TestProjectTabFieldGetSet(t *testing.T) {
 	}
 }
 
+func TestMaskKey(t *testing.T) {
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{"", "(not set)"},
+		{"a", "*"},
+		{"ab", "**"},
+		{"abc", "a...c"},
+		{"abcd", "a...d"},
+		{"abcde", "ab...de"},
+		{"abcdefgh", "ab...gh"},
+		{"123456789", "1234...6789"},
+		{"sk-openai-secret", "sk-o...cret"},
+	}
+	for _, tc := range cases {
+		if got := maskKey(tc.key); got != tc.want {
+			t.Errorf("maskKey(%q) = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
 func TestDeploymentTabFieldsWriteDeploymentConfig(t *testing.T) {
 	var cfg Config
 	deploymentFieldByLabel(t, cfgAPIKeyFields, "OpenAI API Key").set(&cfg, "sk-openai")
@@ -875,6 +897,38 @@ func TestBuildConfigRowsDeploymentValueStyling(t *testing.T) {
 		}
 	}
 	t.Fatalf("OpenAI Base URL row not found: %v", rows)
+}
+
+func TestDeleteClearsSecretField(t *testing.T) {
+	a := &App{
+		cfgTab:   cfgTabDeployments,
+		cfgDraft: Config{Deployments: map[string]DeploymentConfig{"openai-direct": {APIKey: "sk-old"}}},
+	}
+	fields := a.cfgCurrentFields()
+	idx := -1
+	for i, f := range fields {
+		if f.secret {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("no secret field found")
+	}
+	a.cfgCursor = idx
+	a.cfgEditing = true
+	a.cfgEditBuf = []rune("sk-new-key-to-replace")
+	a.cfgEditCursor = 5
+
+	seq := csiSequence{params: []byte("3"), final: '~'}
+	a.handleConfigEditCSISequence(handleConfigEditCSISequenceOptions{seq: seq, readByte: nil})
+
+	if len(a.cfgEditBuf) != 0 {
+		t.Fatalf("Delete should clear secret field buffer, got %q", string(a.cfgEditBuf))
+	}
+	if a.cfgEditCursor != 0 {
+		t.Fatalf("cursor should be 0 after Delete on secret field, got %d", a.cfgEditCursor)
+	}
 }
 
 func TestEnterConfigModeSetsPreferredAPIKeyCursorFromEffectiveProvider(t *testing.T) {
