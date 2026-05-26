@@ -20,3 +20,6 @@ tools/edit-file/edit-file
 # OS
 .DS_Store
 .claude/worktrees/
+
+# IDEs
+.idea

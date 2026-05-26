@@ -3,13 +3,15 @@
 ## Installation
 
 ```bash
-git clone https://github.com/aduermael/herm
+git clone --recurse-submodules https://github.com/aduermael/herm
 cd herm
 go build -o herm ./cmd/herm
 ./herm
 ```
 
 **Requirements:** Go 1.24+, Docker
+
+If you already cloned without submodules, run `git submodule update --init --recursive` before building.
 
 ---
 

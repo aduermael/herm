@@ -43,10 +43,16 @@ brew install herm
 Requires Go 1.24+.
 
 ```sh
-git clone https://github.com/aduermael/herm
+git clone --recurse-submodules https://github.com/aduermael/herm
 cd herm
 go build -o herm ./cmd/herm
 ./herm
+```
+
+If you already cloned without submodules, run this before building:
+
+```sh
+git submodule update --init --recursive
 ```
 
 ## Quick Start
