@@ -407,10 +407,7 @@ func (a *App) resolvedExplorationDisplay(c Config) string {
 	if c.ExplorationModel != "" {
 		return c.ExplorationModel
 	}
-	if len(c.configuredProviders()) == 0 {
-		return ""
-	}
-	return c.resolveExplorationModel(a.models)
+	return ""
 }
 
 func (a *App) settingsTabFields() []cfgField {
