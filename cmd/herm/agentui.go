@@ -150,6 +150,9 @@ func (a *App) projectModelDiagnostics() []string {
 	if !a.configReady || a.models == nil {
 		return nil
 	}
+	if len(a.config.configuredDeploymentIDs()) == 0 {
+		return nil
+	}
 	var diagnostics []string
 	if a.projectConfig.ActiveModel != "" {
 		result := a.config.resolveActiveModelResult(a.models)

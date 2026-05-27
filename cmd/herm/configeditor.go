@@ -111,6 +111,13 @@ func (a *App) enterConfigMode() {
 	a.cfgEditBuf = nil
 	a.cfgEditCursor = 0
 	a.cfgDraft = a.globalConfig
+	if a.cfgDraft.Deployments != nil {
+		cloned := make(map[string]DeploymentConfig, len(a.cfgDraft.Deployments))
+		for id, d := range a.cfgDraft.Deployments {
+			cloned[id] = cloneDeploymentConfig(d)
+		}
+		a.cfgDraft.Deployments = cloned
+	}
 	a.cfgProjectDraft = a.projectConfig
 	a.startConfigTicker()
 	a.renderInput()
@@ -127,8 +134,16 @@ func (a *App) exitConfigMode(save bool) {
 	a.stopConfigTicker()
 	if save {
 		a.globalConfig = normalizeConfigForModels(configModelsOptions{cfg: a.cfgDraft, models: a.models})
+		if len(a.globalConfig.configuredProviders()) == 0 {
+			a.globalConfig.ActiveModel = ""
+			a.globalConfig.ExplorationModel = ""
+		}
 		a.cfgDraft = a.globalConfig
 		a.projectConfig = normalizeProjectConfigForModels(normalizeProjectConfigForModelsOptions{pc: a.cfgProjectDraft, models: a.models})
+		if len(a.cfgDraft.configuredProviders()) == 0 {
+			a.projectConfig.ActiveModel = ""
+			a.projectConfig.ExplorationModel = ""
+		}
 		a.cfgProjectDraft = a.projectConfig
 		a.rebuildEffectiveConfig()
 		// Re-initialize debug log if debug mode changed
@@ -469,6 +484,12 @@ func (a *App) projectTabFields() []cfgField {
 		{
 			label: "Active Model",
 			get:   func(_ Config) string { return a.cfgProjectDraft.ActiveModel },
+			display: func(_ Config) string {
+				if a.cfgProjectDraft.ActiveModel != "" && len(a.cfgDraft.configuredProviders()) == 0 {
+					return ""
+				}
+				return a.cfgProjectDraft.ActiveModel
+			},
 			set: func(_ *Config, v string) {
 				a.cfgProjectDraft.ActiveModel = normalizeProjectModelIDForModels(normalizeProjectModelIDForModelsOptions{modelID: v, smartDefault: defaultCanonicalActiveModel, models: a.models})
 			},
@@ -480,6 +501,12 @@ func (a *App) projectTabFields() []cfgField {
 		{
 			label: "Exploration Model",
 			get:   func(_ Config) string { return a.cfgProjectDraft.ExplorationModel },
+			display: func(_ Config) string {
+				if a.cfgProjectDraft.ExplorationModel != "" && len(a.cfgDraft.configuredProviders()) == 0 {
+					return ""
+				}
+				return a.cfgProjectDraft.ExplorationModel
+			},
 			set: func(_ *Config, v string) {
 				a.cfgProjectDraft.ExplorationModel = normalizeProjectModelIDForModels(normalizeProjectModelIDForModelsOptions{modelID: v, smartDefault: defaultCanonicalExplorationModel, models: a.models})
 			},
