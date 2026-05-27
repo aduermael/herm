@@ -150,7 +150,7 @@ func (a *App) projectModelDiagnostics() []string {
 	if !a.configReady || a.models == nil {
 		return nil
 	}
-	if len(a.config.configuredDeploymentIDs()) == 0 {
+	if len(a.config.configuredDeploymentIDs()) == 0 && a.projectConfig.ActiveModel == "" && a.projectConfig.ExplorationModel == "" {
 		return nil
 	}
 	var diagnostics []string
@@ -179,7 +179,9 @@ func (a *App) maybeShowInitialModels() {
 	a.shownInitialModel = true
 	a.messages = append(a.messages, versionDisplayMessage())
 	a.showProjectModelDiagnostics()
-	a.showModelChange(a.config.resolveActiveModel(a.models))
+	if a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "" {
+		a.showModelChange(a.config.resolveActiveModel(a.models))
+	}
 }
 
 func versionDisplayMessage() chatMessage {
@@ -200,7 +202,9 @@ func (a *App) refreshResolvedModelDisplay() {
 	}
 	a.normalizeProjectConfigWithCurrentModels()
 	a.showProjectModelDiagnostics()
-	a.showModelChange(a.config.resolveActiveModel(a.models))
+	if a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "" {
+		a.showModelChange(a.config.resolveActiveModel(a.models))
+	}
 }
 
 func (a *App) startAgent(userMessage string) {

@@ -206,6 +206,7 @@ type App struct {
 	cfgEditing       bool
 	cfgEditBuf       []rune
 	cfgEditCursor    int
+	cfgChangedLabels map[string]string // tracks field labels and their change direction ("saved", "removed", "changed")
 	cfgDraft         Config
 	cfgProjectDraft  ProjectConfig
 	configJSONEditor func(string) error // injectable for tests; nil uses $VISUAL/$EDITOR

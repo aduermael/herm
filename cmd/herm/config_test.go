@@ -822,9 +822,12 @@ func TestBuildConfigRowsGlobalHint(t *testing.T) {
 
 func TestBuildConfigRowsProjectOverrideShown(t *testing.T) {
 	a := &App{
-		cfgTab:          cfgTabProject,
-		repoRoot:        "/some/repo",
-		cfgDraft:        Config{ActiveModel: "global-model"},
+		cfgTab:   cfgTabProject,
+		repoRoot: "/some/repo",
+		cfgDraft: Config{
+			ActiveModel: "global-model",
+			Deployments:  map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+		},
 		cfgProjectDraft: ProjectConfig{ActiveModel: "project-model"},
 	}
 	rows := a.buildConfigRows()

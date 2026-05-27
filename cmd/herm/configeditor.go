@@ -110,6 +110,7 @@ func (a *App) enterConfigMode() {
 	a.cfgEditing = false
 	a.cfgEditBuf = nil
 	a.cfgEditCursor = 0
+	a.cfgChangedLabels = make(map[string]string)
 	a.cfgDraft = a.globalConfig
 	if a.cfgDraft.Deployments != nil {
 		cloned := make(map[string]DeploymentConfig, len(a.cfgDraft.Deployments))
@@ -169,7 +170,8 @@ func (a *App) exitConfigMode(save bool) {
 			}
 		}
 		if !saveErr {
-			a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Config saved."})
+			msg, kind := configSavedMessage(a.cfgChangedLabels)
+			a.messages = append(a.messages, chatMessage{kind: kind, content: msg})
 		}
 		// Refresh models including Ollama and OpenRouter if configured
 		if a.config.ollamaBaseURL() != "" {
@@ -203,6 +205,52 @@ func (a *App) exitConfigMode(save bool) {
 	a.cfgEditing = false
 	a.cfgEditBuf = nil
 	a.render()
+}
+
+func recordConfigChange(changed map[string]string, label, oldVal, newVal string) {
+	if oldVal == newVal {
+		return
+	}
+	if oldVal == "" {
+		changed[label] = "saved"
+	} else if newVal == "" {
+		changed[label] = "removed"
+	} else {
+		changed[label] = "changed"
+	}
+}
+
+func configSavedMessage(changed map[string]string) (string, chatMsgKind) {
+	if len(changed) == 0 {
+		return "Config saved.", msgSuccess
+	}
+	type entry struct {
+		label     string
+		direction string
+	}
+	entries := make([]entry, 0, len(changed))
+	hasRemoved := false
+	for label, direction := range changed {
+		entries = append(entries, entry{label, direction})
+		if direction == "removed" {
+			hasRemoved = true
+		}
+	}
+	parts := make([]string, len(entries))
+	for i, e := range entries {
+		parts[i] = e.label + " " + e.direction
+	}
+	var msg string
+	if len(parts) == 1 {
+		msg = parts[0] + "."
+	} else {
+		msg = strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1] + "."
+	}
+	kind := msgSuccess
+	if hasRemoved {
+		kind = msgInfo
+	}
+	return msg, kind
 }
 
 // openConfigModelPickerOptions is the parameter bundle for openConfigModelPicker.
@@ -790,9 +838,13 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			if f.action != nil {
 				f.action(a)
 			} else if f.picker != nil {
+				oldVal := f.get(a.cfgDraft)
 				f.picker(a)
+				recordConfigChange(a.cfgChangedLabels, f.label, oldVal, f.get(a.cfgDraft))
 			} else if f.toggle != nil {
+				oldVal := f.get(a.cfgDraft)
 				f.toggle(&a.cfgDraft)
+				recordConfigChange(a.cfgChangedLabels, f.label, oldVal, f.get(a.cfgDraft))
 			} else if f.get != nil && f.set != nil {
 				a.cfgEditing = true
 				val := f.get(a.cfgDraft)
@@ -808,7 +860,9 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			if len(fields) > 0 && a.cfgCursor < len(fields) {
 				f := fields[a.cfgCursor]
 				if f.set != nil && f.get != nil && f.get(a.cfgDraft) != "" {
+					oldVal := f.get(a.cfgDraft)
 					f.set(&a.cfgDraft, "")
+					recordConfigChange(a.cfgChangedLabels, f.label, oldVal, "")
 					a.renderInput()
 				}
 			}
@@ -862,7 +916,11 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 	case ch == '\r': // Enter - confirm edit
 		fields := a.cfgCurrentFields()
 		if a.cfgCursor < len(fields) {
-			fields[a.cfgCursor].set(&a.cfgDraft, string(a.cfgEditBuf))
+			f := fields[a.cfgCursor]
+			oldVal := f.get(a.cfgDraft)
+			newVal := string(a.cfgEditBuf)
+			f.set(&a.cfgDraft, newVal)
+			recordConfigChange(a.cfgChangedLabels, f.label, oldVal, newVal)
 		}
 		a.cfgEditing = false
 		a.cfgEditBuf = nil
