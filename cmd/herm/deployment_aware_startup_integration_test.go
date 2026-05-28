@@ -59,23 +59,6 @@ func addHermDeploymentCatalogModel(catalog *langdag.ModelCatalog, generatedAt ti
 	)
 }
 
-func writeHermDeploymentCatalogCache(t *testing.T, path string, catalog *langdag.ModelCatalog) {
-	t.Helper()
-	if err := langdag.ValidateCatalogV1(catalog); err != nil {
-		t.Fatalf("test catalog is invalid: %v", err)
-	}
-	data, err := json.MarshalIndent(catalog, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal catalog: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir cache dir: %v", err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
-		t.Fatalf("write cache: %v", err)
-	}
-}
-
 func serveHermDeploymentCatalog(t *testing.T, catalog *langdag.ModelCatalog) *httptest.Server {
 	t.Helper()
 	if err := langdag.ValidateCatalogV1(catalog); err != nil {
@@ -117,60 +100,63 @@ func clearDeploymentCredentialEnv(t *testing.T) {
 func TestHermCatalogStartupUsesEmbeddedThenRemoteRefresh(t *testing.T) {
 	clearDeploymentCredentialEnv(t)
 
-	cachePath := filepath.Join(t.TempDir(), "model_catalog.json")
-	cachedCatalog := hermDeploymentCatalog("openai/gpt-cached-catalog", "gpt-cached-catalog", "openai/gpt-cached-catalog")
-	writeHermDeploymentCatalogCache(t, cachePath, cachedCatalog)
-	cachedBefore, err := os.ReadFile(cachePath)
-	if err != nil {
-		t.Fatalf("read cache: %v", err)
+	// Point the on-disk catalog cache at an isolated temp home so the test
+	// does not read or write the developer's real ~/.herm cache.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cachePath := modelCatalogCachePath()
+	if cachePath == "" {
+		t.Fatal("modelCatalogCachePath returned empty path")
 	}
 
+	// First launch: no cache yet, startup falls back to the embedded catalog.
 	embedded, err := loadStartupModelCatalog()
 	if err != nil {
 		t.Fatalf("load startup catalog: %v", err)
 	}
 	if embedded.Source != langdag.CatalogSourceEmbedded {
-		t.Fatalf("startup catalog source = %q, want embedded", embedded.Source)
-	}
-	if embedded.CachePath != "" {
-		t.Fatalf("startup catalog cache path = %q, want empty", embedded.CachePath)
+		t.Fatalf("startup catalog source = %q, want embedded (no cache yet)", embedded.Source)
 	}
 	app := &App{resultCh: make(chan any, 8)}
 	app.handleResult(catalogMsg{catalog: embedded.Catalog, source: embedded.Source, diagnostics: embedded.Diagnostics})
 	if app.modelCatalog == nil || len(app.models) == 0 {
 		t.Fatalf("embedded catalog did not populate app models")
 	}
-	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-cached-catalog"}) != nil {
-		t.Fatalf("unexpectedly loaded stale Herm cache during startup")
-	}
 
+	// Background refresh fetches the remote catalog and persists it to the cache.
 	remoteCatalog := hermDeploymentCatalog("openai/gpt-remote-catalog", "gpt-remote-catalog", "openai/gpt-remote-catalog")
 	server := serveHermDeploymentCatalog(t, remoteCatalog)
 	defer server.Close()
-	refreshed, err := langdag.LoadRemoteModelCatalog(context.Background(), langdag.CatalogRefreshOptions{
-		Endpoint: server.URL,
-		Timeout:  time.Second,
-		Now:      func() time.Time { return remoteCatalog.GeneratedAt.Add(time.Hour) },
-	})
+	t.Setenv("LANGDAG_MODEL_CATALOG_URL", server.URL)
+	refreshed, err := refreshStartupModelCatalog(context.Background())
 	if err != nil {
-		t.Fatalf("LoadRemoteModelCatalog: %v", err)
+		t.Fatalf("refresh startup catalog: %v", err)
 	}
-	if refreshed.ReplacedCache || refreshed.CachePath != "" {
-		t.Fatalf("remote refresh wrote cache: replaced=%v path=%q", refreshed.ReplacedCache, refreshed.CachePath)
+	if !refreshed.ReplacedCache || refreshed.CachePath != cachePath {
+		t.Fatalf("remote refresh did not persist cache: replaced=%v path=%q want path=%q", refreshed.ReplacedCache, refreshed.CachePath, cachePath)
 	}
 	app.handleResult(catalogMsg{catalog: refreshed.Catalog, source: refreshed.Source, diagnostics: refreshed.Diagnostics})
 	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-remote-catalog"}) == nil {
 		t.Fatalf("refreshed remote catalog model not available after startup handling")
 	}
-	if findModelByID(findModelByIDOptions{models: app.models, id: "openai/gpt-cached-catalog"}) != nil {
-		t.Fatalf("stale cached model remained after refreshed catalog replacement")
+	if _, statErr := os.Stat(cachePath); statErr != nil {
+		t.Fatalf("refresh did not write cache file: %v", statErr)
 	}
-	cachedAfter, err := os.ReadFile(cachePath)
+
+	// Next launch: startup now loads the persisted cache (with the remote model)
+	// instead of the embedded catalog — this is the fix for stale startup data.
+	t.Setenv("LANGDAG_MODEL_CATALOG_REFRESH", "off")
+	relaunched, err := loadStartupModelCatalog()
 	if err != nil {
-		t.Fatalf("read cache after refresh: %v", err)
+		t.Fatalf("relaunch load startup catalog: %v", err)
 	}
-	if string(cachedAfter) != string(cachedBefore) {
-		t.Fatalf("remote refresh rewrote Herm catalog cache")
+	if relaunched.Source != langdag.CatalogSourceCache {
+		t.Fatalf("relaunch startup catalog source = %q, want cache", relaunched.Source)
+	}
+	relaunchedApp := &App{resultCh: make(chan any, 8)}
+	relaunchedApp.handleResult(catalogMsg{catalog: relaunched.Catalog, source: relaunched.Source, diagnostics: relaunched.Diagnostics})
+	if findModelByID(findModelByIDOptions{models: relaunchedApp.models, id: "openai/gpt-remote-catalog"}) == nil {
+		t.Fatalf("relaunch did not load the persisted remote model from cache")
 	}
 }
 

@@ -207,7 +207,9 @@ func (a *App) startInit() {
 		a.resultCh <- langdagReadyMsg{client: client, provider: cfg.defaultLangdagProvider(), err: err}
 
 		// Best-effort background refresh. Startup never waits for this remote
-		// fetch; invalid remote data cannot replace the embedded startup catalog.
+		// fetch. On success the fetched catalog is persisted to the on-disk
+		// cache so the next launch loads up-to-date models immediately; invalid,
+		// stale, or partial remote data never overwrites the existing cache.
 		updated, err := refreshStartupModelCatalog(context.Background())
 		if err != nil {
 			log.Printf("warning: refreshing model catalog: %v", err)
@@ -222,10 +224,22 @@ func (a *App) startInit() {
 	go func() { a.resultCh <- checkForUpdate(Version) }()
 }
 
+// modelCatalogCachePath returns the path where the dynamically fetched model
+// catalog is persisted across sessions (~/.herm/model_catalog.json). An empty
+// string means no cache is available (e.g. home dir undiscoverable); callers
+// fall back to the embedded catalog.
+func modelCatalogCachePath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, configDir, "model_catalog.json")
+}
+
 func loadStartupModelCatalog() (*langdag.CatalogLoadResult, error) {
-	return langdag.LoadRuntimeModelCatalog()
+	return langdag.LoadRuntimeModelCatalogWithOptions(langdag.CatalogLoadOptions{CachePath: modelCatalogCachePath()})
 }
 
 func refreshStartupModelCatalog(ctx context.Context) (*langdag.CatalogRefreshResult, error) {
-	return langdag.LoadRemoteModelCatalog(ctx, langdag.CatalogRefreshOptionsFromEnv(""))
+	return langdag.RefreshModelCatalogCache(ctx, langdag.CatalogRefreshOptionsFromEnv(modelCatalogCachePath()))
 }
