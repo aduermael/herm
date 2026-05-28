@@ -327,7 +327,7 @@ func configSavedMessages(changed map[string]string) []chatMessage {
 }
 
 const configMissingAPIKeyMessage = "No API keys configured. Use /config to add a key first."
-const configMissingModelMessage = "No active model configured. Use /model to select one first."
+const configMissingModelMessage = "No model configured. Use /model to select one first."
 
 func configMissingModelChatMessage() chatMessage {
 	return chatMessage{kind: msgError, content: configMissingModelMessage}
