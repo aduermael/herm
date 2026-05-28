@@ -45,6 +45,10 @@ func (a *App) handleCommand(input string) {
 
 	switch cmd {
 	case "/clear":
+		// Interrupt any in-flight agent work before wiping the conversation.
+		if a.hasCancelableAgentWork() {
+			a.requestAgentCancel()
+		}
 		a.agentNodeID = ""
 		a.streamingText = ""
 		a.pendingToolCall = ""

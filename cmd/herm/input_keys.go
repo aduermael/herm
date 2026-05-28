@@ -118,6 +118,14 @@ func (a *App) handleByte(opts handleByteOptions) bool {
 		return false
 	}
 
+	// Ctrl+L: clear — same as /clear. Wipes the conversation and redraws a
+	// clean state (header + empty), interrupting any in-flight agent work.
+	// Standard clear-screen key (readline/bash convention).
+	if ch == 0x0c {
+		a.handleCommand("/clear")
+		return false
+	}
+
 	// Ctrl+A: home
 	if ch == 0x01 {
 		a.cursor = 0

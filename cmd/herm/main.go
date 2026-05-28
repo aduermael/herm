@@ -553,11 +553,18 @@ func (a *App) handleEnter() {
 		return
 	}
 
+	val := strings.TrimSpace(strings.ReplaceAll(a.inputValue(), "\r", ""))
+
+	// /clear is allowed even while the agent is running — it interrupts the
+	// in-flight work and wipes the conversation.
 	if a.agentRunning {
+		if strings.HasPrefix(val, "/") && strings.Fields(val)[0] == "/clear" {
+			a.resetInput()
+			a.handleCommand(val)
+		}
 		return
 	}
 
-	val := strings.TrimSpace(strings.ReplaceAll(a.inputValue(), "\r", ""))
 	if val == "" {
 		return
 	}
