@@ -66,8 +66,9 @@ func (a *App) showResolvedModelDisplay() {
 	if a.models == nil {
 		return
 	}
-	hasActive := explicitActiveModelConfigured(a.globalConfig, a.projectConfig)
-	hasExploration := explicitExplorationModelConfigured(a.globalConfig, a.projectConfig)
+	modelCfg := projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}
+	hasActive := explicitActiveModelConfigured(modelCfg)
+	hasExploration := explicitExplorationModelConfigured(modelCfg)
 	if !hasActive && !hasExploration {
 		return
 	}
@@ -76,13 +77,13 @@ func (a *App) showResolvedModelDisplay() {
 	var activeScope, explorationScope string
 	if hasActive {
 		result := a.config.resolveActiveModelResult(a.models)
-		activeID = displayConfiguredModelID(result, a.config.ActiveModel)
-		activeScope = activeModelConfigScope(a.globalConfig, a.projectConfig)
+		activeID = displayConfiguredModelID(displayConfiguredModelIDOptions{result: result, configured: a.config.ActiveModel})
+		activeScope = activeModelConfigScope(modelCfg)
 	}
 	if hasExploration {
 		result := a.config.resolveExplorationModelResult(a.models)
-		explorationID = displayConfiguredModelID(result, a.config.ExplorationModel)
-		explorationScope = explorationModelConfigScope(a.globalConfig, a.projectConfig)
+		explorationID = displayConfiguredModelID(displayConfiguredModelIDOptions{result: result, configured: a.config.ExplorationModel})
+		explorationScope = explorationModelConfigScope(modelCfg)
 	}
 	if activeID == "" && explorationID == "" {
 		return
@@ -114,17 +115,22 @@ func (a *App) showResolvedModelDisplay() {
 	a.lastModelDisplayLine = line
 }
 
-func displayConfiguredModelID(result configuredModelResolution, configured string) string {
-	if configured == "" {
+type displayConfiguredModelIDOptions struct {
+	result     configuredModelResolution
+	configured string
+}
+
+func displayConfiguredModelID(opts displayConfiguredModelIDOptions) string {
+	if opts.configured == "" {
 		return ""
 	}
-	if !result.Fallback && result.ResolvedModelID != "" {
-		return result.ResolvedModelID
+	if !opts.result.Fallback && opts.result.ResolvedModelID != "" {
+		return opts.result.ResolvedModelID
 	}
-	if result.ConfiguredModelID != "" {
-		return result.ConfiguredModelID
+	if opts.result.ConfiguredModelID != "" {
+		return opts.result.ConfiguredModelID
 	}
-	return configured
+	return opts.configured
 }
 
 func (a *App) removeModelDisplayMessages() {
@@ -287,7 +293,7 @@ func (a *App) refreshResolvedModelDisplay() {
 }
 
 func (a *App) resolveMainAgentModelResult() configuredModelResolution {
-	if explicitActiveModelConfigured(a.globalConfig, a.projectConfig) {
+	if explicitActiveModelConfigured(projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}) {
 		return a.config.resolveActiveModelResult(a.models)
 	}
 	return a.config.resolveExplorationModelResult(a.models)
@@ -295,7 +301,7 @@ func (a *App) resolveMainAgentModelResult() configuredModelResolution {
 
 func (a *App) startAgent(userMessage string) {
 	a.normalizeProjectConfigWithCurrentModels()
-	if !modelsReadyForAgent(a.globalConfig, a.projectConfig) {
+	if !modelsReadyForAgent(projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}) {
 		if !chatHasMissingModelMessage(a.messages) {
 			a.messages = append(a.messages, configMissingModelChatMessage())
 		}
@@ -479,7 +485,7 @@ func (a *App) startAgent(userMessage string) {
 		a.traceCollector.AddUserMessage(userMessage)
 	}
 
-	if !modelResult.Fallback && modelsReadyForAgent(a.globalConfig, a.projectConfig) {
+	if !modelResult.Fallback && modelsReadyForAgent(projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}) {
 		a.showResolvedModelDisplay()
 	}
 

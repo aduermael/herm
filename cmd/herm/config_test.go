@@ -1623,7 +1623,7 @@ func TestConfigSavedMessagesUseProjectThemeOpacity(t *testing.T) {
 		{"Personality", "removed"},
 	}
 	for _, tc := range cases {
-		style := configChangeNoticeFor(tc.label, tc.direction).style
+		style := configChangeNoticeFor(configChangeNoticeForOptions{label: tc.label, direction: tc.direction}).style
 		if !strings.HasSuffix(style, ";3m") {
 			t.Errorf("%s %s style = %q, want chat accent (;3m italic)", tc.label, tc.direction, style)
 		}
@@ -1679,13 +1679,13 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 		{"Personality", "updated", styleChatYellow},
 	}
 	for _, tc := range cases {
-		notice := configChangeNoticeFor(tc.label, tc.direction)
+		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: tc.label, direction: tc.direction})
 		if notice.style != tc.wantStyle {
 			t.Errorf("%s %s style = %q, want %q", tc.label, tc.direction, notice.style, tc.wantStyle)
 		}
 	}
 	for _, label := range []string{"Active Model", "Exploration Model", "OpenRouter API Key", "Personality"} {
-		notice := configChangeNoticeFor(label, "removed")
+		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: label, direction: "removed"})
 		if notice.style != styleChatRed {
 			t.Errorf("%s removed style = %q, want red italic accent", label, notice.style)
 		}
@@ -1712,7 +1712,11 @@ func assertMissingModelMessage(t *testing.T, msg chatMessage) {
 
 func TestConfigSavedMessagesHintAfterAPIKeyWhenNoActiveModel(t *testing.T) {
 	cfg := Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}}
-	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{}, nil)
+	msgs := configSavedMessagesWithHints(configSavedMessagesWithHintsOptions{
+		changed: map[string]string{"OpenRouter API Key": "saved"},
+		cfg:     cfg,
+		project: ProjectConfig{},
+	})
 
 	if len(msgs) != 2 {
 		t.Fatalf("message count = %d, want 2", len(msgs))
@@ -1728,7 +1732,11 @@ func TestConfigSavedMessagesNoHintWhenActiveModelSet(t *testing.T) {
 		ActiveModel: "openrouter/test",
 		Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
 	}
-	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{}, nil)
+	msgs := configSavedMessagesWithHints(configSavedMessagesWithHintsOptions{
+		changed: map[string]string{"OpenRouter API Key": "saved"},
+		cfg:     cfg,
+		project: ProjectConfig{},
+	})
 	if len(msgs) != 1 {
 		t.Fatalf("message count = %d, want 1", len(msgs))
 	}
@@ -1738,7 +1746,11 @@ func TestConfigSavedMessagesNoHintWhenAPIKeyUpdated(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
 	}
-	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "updated"}, cfg, ProjectConfig{}, nil)
+	msgs := configSavedMessagesWithHints(configSavedMessagesWithHintsOptions{
+		changed: map[string]string{"OpenRouter API Key": "updated"},
+		cfg:     cfg,
+		project: ProjectConfig{},
+	})
 	if len(msgs) != 2 {
 		t.Fatalf("message count = %d, want save notice + hint", len(msgs))
 	}
@@ -1753,16 +1765,16 @@ func TestConfigSavedMessagesNoHintWhenAPIKeyUpdated(t *testing.T) {
 
 func TestConfigNeedsModelSelection(t *testing.T) {
 	cfg := Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}}
-	if !configNeedsModelSelection(cfg, ProjectConfig{}) {
+	if !configNeedsModelSelection(projectModelConfigOptions{global: cfg, project: ProjectConfig{}}) {
 		t.Fatal("want hint when provider configured without active model")
 	}
 	cfg.ActiveModel = "openrouter/test"
-	if configNeedsModelSelection(cfg, ProjectConfig{}) {
+	if configNeedsModelSelection(projectModelConfigOptions{global: cfg, project: ProjectConfig{}}) {
 		t.Fatal("do not want hint when active model is set (exploration optional)")
 	}
 	project := ProjectConfig{ActiveModel: "openrouter/test"}
 	cfg.ActiveModel = ""
-	if configNeedsModelSelection(cfg, project) {
+	if configNeedsModelSelection(projectModelConfigOptions{global: cfg, project: project}) {
 		t.Fatal("do not want hint when project active model is set")
 	}
 }
@@ -1798,35 +1810,35 @@ func TestStartAgentRequiresExplicitActiveModel(t *testing.T) {
 
 func TestExplicitActiveModelConfigured(t *testing.T) {
 	global := Config{ActiveModel: "openrouter/test"}
-	if !explicitActiveModelConfigured(global, ProjectConfig{}) {
+	if !explicitActiveModelConfigured(projectModelConfigOptions{global: global, project: ProjectConfig{}}) {
 		t.Fatal("global active model should count as explicit")
 	}
-	if explicitActiveModelConfigured(Config{}, ProjectConfig{ActiveModel: "openrouter/test"}) != true {
+	if explicitActiveModelConfigured(projectModelConfigOptions{global: Config{}, project: ProjectConfig{ActiveModel: "openrouter/test"}}) != true {
 		t.Fatal("project active model should count as explicit")
 	}
-	if explicitActiveModelConfigured(Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk"}}}, ProjectConfig{}) {
+	if explicitActiveModelConfigured(projectModelConfigOptions{global: Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk"}}}, project: ProjectConfig{}}) {
 		t.Fatal("API key alone should not count as explicit active model")
 	}
 }
 
 func TestExplicitExplorationModelConfigured(t *testing.T) {
 	global := Config{ExplorationModel: "openrouter/explore"}
-	if !explicitExplorationModelConfigured(global, ProjectConfig{}) {
+	if !explicitExplorationModelConfigured(projectModelConfigOptions{global: global, project: ProjectConfig{}}) {
 		t.Fatal("global exploration model should count as explicit")
 	}
-	if explicitExplorationModelConfigured(Config{}, ProjectConfig{ExplorationModel: "openrouter/explore"}) != true {
+	if explicitExplorationModelConfigured(projectModelConfigOptions{global: Config{}, project: ProjectConfig{ExplorationModel: "openrouter/explore"}}) != true {
 		t.Fatal("project exploration model should count as explicit")
 	}
 }
 
 func TestModelsReadyForAgent(t *testing.T) {
-	if !modelsReadyForAgent(Config{ActiveModel: "openrouter/test"}, ProjectConfig{}) {
+	if !modelsReadyForAgent(projectModelConfigOptions{global: Config{ActiveModel: "openrouter/test"}, project: ProjectConfig{}}) {
 		t.Fatal("explicit active model should be ready")
 	}
-	if !modelsReadyForAgent(Config{}, ProjectConfig{ExplorationModel: "openrouter/explore"}) {
+	if !modelsReadyForAgent(projectModelConfigOptions{global: Config{}, project: ProjectConfig{ExplorationModel: "openrouter/explore"}}) {
 		t.Fatal("explicit exploration model should be ready without active model")
 	}
-	if modelsReadyForAgent(Config{}, ProjectConfig{}) {
+	if modelsReadyForAgent(projectModelConfigOptions{global: Config{}, project: ProjectConfig{}}) {
 		t.Fatal("no explicit model should not be ready")
 	}
 }
@@ -1860,7 +1872,7 @@ func TestDisplayConfiguredModelIDUsesConfiguredWhenFallback(t *testing.T) {
 		ResolvedModelID:   "openrouter/other",
 		Fallback:          true,
 	}
-	if got := displayConfiguredModelID(result, "openrouter/owl-alpha"); got != "openrouter/owl-alpha" {
+	if got := displayConfiguredModelID(displayConfiguredModelIDOptions{result: result, configured: "openrouter/owl-alpha"}); got != "openrouter/owl-alpha" {
 		t.Fatalf("displayConfiguredModelID = %q, want configured ID on fallback", got)
 	}
 }

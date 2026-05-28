@@ -5,7 +5,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -171,7 +170,12 @@ func (a *App) exitConfigMode(save bool) {
 			}
 		}
 		if !saveErr {
-			for _, msg := range configSavedMessagesWithHints(a.cfgChangedLabels, a.globalConfig, a.projectConfig, a.messages) {
+			for _, msg := range configSavedMessagesWithHints(configSavedMessagesWithHintsOptions{
+				changed:  a.cfgChangedLabels,
+				cfg:      a.globalConfig,
+				project:  a.projectConfig,
+				existing: a.messages,
+			}) {
 				a.messages = append(a.messages, msg)
 			}
 		}
@@ -207,218 +211,6 @@ func (a *App) exitConfigMode(save bool) {
 	a.cfgEditing = false
 	a.cfgEditBuf = nil
 	a.render()
-}
-
-func recordConfigChange(changed map[string]string, label, oldVal, newVal string) {
-	if oldVal == newVal {
-		return
-	}
-	if oldVal == "" {
-		changed[label] = "saved"
-	} else if newVal == "" {
-		changed[label] = "removed"
-	} else {
-		changed[label] = "updated"
-	}
-}
-
-type configChangeNotice struct {
-	content string
-	style   string
-}
-
-func isActiveModelConfigLabel(label string) bool {
-	switch label {
-	case "Active Model", "Project Active Model":
-		return true
-	default:
-		return false
-	}
-}
-
-func isExplorationModelConfigLabel(label string) bool {
-	switch label {
-	case "Exploration Model", "Project Exploration Model":
-		return true
-	default:
-		return false
-	}
-}
-
-func isAPIKeyConfigLabel(label string) bool {
-	return strings.Contains(label, "API Key")
-}
-
-func configChangeNoticeFor(label, direction string) configChangeNotice {
-	switch {
-	case isActiveModelConfigLabel(label):
-		return activeModelConfigNotice(label, direction)
-	case isExplorationModelConfigLabel(label):
-		return explorationModelConfigNotice(label, direction)
-	case isAPIKeyConfigLabel(label):
-		return apiKeyConfigNotice(label, direction)
-	default:
-		return genericConfigNotice(label, direction)
-	}
-}
-
-func activeModelConfigNotice(label, direction string) configChangeNotice {
-	switch direction {
-	case "saved":
-		return configChangeNotice{content: label + " saved.", style: styleChatCyan}
-	case "removed":
-		return configChangeNotice{content: label + " cleared.", style: styleChatRed}
-	default:
-		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
-	}
-}
-
-func explorationModelConfigNotice(label, direction string) configChangeNotice {
-	switch direction {
-	case "saved":
-		return configChangeNotice{content: label + " saved.", style: styleChatMagenta}
-	case "removed":
-		return configChangeNotice{content: label + " cleared.", style: styleChatRed}
-	default:
-		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
-	}
-}
-
-func apiKeyConfigNotice(label, direction string) configChangeNotice {
-	switch direction {
-	case "saved":
-		return configChangeNotice{content: label + " saved.", style: styleChatGreen}
-	case "removed":
-		return configChangeNotice{content: label + " removed.", style: styleChatRed}
-	default:
-		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
-	}
-}
-
-func genericConfigNotice(label, direction string) configChangeNotice {
-	switch direction {
-	case "saved":
-		return configChangeNotice{content: label + " saved.", style: styleChatBlue}
-	case "removed":
-		return configChangeNotice{content: label + " removed.", style: styleChatRed}
-	default:
-		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
-	}
-}
-
-func configSavedMessages(changed map[string]string) []chatMessage {
-	if len(changed) == 0 {
-		return []chatMessage{configChangeChatMessage(configChangeNotice{
-			content: "Config saved.",
-			style:   styleChatMuted,
-		})}
-	}
-	labels := make([]string, 0, len(changed))
-	for label := range changed {
-		labels = append(labels, label)
-	}
-	sort.Strings(labels)
-
-	msgs := make([]chatMessage, 0, len(labels))
-	for _, label := range labels {
-		msgs = append(msgs, configChangeChatMessage(configChangeNoticeFor(label, changed[label])))
-	}
-	return msgs
-}
-
-const configMissingAPIKeyMessage = "No API keys configured. Use /config to add a key first."
-const configMissingModelMessage = "No model configured. Use /model to select one first."
-
-func configMissingModelChatMessage() chatMessage {
-	return chatMessage{kind: msgError, content: configMissingModelMessage}
-}
-
-func explicitActiveModelConfigured(global Config, project ProjectConfig) bool {
-	return global.ActiveModel != "" || project.ActiveModel != ""
-}
-
-func explicitExplorationModelConfigured(global Config, project ProjectConfig) bool {
-	return global.ExplorationModel != "" || project.ExplorationModel != ""
-}
-
-func activeModelConfigScope(global Config, project ProjectConfig) string {
-	if project.ActiveModel != "" {
-		return "project"
-	}
-	if global.ActiveModel != "" {
-		return "global"
-	}
-	return ""
-}
-
-func explorationModelConfigScope(global Config, project ProjectConfig) string {
-	if project.ExplorationModel != "" {
-		return "project"
-	}
-	if global.ExplorationModel != "" {
-		return "global"
-	}
-	return ""
-}
-
-func modelScopeSuffix(scope string) string {
-	if scope == "" {
-		return ""
-	}
-	return " (" + scope + ")"
-}
-
-func modelsReadyForAgent(global Config, project ProjectConfig) bool {
-	return explicitActiveModelConfigured(global, project) || explicitExplorationModelConfigured(global, project)
-}
-
-func configNeedsModelSelection(cfg Config, project ProjectConfig) bool {
-	if modelsReadyForAgent(cfg, project) {
-		return false
-	}
-	return len(cfg.configuredProviders()) > 0
-}
-
-func chatHasMissingModelMessage(messages []chatMessage) bool {
-	for _, msg := range messages {
-		if msg.content == configMissingModelMessage {
-			return true
-		}
-	}
-	return false
-}
-
-func configSavedMessagesWithHints(changed map[string]string, cfg Config, project ProjectConfig, existing []chatMessage) []chatMessage {
-	msgs := configSavedMessages(changed)
-	if !configNeedsModelSelection(cfg, project) {
-		return msgs
-	}
-	apiKeyChanged := false
-	for label, direction := range changed {
-		if direction != "removed" && isAPIKeyConfigLabel(label) {
-			apiKeyChanged = true
-			break
-		}
-	}
-	if !apiKeyChanged {
-		return msgs
-	}
-	out := make([]chatMessage, 0, len(msgs)+1)
-	out = append(out, msgs...)
-	if !chatHasMissingModelMessage(existing) && !chatHasMissingModelMessage(out) {
-		out = append(out, configMissingModelChatMessage())
-	}
-	return out
-}
-
-func configChangeChatMessage(notice configChangeNotice) chatMessage {
-	return chatMessage{
-		kind:    msgInfo,
-		content: notice.content,
-		inlineBlocks: []inlineBlock{
-			styledInlineBlock(styledInlineBlockOptions{style: notice.style, text: notice.content}),
-		},
-	}
 }
 
 // openConfigModelPickerOptions is the parameter bundle for openConfigModelPicker.
@@ -634,7 +426,7 @@ func (a *App) settingsTabFields() []cfgField {
 			oldVal := a.cfgDraft.ActiveModel
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) {
 				a.cfgDraft.ActiveModel = id
-				recordConfigChange(a.cfgChangedLabels, "Active Model", oldVal, id)
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Active Model", oldVal: oldVal, newVal: id})
 			}})
 		}},
 		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) {
@@ -643,7 +435,7 @@ func (a *App) settingsTabFields() []cfgField {
 			oldVal := a.cfgDraft.ExplorationModel
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) {
 				a.cfgDraft.ExplorationModel = id
-				recordConfigChange(a.cfgChangedLabels, "Exploration Model", oldVal, id)
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Exploration Model", oldVal: oldVal, newVal: id})
 			}})
 		}},
 		{label: "Paste Collapse", get: func(c Config) string { return strconv.Itoa(c.PasteCollapseMinChars) }, set: func(c *Config, v string) {
@@ -719,7 +511,7 @@ func (a *App) projectTabFields() []cfgField {
 				oldVal := a.cfgProjectDraft.ActiveModel
 				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ActiveModel }, onSelect: func(id string) {
 					a.cfgProjectDraft.ActiveModel = id
-					recordConfigChange(a.cfgChangedLabels, "Project Active Model", oldVal, id)
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Project Active Model", oldVal: oldVal, newVal: id})
 				}})
 			},
 		},
@@ -740,7 +532,7 @@ func (a *App) projectTabFields() []cfgField {
 				oldVal := a.cfgProjectDraft.ExplorationModel
 				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) {
 					a.cfgProjectDraft.ExplorationModel = id
-					recordConfigChange(a.cfgChangedLabels, "Project Exploration Model", oldVal, id)
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Project Exploration Model", oldVal: oldVal, newVal: id})
 				}})
 			},
 		},
@@ -1026,7 +818,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			} else if f.toggle != nil {
 				oldVal := f.get(a.cfgDraft)
 				f.toggle(&a.cfgDraft)
-				recordConfigChange(a.cfgChangedLabels, f.label, oldVal, f.get(a.cfgDraft))
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: f.label, oldVal: oldVal, newVal: f.get(a.cfgDraft)})
 			} else if f.get != nil && f.set != nil {
 				a.cfgEditing = true
 				val := f.get(a.cfgDraft)
@@ -1044,7 +836,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 				if f.set != nil && f.get != nil && f.get(a.cfgDraft) != "" {
 					oldVal := f.get(a.cfgDraft)
 					f.set(&a.cfgDraft, "")
-					recordConfigChange(a.cfgChangedLabels, f.label, oldVal, "")
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: f.label, oldVal: oldVal, newVal: ""})
 					a.renderInput()
 				}
 			}
@@ -1102,7 +894,7 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 			oldVal := f.get(a.cfgDraft)
 			newVal := string(a.cfgEditBuf)
 			f.set(&a.cfgDraft, newVal)
-			recordConfigChange(a.cfgChangedLabels, f.label, oldVal, newVal)
+			recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: f.label, oldVal: oldVal, newVal: newVal})
 		}
 		a.cfgEditing = false
 		a.cfgEditBuf = nil
