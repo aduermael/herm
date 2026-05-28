@@ -156,16 +156,16 @@ func modelDisplayLine(opts modelDisplayLineOptions) (string, []inlineBlock) {
 	activeScopeSuffix := modelScopeSuffix(opts.activeScope)
 	explorationScopeSuffix := modelScopeSuffix(opts.explorationScope)
 	if activeID != "" {
-		content := "Using active: " + activeID + activeScopeSuffix
-		activeText := styleChatCyan + "Using active: " + activeID + styleChatMuted + activeScopeSuffix
+		content := uiModelDisplayActivePrefix + activeID + activeScopeSuffix
+		activeText := styleChatCyan + uiModelDisplayActivePrefix + activeID + styleChatMuted + activeScopeSuffix
 		if offline {
-			content += " (offline)"
+			content += uiModelDisplayOffline
 			activeText += " \033[33m(offline)"
 		}
 		blocks := []inlineBlock{newInlineBlock(activeText)}
 		if explorationID != "" && explorationID != activeID {
-			content += ", exploration: " + explorationID + explorationScopeSuffix
-			explorePart := ", exploration: " + explorationID + styleChatMuted + explorationScopeSuffix
+			content += uiModelDisplayExplorationJoin + explorationID + explorationScopeSuffix
+			explorePart := uiModelDisplayExplorationJoin + explorationID + styleChatMuted + explorationScopeSuffix
 			blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: styleChatMagenta, text: explorePart}))
 		}
 		return content, blocks
@@ -173,10 +173,10 @@ func modelDisplayLine(opts modelDisplayLineOptions) (string, []inlineBlock) {
 	if explorationID == "" {
 		return "", nil
 	}
-	content := "Using exploration: " + explorationID + explorationScopeSuffix
-	exploreText := styleChatMagenta + "Using exploration: " + explorationID + styleChatMuted + explorationScopeSuffix
+	content := uiModelDisplayExplorationPrefix + explorationID + explorationScopeSuffix
+	exploreText := styleChatMagenta + uiModelDisplayExplorationPrefix + explorationID + styleChatMuted + explorationScopeSuffix
 	if offline {
-		content += " (offline)"
+		content += uiModelDisplayOffline
 		exploreText += " \033[33m(offline)"
 	}
 	return content, []inlineBlock{newInlineBlock(exploreText)}

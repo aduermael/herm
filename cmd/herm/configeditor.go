@@ -420,22 +420,22 @@ func (a *App) resolvedExplorationDisplay(c Config) string {
 
 func (a *App) settingsTabFields() []cfgField {
 	return []cfgField{
-		{label: "Active Model", get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) {
+		{label: uiConfigLabelActiveModel, get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) {
 			c.ActiveModel = normalizeConfigModelIDForModels(normalizeConfigModelIDForModelsOptions{cfg: *c, modelID: v, smartDefault: defaultCanonicalActiveModel, models: a.models})
 		}, picker: func(a *App) {
 			oldVal := a.cfgDraft.ActiveModel
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) {
 				a.cfgDraft.ActiveModel = id
-				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Active Model", oldVal: oldVal, newVal: id})
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelActiveModel, oldVal: oldVal, newVal: id})
 			}})
 		}},
-		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) {
+		{label: uiConfigLabelExplorationModel, get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) {
 			c.ExplorationModel = normalizeConfigModelIDForModels(normalizeConfigModelIDForModelsOptions{cfg: *c, modelID: v, smartDefault: defaultCanonicalExplorationModel, models: a.models})
 		}, picker: func(a *App) {
 			oldVal := a.cfgDraft.ExplorationModel
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) {
 				a.cfgDraft.ExplorationModel = id
-				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Exploration Model", oldVal: oldVal, newVal: id})
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelExplorationModel, oldVal: oldVal, newVal: id})
 			}})
 		}},
 		{label: "Paste Collapse", get: func(c Config) string { return strconv.Itoa(c.PasteCollapseMinChars) }, set: func(c *Config, v string) {
@@ -495,7 +495,7 @@ func (a *App) settingsTabFields() []cfgField {
 func (a *App) projectTabFields() []cfgField {
 	return []cfgField{
 		{
-			label: "Active Model",
+			label: uiConfigLabelActiveModel,
 			get:   func(_ Config) string { return a.cfgProjectDraft.ActiveModel },
 			display: func(_ Config) string {
 				if a.cfgProjectDraft.ActiveModel != "" && len(a.cfgDraft.configuredProviders()) == 0 {
@@ -511,12 +511,12 @@ func (a *App) projectTabFields() []cfgField {
 				oldVal := a.cfgProjectDraft.ActiveModel
 				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ActiveModel }, onSelect: func(id string) {
 					a.cfgProjectDraft.ActiveModel = id
-					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Project Active Model", oldVal: oldVal, newVal: id})
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelProjectActiveModel, oldVal: oldVal, newVal: id})
 				}})
 			},
 		},
 		{
-			label: "Exploration Model",
+			label: uiConfigLabelExplorationModel,
 			get:   func(_ Config) string { return a.cfgProjectDraft.ExplorationModel },
 			display: func(_ Config) string {
 				if a.cfgProjectDraft.ExplorationModel != "" && len(a.cfgDraft.configuredProviders()) == 0 {
@@ -532,7 +532,7 @@ func (a *App) projectTabFields() []cfgField {
 				oldVal := a.cfgProjectDraft.ExplorationModel
 				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) {
 					a.cfgProjectDraft.ExplorationModel = id
-					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: "Project Exploration Model", oldVal: oldVal, newVal: id})
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelProjectExplorationModel, oldVal: oldVal, newVal: id})
 				}})
 			},
 		},

@@ -3,7 +3,6 @@ package main
 
 import (
 	"sort"
-	"strings"
 )
 
 type recordConfigChangeOptions struct {
@@ -17,39 +16,17 @@ func recordConfigChange(opts recordConfigChangeOptions) {
 		return
 	}
 	if opts.oldVal == "" {
-		opts.changed[opts.label] = "saved"
+		opts.changed[opts.label] = uiConfigChangeSaved
 	} else if opts.newVal == "" {
-		opts.changed[opts.label] = "removed"
+		opts.changed[opts.label] = uiConfigChangeRemoved
 	} else {
-		opts.changed[opts.label] = "updated"
+		opts.changed[opts.label] = uiConfigChangeUpdated
 	}
 }
 
 type configChangeNotice struct {
 	content string
 	style   string
-}
-
-func isActiveModelConfigLabel(label string) bool {
-	switch label {
-	case "Active Model", "Project Active Model":
-		return true
-	default:
-		return false
-	}
-}
-
-func isExplorationModelConfigLabel(label string) bool {
-	switch label {
-	case "Exploration Model", "Project Exploration Model":
-		return true
-	default:
-		return false
-	}
-}
-
-func isAPIKeyConfigLabel(label string) bool {
-	return strings.Contains(label, "API Key")
 }
 
 type configChangeNoticeForOptions struct {
@@ -72,52 +49,52 @@ func configChangeNoticeFor(opts configChangeNoticeForOptions) configChangeNotice
 
 func activeModelConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
-	case "saved":
-		return configChangeNotice{content: opts.label + " saved.", style: styleChatCyan}
-	case "removed":
-		return configChangeNotice{content: opts.label + " cleared.", style: styleChatRed}
+	case uiConfigChangeSaved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatCyan}
+	case uiConfigChangeRemoved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeCleared), style: styleChatRed}
 	default:
-		return configChangeNotice{content: opts.label + " updated.", style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
 	}
 }
 
 func explorationModelConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
-	case "saved":
-		return configChangeNotice{content: opts.label + " saved.", style: styleChatMagenta}
-	case "removed":
-		return configChangeNotice{content: opts.label + " cleared.", style: styleChatRed}
+	case uiConfigChangeSaved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatMagenta}
+	case uiConfigChangeRemoved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeCleared), style: styleChatRed}
 	default:
-		return configChangeNotice{content: opts.label + " updated.", style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
 	}
 }
 
 func apiKeyConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
-	case "saved":
-		return configChangeNotice{content: opts.label + " saved.", style: styleChatGreen}
-	case "removed":
-		return configChangeNotice{content: opts.label + " removed.", style: styleChatRed}
+	case uiConfigChangeSaved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatGreen}
+	case uiConfigChangeRemoved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeRemoved), style: styleChatRed}
 	default:
-		return configChangeNotice{content: opts.label + " updated.", style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
 	}
 }
 
 func genericConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
-	case "saved":
-		return configChangeNotice{content: opts.label + " saved.", style: styleChatBlue}
-	case "removed":
-		return configChangeNotice{content: opts.label + " removed.", style: styleChatRed}
+	case uiConfigChangeSaved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatBlue}
+	case uiConfigChangeRemoved:
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeRemoved), style: styleChatRed}
 	default:
-		return configChangeNotice{content: opts.label + " updated.", style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
 	}
 }
 
 func configSavedMessages(changed map[string]string) []chatMessage {
 	if len(changed) == 0 {
 		return []chatMessage{configChangeChatMessage(configChangeNotice{
-			content: "Config saved.",
+			content: uiConfigEmptySave,
 			style:   styleChatMuted,
 		})}
 	}
@@ -136,9 +113,6 @@ func configSavedMessages(changed map[string]string) []chatMessage {
 	}
 	return msgs
 }
-
-const configMissingAPIKeyMessage = "No API keys configured. Use /config to add a key first."
-const configMissingModelMessage = "No model configured. Use /model to select one first."
 
 func configMissingModelChatMessage() chatMessage {
 	return chatMessage{kind: msgError, content: configMissingModelMessage}
@@ -159,29 +133,22 @@ func explicitExplorationModelConfigured(opts projectModelConfigOptions) bool {
 
 func activeModelConfigScope(opts projectModelConfigOptions) string {
 	if opts.project.ActiveModel != "" {
-		return "project"
+		return uiModelScopeProject
 	}
 	if opts.global.ActiveModel != "" {
-		return "global"
+		return uiModelScopeGlobal
 	}
 	return ""
 }
 
 func explorationModelConfigScope(opts projectModelConfigOptions) string {
 	if opts.project.ExplorationModel != "" {
-		return "project"
+		return uiModelScopeProject
 	}
 	if opts.global.ExplorationModel != "" {
-		return "global"
+		return uiModelScopeGlobal
 	}
 	return ""
-}
-
-func modelScopeSuffix(scope string) string {
-	if scope == "" {
-		return ""
-	}
-	return " (" + scope + ")"
 }
 
 func modelsReadyForAgent(opts projectModelConfigOptions) bool {
@@ -218,7 +185,7 @@ func configSavedMessagesWithHints(opts configSavedMessagesWithHintsOptions) []ch
 	}
 	apiKeyChanged := false
 	for label, direction := range opts.changed {
-		if direction != "removed" && isAPIKeyConfigLabel(label) {
+		if direction != uiConfigChangeRemoved && isAPIKeyConfigLabel(label) {
 			apiKeyChanged = true
 			break
 		}
