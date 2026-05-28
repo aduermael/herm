@@ -1699,3 +1699,42 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 		t.Fatalf("empty save style = %q, want muted italic accent", empty[0].inlineBlocks[0].text)
 	}
 }
+
+func TestConfigSavedMessagesHintAfterAPIKeyWhenNoActiveModel(t *testing.T) {
+	cfg := Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}}
+	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{})
+
+	if len(msgs) != 2 {
+		t.Fatalf("message count = %d, want 2", len(msgs))
+	}
+	if msgs[0].content != "OpenRouter API Key saved." {
+		t.Fatalf("first message = %q", msgs[0].content)
+	}
+	if msgs[1].content != "Select models using /model." {
+		t.Fatalf("hint message = %q", msgs[1].content)
+	}
+	if !strings.Contains(msgs[1].inlineBlocks[0].text, styleChatBlue) {
+		t.Fatalf("hint style = %q, want blue italic accent", msgs[1].inlineBlocks[0].text)
+	}
+}
+
+func TestConfigSavedMessagesNoHintWhenActiveModelSet(t *testing.T) {
+	cfg := Config{
+		ActiveModel: "openrouter/test",
+		Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+	}
+	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{})
+	if len(msgs) != 1 {
+		t.Fatalf("message count = %d, want 1", len(msgs))
+	}
+}
+
+func TestConfigSavedMessagesNoHintWhenAPIKeyUpdated(t *testing.T) {
+	cfg := Config{
+		Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+	}
+	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "updated"}, cfg, ProjectConfig{})
+	if len(msgs) != 1 {
+		t.Fatalf("message count = %d, want 1", len(msgs))
+	}
+}

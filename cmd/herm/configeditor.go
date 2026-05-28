@@ -171,7 +171,7 @@ func (a *App) exitConfigMode(save bool) {
 			}
 		}
 		if !saveErr {
-			for _, msg := range configSavedMessages(a.cfgChangedLabels) {
+			for _, msg := range configSavedMessagesWithHints(a.cfgChangedLabels, a.globalConfig, a.projectConfig) {
 				a.messages = append(a.messages, msg)
 			}
 		}
@@ -324,6 +324,36 @@ func configSavedMessages(changed map[string]string) []chatMessage {
 		msgs = append(msgs, configChangeChatMessage(configChangeNoticeFor(label, changed[label])))
 	}
 	return msgs
+}
+
+func configLabelFromSavedMessage(content string) (string, bool) {
+	const suffix = " saved."
+	if !strings.HasSuffix(content, suffix) {
+		return "", false
+	}
+	return strings.TrimSuffix(content, suffix), true
+}
+
+func configSelectModelHintMessage() chatMessage {
+	return configChangeChatMessage(configChangeNotice{
+		content: "Select models using /model.",
+		style:   styleChatBlue,
+	})
+}
+
+func configSavedMessagesWithHints(changed map[string]string, cfg Config, project ProjectConfig) []chatMessage {
+	msgs := configSavedMessages(changed)
+	if cfg.ActiveModel != "" || project.ActiveModel != "" || len(cfg.configuredProviders()) == 0 {
+		return msgs
+	}
+	out := make([]chatMessage, 0, len(msgs)+1)
+	for _, msg := range msgs {
+		out = append(out, msg)
+		if label, ok := configLabelFromSavedMessage(msg.content); ok && isAPIKeyConfigLabel(label) {
+			out = append(out, configSelectModelHintMessage())
+		}
+	}
+	return out
 }
 
 func configChangeChatMessage(notice configChangeNotice) chatMessage {
