@@ -1939,13 +1939,13 @@ func TestConfigChangeLabelForProjectTabUsesProjectLabels(t *testing.T) {
 	if len(fields) < 2 {
 		t.Fatal("expected project tab model fields")
 	}
-	if got := configChangeLabelForField(fields[0], true); got != uiConfigLabelProjectActiveModel {
+	if got := configChangeLabelForField(configChangeLabelForFieldOptions{field: fields[0], projectTab: true}); got != uiConfigLabelProjectActiveModel {
 		t.Fatalf("active model label = %q, want %q", got, uiConfigLabelProjectActiveModel)
 	}
-	if got := configChangeLabelForField(fields[1], true); got != uiConfigLabelProjectExplorationModel {
+	if got := configChangeLabelForField(configChangeLabelForFieldOptions{field: fields[1], projectTab: true}); got != uiConfigLabelProjectExplorationModel {
 		t.Fatalf("exploration model label = %q, want %q", got, uiConfigLabelProjectExplorationModel)
 	}
-	if got := configChangeLabelForField(fields[0], false); got != uiConfigLabelActiveModel {
+	if got := configChangeLabelForField(configChangeLabelForFieldOptions{field: fields[0], projectTab: false}); got != uiConfigLabelActiveModel {
 		t.Fatalf("global tab should keep field label = %q", got)
 	}
 }

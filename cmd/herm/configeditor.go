@@ -827,7 +827,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			} else if f.toggle != nil {
 				oldVal := f.get(a.cfgDraft)
 				f.toggle(&a.cfgDraft)
-				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(f, a.cfgTab == cfgTabProject && a.projectConfigRoot() != ""), oldVal: oldVal, newVal: f.get(a.cfgDraft)})
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(configChangeLabelForFieldOptions{field: f, projectTab: a.cfgTab == cfgTabProject && a.projectConfigRoot() != ""}), oldVal: oldVal, newVal: f.get(a.cfgDraft)})
 			} else if f.get != nil && f.set != nil {
 				a.cfgEditing = true
 				val := f.get(a.cfgDraft)
@@ -845,7 +845,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 				if f.set != nil && f.get != nil && f.get(a.cfgDraft) != "" {
 					oldVal := f.get(a.cfgDraft)
 					f.set(&a.cfgDraft, "")
-					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(f, true), oldVal: oldVal, newVal: ""})
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(configChangeLabelForFieldOptions{field: f, projectTab: true}), oldVal: oldVal, newVal: ""})
 					a.renderInput()
 				}
 			}
@@ -903,7 +903,7 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 			oldVal := f.get(a.cfgDraft)
 			newVal := string(a.cfgEditBuf)
 			f.set(&a.cfgDraft, newVal)
-			recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(f, a.cfgTab == cfgTabProject && a.projectConfigRoot() != ""), oldVal: oldVal, newVal: newVal})
+			recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(configChangeLabelForFieldOptions{field: f, projectTab: a.cfgTab == cfgTabProject && a.projectConfigRoot() != ""}), oldVal: oldVal, newVal: newVal})
 		}
 		a.cfgEditing = false
 		a.cfgEditBuf = nil

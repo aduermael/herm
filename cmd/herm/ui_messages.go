@@ -90,16 +90,21 @@ func isExplorationModelConfigLabel(label string) bool {
 	}
 }
 
-func configChangeLabelForField(f cfgField, projectTab bool) string {
-	if !projectTab {
-		return f.label
+type configChangeLabelForFieldOptions struct {
+	field      cfgField
+	projectTab bool
+}
+
+func configChangeLabelForField(opts configChangeLabelForFieldOptions) string {
+	if !opts.projectTab {
+		return opts.field.label
 	}
-	switch f.label {
+	switch opts.field.label {
 	case uiConfigLabelActiveModel:
 		return uiConfigLabelProjectActiveModel
 	case uiConfigLabelExplorationModel:
 		return uiConfigLabelProjectExplorationModel
 	default:
-		return f.label
+		return opts.field.label
 	}
 }
