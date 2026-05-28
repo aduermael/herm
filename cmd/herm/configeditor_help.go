@@ -22,10 +22,8 @@ func (a *App) configHelpRows() []string {
 		}
 		parts = append(parts, enterHint)
 	}
-	if a.cfgTab == cfgTabProject && a.projectConfigRoot() != "" {
-		if field, ok := a.configSelectedField(); ok && field.set != nil && field.get != nil && field.get(a.cfgDraft) != "" {
-			parts = append(parts, "Backspace=unset")
-		}
+	if field, ok := a.configSelectedField(); ok && a.configFieldSupportsUnset(field) && field.get(a.cfgDraft) != "" {
+		parts = append(parts, "Backspace=unset")
 	}
 	parts = append(parts, "Esc=close")
 
@@ -40,4 +38,35 @@ func (a *App) configHelpRows() []string {
 		}))
 	}
 	return layoutInlineBlocks(layoutInlineBlocksOptions{blocks: blocks, width: width})
+}
+
+func (a *App) configFieldSupportsUnset(f cfgField) bool {
+	if f.set == nil || f.get == nil {
+		return false
+	}
+	switch a.cfgTab {
+	case cfgTabProject:
+		return a.projectConfigRoot() != ""
+	case cfgTabGlobal:
+		return isModelConfigLabel(f.label)
+	default:
+		return false
+	}
+}
+
+func (a *App) unsetConfigSelectedField(f cfgField) {
+	oldVal := f.get(a.cfgDraft)
+	if oldVal == "" {
+		return
+	}
+	f.set(&a.cfgDraft, "")
+	recordConfigChange(recordConfigChangeOptions{
+		changed: a.cfgChangedLabels,
+		label: configChangeLabelForField(configChangeLabelForFieldOptions{
+			field:      f,
+			projectTab: a.cfgTab == cfgTabProject && a.projectConfigRoot() != "",
+		}),
+		oldVal: oldVal,
+		newVal: "",
+	})
 }

@@ -1963,6 +1963,70 @@ func TestConfigChangeLabelForProjectTabUsesProjectLabels(t *testing.T) {
 	}
 }
 
+func TestGlobalTabBackspaceUnsetsActiveModel(t *testing.T) {
+	app := &App{
+		cfgActive: true,
+		cfgTab:    cfgTabGlobal,
+		cfgDraft: Config{
+			ActiveModel: "openrouter/bodybuilder",
+		},
+		cfgChangedLabels: map[string]string{},
+		headless:         true,
+		width:            80,
+	}
+	fields := app.settingsTabFields()
+	app.cfgCursor = 0
+	if fields[0].label != uiConfigLabelActiveModel {
+		t.Fatalf("field[0] = %q, want active model", fields[0].label)
+	}
+	if !app.configFieldSupportsUnset(fields[0]) {
+		t.Fatal("global active model should support unset")
+	}
+	help := strings.Join(app.configHelpRows(), " ")
+	if !strings.Contains(help, "Backspace=unset") {
+		t.Fatalf("help = %q, want Backspace=unset hint", help)
+	}
+
+	app.handleConfigByte(handleConfigByteOptions{ch: 127})
+
+	if app.cfgDraft.ActiveModel != "" {
+		t.Fatalf("ActiveModel = %q, want empty after unset", app.cfgDraft.ActiveModel)
+	}
+	if app.cfgChangedLabels[uiConfigLabelActiveModel] != uiConfigChangeRemoved {
+		t.Fatalf("change label = %v, want removed", app.cfgChangedLabels)
+	}
+}
+
+func TestGlobalTabBackspaceDoesNotUnsetPasteCollapse(t *testing.T) {
+	app := &App{
+		cfgActive: true,
+		cfgTab:    cfgTabGlobal,
+		cfgDraft: Config{
+			PasteCollapseMinChars: 200,
+		},
+		headless: true,
+		width:    80,
+	}
+	fields := app.settingsTabFields()
+	for i, field := range fields {
+		if field.label == "Paste Collapse" {
+			app.cfgCursor = i
+			break
+		}
+	}
+	field, ok := app.configSelectedField()
+	if !ok {
+		t.Fatal("expected paste collapse field")
+	}
+	if app.configFieldSupportsUnset(field) {
+		t.Fatal("paste collapse should not support backspace unset on global tab")
+	}
+	app.handleConfigByte(handleConfigByteOptions{ch: 127})
+	if app.cfgDraft.PasteCollapseMinChars != 200 {
+		t.Fatalf("PasteCollapseMinChars = %d, want unchanged", app.cfgDraft.PasteCollapseMinChars)
+	}
+}
+
 func TestShowResolvedModelDisplayShowsConfiguredIDBeforeCatalogLoads(t *testing.T) {
 	app := &App{
 		globalConfig: Config{

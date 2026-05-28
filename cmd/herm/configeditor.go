@@ -837,17 +837,11 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 		}
 		a.renderInput()
 
-	case ch == 127 || ch == 0x08: // Backspace - clear current project field (unset → fall back to global)
-		if a.cfgTab == cfgTabProject && a.projectConfigRoot() != "" {
-			fields := a.cfgCurrentFields()
-			if len(fields) > 0 && a.cfgCursor < len(fields) {
-				f := fields[a.cfgCursor]
-				if f.set != nil && f.get != nil && f.get(a.cfgDraft) != "" {
-					oldVal := f.get(a.cfgDraft)
-					f.set(&a.cfgDraft, "")
-					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(configChangeLabelForFieldOptions{field: f, projectTab: true}), oldVal: oldVal, newVal: ""})
-					a.renderInput()
-				}
+	case ch == 127 || ch == 0x08: // Backspace - unset current field when supported
+		if field, ok := a.configSelectedField(); ok && a.configFieldSupportsUnset(field) {
+			if field.get(a.cfgDraft) != "" {
+				a.unsetConfigSelectedField(field)
+				a.renderInput()
 			}
 		}
 
