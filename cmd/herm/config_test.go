@@ -1729,6 +1729,19 @@ func assertMissingModelMessage(t *testing.T, msg chatMessage) {
 	}
 }
 
+func assertSelectModelHintMessage(t *testing.T, msg chatMessage) {
+	t.Helper()
+	if msg.kind != msgInfo {
+		t.Fatalf("message kind = %v, want info", msg.kind)
+	}
+	if msg.content != configSelectModelHintMessage {
+		t.Fatalf("message content = %q, want %q", msg.content, configSelectModelHintMessage)
+	}
+	if !strings.Contains(msg.inlineBlocks[0].text, styleChatBlue) {
+		t.Fatalf("hint style = %q, want blue italic accent", msg.inlineBlocks[0].text)
+	}
+}
+
 func TestConfigSavedMessagesHintAfterAPIKeyWhenNoActiveModel(t *testing.T) {
 	cfg := Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}}
 	msgs := configSavedMessagesWithHints(configSavedMessagesWithHintsOptions{
@@ -1743,7 +1756,7 @@ func TestConfigSavedMessagesHintAfterAPIKeyWhenNoActiveModel(t *testing.T) {
 	if msgs[0].content != "OpenRouter API Key saved." {
 		t.Fatalf("first message = %q", msgs[0].content)
 	}
-	assertMissingModelMessage(t, msgs[1])
+	assertSelectModelHintMessage(t, msgs[1])
 }
 
 func TestConfigSavedMessagesNoHintWhenActiveModelSet(t *testing.T) {
@@ -1776,10 +1789,10 @@ func TestConfigSavedMessagesNoHintWhenAPIKeyUpdated(t *testing.T) {
 	if msgs[0].content != "OpenRouter API Key updated." {
 		t.Fatalf("first message = %q", msgs[0].content)
 	}
-	if msgs[1].content != configMissingModelMessage {
+	if msgs[1].content != configSelectModelHintMessage {
 		t.Fatalf("hint message = %q", msgs[1].content)
 	}
-	assertMissingModelMessage(t, msgs[1])
+	assertSelectModelHintMessage(t, msgs[1])
 }
 
 func TestConfigNeedsModelSelection(t *testing.T) {

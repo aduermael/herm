@@ -127,6 +127,13 @@ func configMissingModelChatMessage() chatMessage {
 	return chatMessage{kind: msgError, content: configMissingModelMessage}
 }
 
+func configSelectModelHintChatMessage() chatMessage {
+	return configChangeChatMessage(configChangeNotice{
+		content: configSelectModelHintMessage,
+		style:   styleChatBlue,
+	})
+}
+
 func appendMissingModelMessageIfNeeded(messages []chatMessage) []chatMessage {
 	if chatHasMissingModelMessage(messages) {
 		return messages
@@ -201,6 +208,15 @@ func chatHasMissingModelMessage(messages []chatMessage) bool {
 	return false
 }
 
+func chatHasSelectModelHintMessage(messages []chatMessage) bool {
+	for _, msg := range messages {
+		if msg.content == configSelectModelHintMessage {
+			return true
+		}
+	}
+	return false
+}
+
 type configSavedMessagesWithHintsOptions struct {
 	changed  map[string]string
 	cfg      Config
@@ -225,8 +241,8 @@ func configSavedMessagesWithHints(opts configSavedMessagesWithHintsOptions) []ch
 	}
 	out := make([]chatMessage, 0, len(msgs)+1)
 	out = append(out, msgs...)
-	if !chatHasMissingModelMessage(opts.existing) && !chatHasMissingModelMessage(out) {
-		out = append(out, configMissingModelChatMessage())
+	if !chatHasSelectModelHintMessage(opts.existing) && !chatHasSelectModelHintMessage(out) {
+		out = append(out, configSelectModelHintChatMessage())
 	}
 	return out
 }
