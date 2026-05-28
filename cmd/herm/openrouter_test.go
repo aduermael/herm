@@ -175,9 +175,9 @@ func TestResolveActiveModel_OpenRouterDefaults(t *testing.T) {
 func TestResolveExplorationModel_OpenRouterDefaults(t *testing.T) {
 	cfg := Config{OpenRouterAPIKey: "sk-or-test"} // no ExplorationModel set
 	got := cfg.resolveExplorationModel(openRouterDefaultTestModels())
-	want := defaultExplorationModels[ProviderOpenRouter]
+	want := defaultActiveModels[ProviderOpenRouter]
 	if got != want {
-		t.Errorf("resolveExplorationModel = %q, want %q", got, want)
+		t.Errorf("resolveExplorationModel = %q, want %q (unset exploration uses active resolution)", got, want)
 	}
 }
 

@@ -61,50 +61,119 @@ func formatToolDefinitions(opts formatToolDefinitionsOptions) string {
 	return b.String()
 }
 
-// showModelChange displays an info message when the active model changes.
-func (a *App) showModelChange(modelID string) {
-	if modelID == "" {
+// showResolvedModelDisplay shows the current active and/or exploration model line in chat.
+func (a *App) showResolvedModelDisplay() {
+	if a.models == nil {
 		return
 	}
-	var explorationID string
-	if a.config.ExplorationModel != "" || a.projectConfig.ExplorationModel != "" {
-		explorationID = a.config.resolveExplorationModel(a.models)
-	}
-	offline := a.ollamaFetched && a.config.ollamaBaseURL() != "" && a.isOllamaOffline(modelID)
-	line, blocks := modelDisplayLine(modelDisplayLineOptions{modelID: modelID, explorationID: explorationID, offline: offline})
-	if line == a.lastModelDisplayLine {
+	hasActive := explicitActiveModelConfigured(a.globalConfig, a.projectConfig)
+	hasExploration := explicitExplorationModelConfigured(a.globalConfig, a.projectConfig)
+	if !hasActive && !hasExploration {
 		return
 	}
-	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: line, inlineBlocks: blocks})
+
+	var activeID, explorationID string
+	var activeScope, explorationScope string
+	if hasActive {
+		result := a.config.resolveActiveModelResult(a.models)
+		activeID = displayConfiguredModelID(result, a.config.ActiveModel)
+		activeScope = activeModelConfigScope(a.globalConfig, a.projectConfig)
+	}
+	if hasExploration {
+		result := a.config.resolveExplorationModelResult(a.models)
+		explorationID = displayConfiguredModelID(result, a.config.ExplorationModel)
+		explorationScope = explorationModelConfigScope(a.globalConfig, a.projectConfig)
+	}
+	if activeID == "" && explorationID == "" {
+		return
+	}
+
+	displayID := activeID
+	if displayID == "" {
+		displayID = explorationID
+	}
+	offline := a.ollamaFetched && a.config.ollamaBaseURL() != "" && a.isOllamaOffline(displayID)
+	line, blocks := modelDisplayLine(modelDisplayLineOptions{
+		activeID:         activeID,
+		explorationID:    explorationID,
+		activeScope:      activeScope,
+		explorationScope: explorationScope,
+		offline:          offline,
+	})
+	if line == "" || line == a.lastModelDisplayLine {
+		return
+	}
+	a.removeModelDisplayMessages()
+	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: line, inlineBlocks: blocks, modelDisplay: true})
 	if offline {
 		a.showOllamaOfflineNotice()
 	} else {
 		a.lastOllamaOfflineNotice = ""
 	}
-	a.lastModelID = modelID
+	a.lastModelID = displayID
 	a.lastModelDisplayLine = line
 }
 
+func displayConfiguredModelID(result configuredModelResolution, configured string) string {
+	if configured == "" {
+		return ""
+	}
+	if !result.Fallback && result.ResolvedModelID != "" {
+		return result.ResolvedModelID
+	}
+	if result.ConfiguredModelID != "" {
+		return result.ConfiguredModelID
+	}
+	return configured
+}
+
+func (a *App) removeModelDisplayMessages() {
+	kept := a.messages[:0]
+	for _, msg := range a.messages {
+		if !msg.modelDisplay {
+			kept = append(kept, msg)
+		}
+	}
+	a.messages = kept
+}
+
 type modelDisplayLineOptions struct {
-	modelID       string
-	explorationID string
-	offline       bool
+	activeID         string
+	explorationID    string
+	activeScope      string
+	explorationScope string
+	offline          bool
 }
 
 func modelDisplayLine(opts modelDisplayLineOptions) (string, []inlineBlock) {
-	modelID, explorationID, offline := opts.modelID, opts.explorationID, opts.offline
-	content := "Using active: " + modelID
-	activeText := styleChatCyan + "Using active: " + modelID
+	activeID, explorationID, offline := opts.activeID, opts.explorationID, opts.offline
+	activeScopeSuffix := modelScopeSuffix(opts.activeScope)
+	explorationScopeSuffix := modelScopeSuffix(opts.explorationScope)
+	if activeID != "" {
+		content := "Using active: " + activeID + activeScopeSuffix
+		activeText := styleChatCyan + "Using active: " + activeID + styleChatMuted + activeScopeSuffix
+		if offline {
+			content += " (offline)"
+			activeText += " \033[33m(offline)"
+		}
+		blocks := []inlineBlock{newInlineBlock(activeText)}
+		if explorationID != "" && explorationID != activeID {
+			content += ", exploration: " + explorationID + explorationScopeSuffix
+			explorePart := ", exploration: " + explorationID + styleChatMuted + explorationScopeSuffix
+			blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: styleChatMagenta, text: explorePart}))
+		}
+		return content, blocks
+	}
+	if explorationID == "" {
+		return "", nil
+	}
+	content := "Using exploration: " + explorationID + explorationScopeSuffix
+	exploreText := styleChatMagenta + "Using exploration: " + explorationID + styleChatMuted + explorationScopeSuffix
 	if offline {
 		content += " (offline)"
-		activeText += " \033[33m(offline)"
+		exploreText += " \033[33m(offline)"
 	}
-	blocks := []inlineBlock{newInlineBlock(activeText)}
-	if explorationID != "" && explorationID != modelID {
-		content += ", exploration: " + explorationID
-		blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: styleChatMagenta, text: ", exploration: " + explorationID}))
-	}
-	return content, blocks
+	return content, []inlineBlock{newInlineBlock(exploreText)}
 }
 
 func (a *App) showOllamaOfflineNotice() {
@@ -193,12 +262,7 @@ func (a *App) maybeShowInitialModels() {
 	a.shownInitialModel = true
 	a.messages = append(a.messages, versionDisplayMessage())
 	a.showProjectModelDiagnostics()
-	if a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "" {
-		result := a.config.resolveActiveModelResult(a.models)
-		if !result.Fallback {
-			a.showModelChange(result.ResolvedModelID)
-		}
-	}
+	a.showResolvedModelDisplay()
 }
 
 func versionDisplayMessage() chatMessage {
@@ -219,16 +283,25 @@ func (a *App) refreshResolvedModelDisplay() {
 	}
 	a.normalizeProjectConfigWithCurrentModels()
 	a.showProjectModelDiagnostics()
-	if a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "" {
-		result := a.config.resolveActiveModelResult(a.models)
-		if !result.Fallback {
-			a.showModelChange(result.ResolvedModelID)
-		}
+	a.showResolvedModelDisplay()
+}
+
+func (a *App) resolveMainAgentModelResult() configuredModelResolution {
+	if explicitActiveModelConfigured(a.globalConfig, a.projectConfig) {
+		return a.config.resolveActiveModelResult(a.models)
 	}
+	return a.config.resolveExplorationModelResult(a.models)
 }
 
 func (a *App) startAgent(userMessage string) {
 	a.normalizeProjectConfigWithCurrentModels()
+	if !modelsReadyForAgent(a.globalConfig, a.projectConfig) {
+		if !chatHasMissingModelMessage(a.messages) {
+			a.messages = append(a.messages, configMissingModelChatMessage())
+		}
+		a.render()
+		return
+	}
 	a.showProjectModelDiagnostics()
 	// Move previous attachment files to past/ so /attachments only has current-message files.
 	if dir := a.attachmentDir(); dir != "" {
@@ -292,7 +365,7 @@ func (a *App) startAgent(userMessage string) {
 		tools = append(tools, NewGitTool(NewGitToolOptions{WorkDir: a.worktreePath, CoAuthor: a.config.effectiveGitCoAuthor()}))
 	}
 
-	modelResult := a.config.resolveActiveModelResult(a.models)
+	modelResult := a.resolveMainAgentModelResult()
 	modelID := modelResult.ResolvedModelID
 	if modelID == "" {
 		a.messages = append(a.messages, chatMessage{kind: msgError, content: "model not found, `/model` to pick a valid one"})
@@ -406,8 +479,8 @@ func (a *App) startAgent(userMessage string) {
 		a.traceCollector.AddUserMessage(userMessage)
 	}
 
-	if !modelResult.Fallback && (a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "") {
-		a.showModelChange(modelID)
+	if !modelResult.Fallback && modelsReadyForAgent(a.globalConfig, a.projectConfig) {
+		a.showResolvedModelDisplay()
 	}
 
 	ctxWindow := 0

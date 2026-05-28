@@ -125,8 +125,8 @@ func TestSmartDefaultsRemainProviderKeyed(t *testing.T) {
 	if got := anthropicFirst.resolveActiveModel(models); got != "claude-sonnet-4-6" {
 		t.Errorf("anthropic active default = %q", got)
 	}
-	if got := anthropicFirst.resolveExplorationModel(models); got != "claude-haiku-4-5" {
-		t.Errorf("anthropic exploration default = %q", got)
+	if got := anthropicFirst.resolveExplorationModel(models); got != "claude-sonnet-4-6" {
+		t.Errorf("unset exploration should follow active resolution = %q", got)
 	}
 
 	openAIOnly := Config{OpenAIAPIKey: "openai"}
@@ -136,8 +136,8 @@ func TestSmartDefaultsRemainProviderKeyed(t *testing.T) {
 	if got := openAIOnly.resolveActiveModel(models); got != "gpt-4.1-2025-04-14" {
 		t.Errorf("openai active default = %q", got)
 	}
-	if got := openAIOnly.resolveExplorationModel(models); got != "gpt-4.1-mini-2025-04-14" {
-		t.Errorf("openai exploration default = %q", got)
+	if got := openAIOnly.resolveExplorationModel(models); got != "gpt-4.1-2025-04-14" {
+		t.Errorf("unset exploration should follow active resolution = %q", got)
 	}
 }
 

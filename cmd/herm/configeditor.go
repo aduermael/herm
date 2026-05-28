@@ -171,7 +171,7 @@ func (a *App) exitConfigMode(save bool) {
 			}
 		}
 		if !saveErr {
-			for _, msg := range configSavedMessagesWithHints(a.cfgChangedLabels, a.globalConfig, a.projectConfig) {
+			for _, msg := range configSavedMessagesWithHints(a.cfgChangedLabels, a.globalConfig, a.projectConfig, a.messages) {
 				a.messages = append(a.messages, msg)
 			}
 		}
@@ -326,32 +326,87 @@ func configSavedMessages(changed map[string]string) []chatMessage {
 	return msgs
 }
 
-func configLabelFromSavedMessage(content string) (string, bool) {
-	const suffix = " saved."
-	if !strings.HasSuffix(content, suffix) {
-		return "", false
+const configMissingAPIKeyMessage = "No API keys configured. Use /config to add a key first."
+const configMissingModelMessage = "No active model configured. Use /model to select one first."
+
+func configMissingModelChatMessage() chatMessage {
+	return chatMessage{kind: msgError, content: configMissingModelMessage}
+}
+
+func explicitActiveModelConfigured(global Config, project ProjectConfig) bool {
+	return global.ActiveModel != "" || project.ActiveModel != ""
+}
+
+func explicitExplorationModelConfigured(global Config, project ProjectConfig) bool {
+	return global.ExplorationModel != "" || project.ExplorationModel != ""
+}
+
+func activeModelConfigScope(global Config, project ProjectConfig) string {
+	if project.ActiveModel != "" {
+		return "project"
 	}
-	return strings.TrimSuffix(content, suffix), true
+	if global.ActiveModel != "" {
+		return "global"
+	}
+	return ""
 }
 
-func configSelectModelHintMessage() chatMessage {
-	return configChangeChatMessage(configChangeNotice{
-		content: "Select models using /model.",
-		style:   styleChatBlue,
-	})
+func explorationModelConfigScope(global Config, project ProjectConfig) string {
+	if project.ExplorationModel != "" {
+		return "project"
+	}
+	if global.ExplorationModel != "" {
+		return "global"
+	}
+	return ""
 }
 
-func configSavedMessagesWithHints(changed map[string]string, cfg Config, project ProjectConfig) []chatMessage {
+func modelScopeSuffix(scope string) string {
+	if scope == "" {
+		return ""
+	}
+	return " (" + scope + ")"
+}
+
+func modelsReadyForAgent(global Config, project ProjectConfig) bool {
+	return explicitActiveModelConfigured(global, project) || explicitExplorationModelConfigured(global, project)
+}
+
+func configNeedsModelSelection(cfg Config, project ProjectConfig) bool {
+	if modelsReadyForAgent(cfg, project) {
+		return false
+	}
+	return len(cfg.configuredProviders()) > 0
+}
+
+func chatHasMissingModelMessage(messages []chatMessage) bool {
+	for _, msg := range messages {
+		if msg.content == configMissingModelMessage {
+			return true
+		}
+	}
+	return false
+}
+
+func configSavedMessagesWithHints(changed map[string]string, cfg Config, project ProjectConfig, existing []chatMessage) []chatMessage {
 	msgs := configSavedMessages(changed)
-	if cfg.ActiveModel != "" || project.ActiveModel != "" || len(cfg.configuredProviders()) == 0 {
+	if !configNeedsModelSelection(cfg, project) {
+		return msgs
+	}
+	apiKeyChanged := false
+	for label, direction := range changed {
+		if direction != "removed" && isAPIKeyConfigLabel(label) {
+			apiKeyChanged = true
+			break
+		}
+	}
+	if !apiKeyChanged {
 		return msgs
 	}
 	out := make([]chatMessage, 0, len(msgs)+1)
-	for _, msg := range msgs {
-		out = append(out, msg)
-		if label, ok := configLabelFromSavedMessage(msg.content); ok && isAPIKeyConfigLabel(label) {
-			out = append(out, configSelectModelHintMessage())
-		}
+	out = append(out, msgs...)
+	if !chatHasMissingModelMessage(existing) && !chatHasMissingModelMessage(out) {
+		out = append(out, configMissingModelChatMessage())
 	}
 	return out
 }

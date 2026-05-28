@@ -1025,6 +1025,34 @@ func TestProjectModelOpenRouterTrustsUncataloguedNativeModel(t *testing.T) {
 	}
 }
 
+func TestRefreshResolvedModelDisplayExplorationOnly(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+		},
+		projectConfig: ProjectConfig{ExplorationModel: "openrouter/owl-alpha"},
+		configReady:   true,
+		models: []ModelDef{{
+			Provider:    ProviderOpenRouter,
+			ID:          "openrouter/owl-alpha",
+			CanonicalID: "openrouter/owl-alpha",
+			Deployments: []ModelDeploymentDef{{DeploymentID: "openrouter", NativeModelID: "openrouter/owl-alpha"}},
+		}},
+		headless: true,
+		width:    80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	app.refreshResolvedModelDisplay()
+	rows := strings.Join(chatMessageContents(app.messages), "\n")
+	if !strings.Contains(rows, "Using exploration: openrouter/owl-alpha (project)") {
+		t.Fatalf("refresh should show exploration-only line:\n%s", rows)
+	}
+	if strings.Contains(rows, "Using active:") {
+		t.Fatalf("exploration-only display should not include active line:\n%s", rows)
+	}
+}
+
 func TestProjectModelDynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
@@ -1052,7 +1080,7 @@ func TestProjectModelDynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 
 	app.maybeShowInitialModels()
 	startup := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(startup, "Using active: openai/gpt-4.1-2025-04-14, exploration: vendor/fast-model") {
+	if !strings.Contains(startup, "Using active: openai/gpt-4.1-2025-04-14 (global), exploration: vendor/fast-model (project)") {
 		t.Fatalf("startup should trust configured OpenRouter exploration model:\n%s", startup)
 	}
 
@@ -1069,7 +1097,7 @@ func TestProjectModelDynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 	app.refreshResolvedModelDisplay()
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(rows, "Using active: openai/gpt-4.1-2025-04-14, exploration: vendor/fast-model") {
+	if !strings.Contains(rows, "Using active: openai/gpt-4.1-2025-04-14 (global), exploration: vendor/fast-model (project)") {
 		t.Fatalf("dynamic model refresh did not update exploration display:\n%s", rows)
 	}
 }

@@ -627,7 +627,7 @@ func TestLayoutInlineBlocks(t *testing.T) {
 func TestModelDisplayLineUsesInlineBlocks(t *testing.T) {
 	model := "openai/gpt-5.5-2026-04-23"
 	exploration := "anthropic/claude-haiku-4-5"
-	content, blocks := modelDisplayLine(modelDisplayLineOptions{modelID: model, explorationID: exploration})
+	content, blocks := modelDisplayLine(modelDisplayLineOptions{activeID: model, explorationID: exploration})
 	if content != "Using active: "+model+", exploration: "+exploration {
 		t.Fatalf("content = %q", content)
 	}
@@ -652,6 +652,33 @@ func TestModelDisplayLineUsesInlineBlocks(t *testing.T) {
 	}
 	if !strings.Contains(blocks[1].text, "\033[35;3m") {
 		t.Fatalf("exploration block = %q, want magenta", blocks[1].text)
+	}
+}
+
+func TestModelDisplayLineExplorationOnly(t *testing.T) {
+	exploration := "openrouter/owl-alpha"
+	content, blocks := modelDisplayLine(modelDisplayLineOptions{explorationID: exploration, explorationScope: "project"})
+	if content != "Using exploration: "+exploration+" (project)" {
+		t.Fatalf("content = %q", content)
+	}
+	if len(blocks) != 1 {
+		t.Fatalf("blocks = %d, want exploration only", len(blocks))
+	}
+	if !strings.Contains(blocks[0].text, "\033[35;3m") {
+		t.Fatalf("exploration block = %q, want magenta", blocks[0].text)
+	}
+}
+
+func TestModelDisplayLineShowsMixedScopes(t *testing.T) {
+	content, _ := modelDisplayLine(modelDisplayLineOptions{
+		activeID:         "openai/gpt-4.1",
+		explorationID:    "openrouter/owl-alpha",
+		activeScope:      "global",
+		explorationScope: "project",
+	})
+	want := "Using active: openai/gpt-4.1 (global), exploration: openrouter/owl-alpha (project)"
+	if content != want {
+		t.Fatalf("content = %q, want %q", content, want)
 	}
 }
 
@@ -716,7 +743,7 @@ func TestContainerRetryUpdatesSingleInlineMessage(t *testing.T) {
 func TestBuildBlockRowsRendersInlineMessageBlocks(t *testing.T) {
 	model := "openai/gpt-5.5-2026-04-23"
 	exploration := "anthropic/claude-haiku-4-5"
-	content, blocks := modelDisplayLine(modelDisplayLineOptions{modelID: model, explorationID: exploration})
+	content, blocks := modelDisplayLine(modelDisplayLineOptions{activeID: model, explorationID: exploration})
 	first := "Using active: " + model
 	second := ", exploration: " + exploration
 	app := &App{

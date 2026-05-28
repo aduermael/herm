@@ -49,6 +49,7 @@ type chatMessage struct {
 	content         string
 	inlineBlocks    []inlineBlock // optional atomic one-line UI blocks for terminal layout
 	modelDiagnostic bool          // true for active/exploration model fallback warnings
+	modelDisplay    bool          // true for the "Using active/exploration" status line
 	isError         bool          // for tool results
 	duration     time.Duration // tool execution duration
 	leadBlank    bool          // blank line before this message
@@ -560,7 +561,7 @@ func (a *App) handleEnter() {
 
 	if a.langdagClient == nil {
 		a.messages = append(a.messages, chatMessage{kind: msgUser, content: display, leadBlank: true})
-		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No API keys configured. Use /config to add a key first."})
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: configMissingAPIKeyMessage})
 		a.render()
 		return
 	}

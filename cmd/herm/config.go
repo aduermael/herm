@@ -718,18 +718,13 @@ func ollamaModelProvider(opts ollamaModelProviderOptions) string {
 }
 
 // resolveExplorationModel returns the model ID for sub-agents/exploration.
-// When unset, prefers a cheap/fast provider-specific default (e.g. haiku for
-// Anthropic) before falling back to resolveActiveModel.
+// When unset, follows resolveActiveModel (exploration is optional in config).
 func (c Config) resolveExplorationModel(models []ModelDef) string {
 	return c.resolveExplorationModelResult(models).ResolvedModelID
 }
 
 func (c Config) resolveExplorationModelResult(models []ModelDef) configuredModelResolution {
 	if c.ExplorationModel == "" {
-		available := c.availableModels(models)
-		if id := preferredDefault(preferredDefaultOptions{models: available, provider: c.defaultProviderForAvailableModels(available), defaults: defaultExplorationModels}); id != "" {
-			return configuredModelResolution{ResolvedModelID: id}
-		}
 		return configuredModelResolution{ResolvedModelID: c.resolveActiveModel(models)}
 	}
 	available := c.availableModels(models)

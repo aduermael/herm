@@ -190,8 +190,8 @@ func TestHermCatalogConfigRoutingHistoryAndSmartDefaultsIntegration(t *testing.T
 	if active := defaultCfg.resolveActiveModel(models); active != canonicalID {
 		t.Fatalf("smart active default = %q, want canonical catalog model", active)
 	}
-	if exploration := defaultCfg.resolveExplorationModel(models); exploration != explorationID {
-		t.Fatalf("smart exploration default = %q, want canonical exploration catalog model", exploration)
+	if exploration := defaultCfg.resolveExplorationModel(models); exploration != canonicalID {
+		t.Fatalf("unset exploration model should follow active resolution = %q, want %q", exploration, canonicalID)
 	}
 	defaultAvailable := defaultCfg.availableModels(models)
 	defaultModel := findModelByID(findModelByIDOptions{models: defaultAvailable, id: canonicalID})

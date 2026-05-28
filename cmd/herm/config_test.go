@@ -1183,14 +1183,14 @@ func TestResolveActiveModel_DefaultsToSonnet(t *testing.T) {
 	}
 }
 
-func TestResolveExplorationModel_DefaultsToHaiku(t *testing.T) {
+func TestResolveExplorationModel_DefaultsToActiveWhenUnset(t *testing.T) {
 	cfg := Config{
 		AnthropicAPIKey: "key",
 		// no ActiveModel, no ExplorationModel
 	}
 	got := cfg.resolveExplorationModel(defaultTestModels())
-	if got != "claude-haiku-4-5" {
-		t.Errorf("resolveExplorationModel = %q, want %q (should default to haiku, not active model)", got, "claude-haiku-4-5")
+	if got != "claude-sonnet-4-6" {
+		t.Errorf("resolveExplorationModel = %q, want %q (unset exploration uses active resolution)", got, "claude-sonnet-4-6")
 	}
 }
 
@@ -1231,8 +1231,8 @@ func TestResolveActiveModel_OpenAIDefaults(t *testing.T) {
 func TestResolveExplorationModel_OpenAIDefaults(t *testing.T) {
 	cfg := Config{OpenAIAPIKey: "key"}
 	got := cfg.resolveExplorationModel(defaultTestModels())
-	if got != "gpt-4.1-mini-2025-04-14" {
-		t.Errorf("resolveExplorationModel = %q, want %q", got, "gpt-4.1-mini-2025-04-14")
+	if got != "gpt-4.1-2025-04-14" {
+		t.Errorf("resolveExplorationModel = %q, want %q (unset exploration uses active resolution)", got, "gpt-4.1-2025-04-14")
 	}
 }
 
@@ -1700,9 +1700,19 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 	}
 }
 
+func assertMissingModelMessage(t *testing.T, msg chatMessage) {
+	t.Helper()
+	if msg.kind != msgError {
+		t.Fatalf("message kind = %v, want error", msg.kind)
+	}
+	if msg.content != configMissingModelMessage {
+		t.Fatalf("message content = %q, want %q", msg.content, configMissingModelMessage)
+	}
+}
+
 func TestConfigSavedMessagesHintAfterAPIKeyWhenNoActiveModel(t *testing.T) {
 	cfg := Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}}
-	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{})
+	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{}, nil)
 
 	if len(msgs) != 2 {
 		t.Fatalf("message count = %d, want 2", len(msgs))
@@ -1710,12 +1720,7 @@ func TestConfigSavedMessagesHintAfterAPIKeyWhenNoActiveModel(t *testing.T) {
 	if msgs[0].content != "OpenRouter API Key saved." {
 		t.Fatalf("first message = %q", msgs[0].content)
 	}
-	if msgs[1].content != "Select models using /model." {
-		t.Fatalf("hint message = %q", msgs[1].content)
-	}
-	if !strings.Contains(msgs[1].inlineBlocks[0].text, styleChatBlue) {
-		t.Fatalf("hint style = %q, want blue italic accent", msgs[1].inlineBlocks[0].text)
-	}
+	assertMissingModelMessage(t, msgs[1])
 }
 
 func TestConfigSavedMessagesNoHintWhenActiveModelSet(t *testing.T) {
@@ -1723,7 +1728,7 @@ func TestConfigSavedMessagesNoHintWhenActiveModelSet(t *testing.T) {
 		ActiveModel: "openrouter/test",
 		Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
 	}
-	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{})
+	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "saved"}, cfg, ProjectConfig{}, nil)
 	if len(msgs) != 1 {
 		t.Fatalf("message count = %d, want 1", len(msgs))
 	}
@@ -1733,8 +1738,179 @@ func TestConfigSavedMessagesNoHintWhenAPIKeyUpdated(t *testing.T) {
 	cfg := Config{
 		Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
 	}
-	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "updated"}, cfg, ProjectConfig{})
-	if len(msgs) != 1 {
-		t.Fatalf("message count = %d, want 1", len(msgs))
+	msgs := configSavedMessagesWithHints(map[string]string{"OpenRouter API Key": "updated"}, cfg, ProjectConfig{}, nil)
+	if len(msgs) != 2 {
+		t.Fatalf("message count = %d, want save notice + hint", len(msgs))
+	}
+	if msgs[0].content != "OpenRouter API Key updated." {
+		t.Fatalf("first message = %q", msgs[0].content)
+	}
+	if msgs[1].content != configMissingModelMessage {
+		t.Fatalf("hint message = %q", msgs[1].content)
+	}
+	assertMissingModelMessage(t, msgs[1])
+}
+
+func TestConfigNeedsModelSelection(t *testing.T) {
+	cfg := Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}}
+	if !configNeedsModelSelection(cfg, ProjectConfig{}) {
+		t.Fatal("want hint when provider configured without active model")
+	}
+	cfg.ActiveModel = "openrouter/test"
+	if configNeedsModelSelection(cfg, ProjectConfig{}) {
+		t.Fatal("do not want hint when active model is set (exploration optional)")
+	}
+	project := ProjectConfig{ActiveModel: "openrouter/test"}
+	cfg.ActiveModel = ""
+	if configNeedsModelSelection(cfg, project) {
+		t.Fatal("do not want hint when project active model is set")
+	}
+}
+
+func TestStartAgentRequiresExplicitActiveModel(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+		},
+		configReady: true,
+		models:      defaultTestModels(),
+		headless:    true,
+		width:       80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	app.startAgent("hello")
+	if app.agent != nil || app.agentRunning {
+		t.Fatal("agent should not start without explicit active model")
+	}
+	found := false
+	for _, msg := range app.messages {
+		if msg.content == configMissingModelMessage {
+			found = true
+			assertMissingModelMessage(t, msg)
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("messages = %v, want missing model error", chatMessageContents(app.messages))
+	}
+}
+
+func TestExplicitActiveModelConfigured(t *testing.T) {
+	global := Config{ActiveModel: "openrouter/test"}
+	if !explicitActiveModelConfigured(global, ProjectConfig{}) {
+		t.Fatal("global active model should count as explicit")
+	}
+	if explicitActiveModelConfigured(Config{}, ProjectConfig{ActiveModel: "openrouter/test"}) != true {
+		t.Fatal("project active model should count as explicit")
+	}
+	if explicitActiveModelConfigured(Config{Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk"}}}, ProjectConfig{}) {
+		t.Fatal("API key alone should not count as explicit active model")
+	}
+}
+
+func TestExplicitExplorationModelConfigured(t *testing.T) {
+	global := Config{ExplorationModel: "openrouter/explore"}
+	if !explicitExplorationModelConfigured(global, ProjectConfig{}) {
+		t.Fatal("global exploration model should count as explicit")
+	}
+	if explicitExplorationModelConfigured(Config{}, ProjectConfig{ExplorationModel: "openrouter/explore"}) != true {
+		t.Fatal("project exploration model should count as explicit")
+	}
+}
+
+func TestModelsReadyForAgent(t *testing.T) {
+	if !modelsReadyForAgent(Config{ActiveModel: "openrouter/test"}, ProjectConfig{}) {
+		t.Fatal("explicit active model should be ready")
+	}
+	if !modelsReadyForAgent(Config{}, ProjectConfig{ExplorationModel: "openrouter/explore"}) {
+		t.Fatal("explicit exploration model should be ready without active model")
+	}
+	if modelsReadyForAgent(Config{}, ProjectConfig{}) {
+		t.Fatal("no explicit model should not be ready")
+	}
+}
+
+func TestStartAgentAllowsExplicitExplorationModelOnly(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+		},
+		projectConfig: ProjectConfig{ExplorationModel: "openrouter/test"},
+		configReady:   true,
+		models:        []ModelDef{{ID: "openrouter/test", Provider: ProviderOpenRouter}},
+		langdagClient: newTestClient("ok"),
+		headless:      true,
+		width:         80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	app.startAgent("hello")
+	if app.agent == nil || !app.agentRunning {
+		t.Fatal("agent should start with explicit exploration model only")
+	}
+	if app.agent.model != "openrouter/test" {
+		t.Fatalf("agent model = %q, want configured exploration model", app.agent.model)
+	}
+}
+
+func TestDisplayConfiguredModelIDUsesConfiguredWhenFallback(t *testing.T) {
+	result := configuredModelResolution{
+		ConfiguredModelID: "openrouter/owl-alpha",
+		ResolvedModelID:   "openrouter/other",
+		Fallback:          true,
+	}
+	if got := displayConfiguredModelID(result, "openrouter/owl-alpha"); got != "openrouter/owl-alpha" {
+		t.Fatalf("displayConfiguredModelID = %q, want configured ID on fallback", got)
+	}
+}
+
+func TestShowResolvedModelDisplayUpdatesWhenExplorationAdded(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+			ActiveModel:  "openrouter/active",
+		},
+		configReady: true,
+		models:      []ModelDef{},
+		headless:    true,
+		width:       80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	app.showResolvedModelDisplay()
+	if len(app.messages) != 1 || !strings.Contains(app.messages[0].content, "Using active: openrouter/active") {
+		t.Fatalf("first display = %v", chatMessageContents(app.messages))
+	}
+
+	app.globalConfig.ExplorationModel = "openrouter/explore"
+	app.rebuildEffectiveConfig()
+	app.showResolvedModelDisplay()
+
+	if len(app.messages) != 1 {
+		t.Fatalf("message count = %d, want replaced single display line", len(app.messages))
+	}
+	want := "Using active: openrouter/active (global), exploration: openrouter/explore (global)"
+	if app.messages[0].content != want {
+		t.Fatalf("updated display = %q, want %q", app.messages[0].content, want)
+	}
+}
+
+func TestStartupDoesNotShowMissingModelMessage(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+		},
+		configReady: true,
+		models:      []ModelDef{{ID: "openrouter/test", Provider: ProviderOpenRouter}},
+		headless:    true,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+	app.maybeShowInitialModels()
+
+	for _, msg := range app.messages {
+		if msg.content == configMissingModelMessage {
+			t.Fatalf("startup should not show missing model message: %v", chatMessageContents(app.messages))
+		}
 	}
 }
