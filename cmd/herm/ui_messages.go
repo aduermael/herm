@@ -52,8 +52,13 @@ const (
 	configMissingModelMessage  = "No model configured. Use /model to select one first."
 )
 
-func configFieldNoticeContent(label, suffix string) string {
-	return label + suffix
+type configFieldNoticeContentOptions struct {
+	label  string
+	suffix string
+}
+
+func configFieldNoticeContent(opts configFieldNoticeContentOptions) string {
+	return opts.label + opts.suffix
 }
 
 func modelScopeSuffix(scope string) string {

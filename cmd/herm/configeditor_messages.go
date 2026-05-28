@@ -50,44 +50,44 @@ func configChangeNoticeFor(opts configChangeNoticeForOptions) configChangeNotice
 func activeModelConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
 	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatCyan}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatCyan}
 	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeCleared), style: styleChatRed}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeCleared}), style: styleChatRed}
 	default:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
 	}
 }
 
 func explorationModelConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
 	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatMagenta}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatMagenta}
 	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeCleared), style: styleChatRed}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeCleared}), style: styleChatRed}
 	default:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
 	}
 }
 
 func apiKeyConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
 	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatGreen}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatGreen}
 	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeRemoved), style: styleChatRed}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeRemoved}), style: styleChatRed}
 	default:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
 	}
 }
 
 func genericConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
 	switch opts.direction {
 	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeSaved), style: styleChatBlue}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatBlue}
 	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeRemoved), style: styleChatRed}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeRemoved}), style: styleChatRed}
 	default:
-		return configChangeNotice{content: configFieldNoticeContent(opts.label, uiConfigNoticeUpdated), style: styleChatYellow}
+		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
 	}
 }
 
