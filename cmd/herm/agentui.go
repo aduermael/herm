@@ -61,32 +61,95 @@ func formatToolDefinitions(opts formatToolDefinitionsOptions) string {
 	return b.String()
 }
 
-// showResolvedModelDisplay shows the current active and/or exploration model line in chat.
+// showResolvedModelDisplay updates the latest model status line (startup/catalog refresh).
 func (a *App) showResolvedModelDisplay() {
-	if a.models == nil {
+	a.refreshLatestModelDisplay()
+}
+
+// appendModelDisplayAfterConfigSave records a new model status line after save notices
+// without removing earlier Using lines from chat history.
+func (a *App) appendModelDisplayAfterConfigSave(insertAt int) {
+	msg, displayID, ok := a.buildModelDisplayMessage()
+	if !ok {
+		a.clearModelDisplayLine()
 		return
 	}
-	modelCfg := projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}
+	if msg.content == a.lastModelDisplayLine {
+		return
+	}
+	if insertAt < 0 || insertAt > len(a.messages) {
+		insertAt = len(a.messages)
+	}
+	a.messages = append(a.messages[:insertAt], append([]chatMessage{msg}, a.messages[insertAt:]...)...)
+	a.applyModelDisplaySideEffects(displayID, msg.content)
+}
+
+func (a *App) refreshLatestModelDisplay() {
+	msg, displayID, ok := a.buildModelDisplayMessage()
+	if !ok {
+		a.clearModelDisplayLine()
+		return
+	}
+	if msg.content == a.lastModelDisplayLine && a.hasModelDisplayMessage(msg.content) {
+		return
+	}
+	for i := len(a.messages) - 1; i >= 0; i-- {
+		if a.messages[i].modelDisplay {
+			a.messages[i] = msg
+			a.applyModelDisplaySideEffects(displayID, msg.content)
+			return
+		}
+	}
+	a.messages = append(a.messages, msg)
+	a.applyModelDisplaySideEffects(displayID, msg.content)
+}
+
+func (a *App) buildModelDisplayMessage() (chatMessage, string, bool) {
+	modelCfg := a.projectModelConfig()
 	hasActive := explicitActiveModelConfigured(modelCfg)
 	hasExploration := explicitExplorationModelConfigured(modelCfg)
 	if !hasActive && !hasExploration {
-		return
+		return chatMessage{}, "", false
 	}
 
 	var activeID, explorationID string
 	var activeScope, explorationScope string
 	if hasActive {
-		result := a.config.resolveActiveModelResult(a.models)
-		activeID = displayConfiguredModelID(displayConfiguredModelIDOptions{result: result, configured: a.config.ActiveModel})
+		activeID = explicitConfiguredActiveModelID(modelCfg)
 		activeScope = activeModelConfigScope(modelCfg)
+		if a.models != nil {
+			result := a.config.resolveActiveModelResult(a.models)
+			if id := displayConfiguredModelID(displayConfiguredModelIDOptions{
+				result:     result,
+				configured: explicitConfiguredActiveModelID(modelCfg),
+			}); id != "" {
+				activeID = id
+			}
+		}
 	}
 	if hasExploration {
-		result := a.config.resolveExplorationModelResult(a.models)
-		explorationID = displayConfiguredModelID(displayConfiguredModelIDOptions{result: result, configured: a.config.ExplorationModel})
+		explorationID = explicitConfiguredExplorationModelID(modelCfg)
+		explorationScope = explorationModelConfigScope(modelCfg)
+		if a.models != nil {
+			result := a.config.resolveExplorationModelResult(a.models)
+			if id := displayConfiguredModelID(displayConfiguredModelIDOptions{
+				result:     result,
+				configured: explicitConfiguredExplorationModelID(modelCfg),
+			}); id != "" {
+				explorationID = id
+			}
+		}
+	}
+	if activeID == "" && hasActive {
+		activeID = explicitConfiguredActiveModelID(modelCfg)
+		activeScope = activeModelConfigScope(modelCfg)
+	}
+	if explorationID == "" && hasExploration {
+		explorationID = explicitConfiguredExplorationModelID(modelCfg)
 		explorationScope = explorationModelConfigScope(modelCfg)
 	}
 	if activeID == "" && explorationID == "" {
-		return
+		return chatMessage{}, "", false
 	}
 
 	displayID := activeID
@@ -101,11 +164,14 @@ func (a *App) showResolvedModelDisplay() {
 		explorationScope: explorationScope,
 		offline:          offline,
 	})
-	if line == "" || line == a.lastModelDisplayLine {
-		return
+	if line == "" {
+		return chatMessage{}, "", false
 	}
-	a.removeModelDisplayMessages()
-	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: line, inlineBlocks: blocks, modelDisplay: true})
+	return chatMessage{kind: msgInfo, content: line, inlineBlocks: blocks, modelDisplay: true}, displayID, true
+}
+
+func (a *App) applyModelDisplaySideEffects(displayID, line string) {
+	offline := a.ollamaFetched && a.config.ollamaBaseURL() != "" && a.isOllamaOffline(displayID)
 	if offline {
 		a.showOllamaOfflineNotice()
 	} else {
@@ -113,6 +179,20 @@ func (a *App) showResolvedModelDisplay() {
 	}
 	a.lastModelID = displayID
 	a.lastModelDisplayLine = line
+}
+
+func (a *App) clearModelDisplayLine() {
+	a.lastModelDisplayLine = ""
+	a.lastModelID = ""
+}
+
+func (a *App) hasModelDisplayMessage(content string) bool {
+	for _, msg := range a.messages {
+		if msg.modelDisplay && (content == "" || msg.content == content) {
+			return true
+		}
+	}
+	return false
 }
 
 type displayConfiguredModelIDOptions struct {
@@ -131,16 +211,6 @@ func displayConfiguredModelID(opts displayConfiguredModelIDOptions) string {
 		return opts.result.ConfiguredModelID
 	}
 	return opts.configured
-}
-
-func (a *App) removeModelDisplayMessages() {
-	kept := a.messages[:0]
-	for _, msg := range a.messages {
-		if !msg.modelDisplay {
-			kept = append(kept, msg)
-		}
-	}
-	a.messages = kept
 }
 
 type modelDisplayLineOptions struct {
@@ -284,27 +354,31 @@ func versionDisplayMessage() chatMessage {
 }
 
 func (a *App) refreshResolvedModelDisplay() {
-	if !a.configReady || a.models == nil {
+	if !a.configReady {
 		return
 	}
-	a.normalizeProjectConfigWithCurrentModels()
-	a.showProjectModelDiagnostics()
+	if a.models != nil {
+		a.normalizeProjectConfigWithCurrentModels()
+		a.showProjectModelDiagnostics()
+	}
 	a.showResolvedModelDisplay()
 }
 
 func (a *App) resolveMainAgentModelResult() configuredModelResolution {
-	if explicitActiveModelConfigured(projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}) {
+	if explicitActiveModelConfigured(a.projectModelConfig()) {
 		return a.config.resolveActiveModelResult(a.models)
 	}
 	return a.config.resolveExplorationModelResult(a.models)
 }
 
+func (a *App) projectModelConfig() projectModelConfigOptions {
+	return projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}
+}
+
 func (a *App) startAgent(userMessage string) {
 	a.normalizeProjectConfigWithCurrentModels()
-	if !modelsReadyForAgent(projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}) {
-		if !chatHasMissingModelMessage(a.messages) {
-			a.messages = append(a.messages, configMissingModelChatMessage())
-		}
+	if !modelsReadyForAgent(a.projectModelConfig()) {
+		a.messages = appendMissingModelMessageIfNeeded(a.messages)
 		a.render()
 		return
 	}
@@ -485,7 +559,7 @@ func (a *App) startAgent(userMessage string) {
 		a.traceCollector.AddUserMessage(userMessage)
 	}
 
-	if !modelResult.Fallback && modelsReadyForAgent(projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}) {
+	if !modelResult.Fallback && modelsReadyForAgent(a.projectModelConfig()) {
 		a.showResolvedModelDisplay()
 	}
 

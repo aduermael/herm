@@ -567,6 +567,11 @@ func (a *App) handleEnter() {
 	}
 
 	a.messages = append(a.messages, chatMessage{kind: msgUser, content: display, leadBlank: true})
+	if !modelsReadyForAgent(a.projectModelConfig()) {
+		a.messages = appendMissingModelMessageIfNeeded(a.messages)
+		a.render()
+		return
+	}
 	if !a.containerReady {
 		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Container is still starting — the agent won't have bash or file tools until it's ready."})
 	}

@@ -35,59 +35,68 @@ type configChangeNoticeForOptions struct {
 }
 
 func configChangeNoticeFor(opts configChangeNoticeForOptions) configChangeNotice {
+	if isModelConfigLabel(opts.label) {
+		return modelConfigChangeNotice(opts)
+	}
+	profile := configNoticeProfileFor(opts.label)
+	switch opts.direction {
+	case uiConfigChangeSaved:
+		return configChangeNotice{
+			content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}),
+			style:   profile.accentStyle,
+		}
+	case uiConfigChangeRemoved:
+		return configChangeNotice{
+			content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: profile.removedSuffix}),
+			style:   styleChatRed,
+		}
+	default:
+		return configChangeNotice{
+			content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}),
+			style:   styleChatDimYellow,
+		}
+	}
+}
+
+func isModelConfigLabel(label string) bool {
+	return isActiveModelConfigLabel(label) || isExplorationModelConfigLabel(label)
+}
+
+func modelConfigChangeNotice(opts configChangeNoticeForOptions) configChangeNotice {
+	switch opts.direction {
+	case uiConfigChangeSaved:
+		return configChangeNotice{
+			content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}),
+			style:   styleChatDimGreen,
+		}
+	case uiConfigChangeRemoved:
+		return configChangeNotice{
+			content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUnset}),
+			style:   styleChatDimRed,
+		}
+	default:
+		return configChangeNotice{
+			content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}),
+			style:   styleChatDimYellow,
+		}
+	}
+}
+
+type configNoticeProfile struct {
+	accentStyle   string
+	removedSuffix string
+}
+
+func configNoticeProfileFor(label string) configNoticeProfile {
 	switch {
-	case isActiveModelConfigLabel(opts.label):
-		return activeModelConfigNotice(opts)
-	case isExplorationModelConfigLabel(opts.label):
-		return explorationModelConfigNotice(opts)
-	case isAPIKeyConfigLabel(opts.label):
-		return apiKeyConfigNotice(opts)
+	case isActiveModelConfigLabel(label):
+		return configNoticeProfile{accentStyle: styleChatCyan, removedSuffix: uiConfigNoticeUnset}
+	case isExplorationModelConfigLabel(label):
+		return configNoticeProfile{accentStyle: styleChatMagenta, removedSuffix: uiConfigNoticeUnset}
+	case isAPIKeyConfigLabel(label):
+		return configNoticeProfile{accentStyle: styleChatGreen, removedSuffix: uiConfigNoticeRemoved}
 	default:
-		return genericConfigNotice(opts)
-	}
-}
-
-func activeModelConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
-	switch opts.direction {
-	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatCyan}
-	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeCleared}), style: styleChatRed}
-	default:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
-	}
-}
-
-func explorationModelConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
-	switch opts.direction {
-	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatMagenta}
-	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeCleared}), style: styleChatRed}
-	default:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
-	}
-}
-
-func apiKeyConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
-	switch opts.direction {
-	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatGreen}
-	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeRemoved}), style: styleChatRed}
-	default:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
-	}
-}
-
-func genericConfigNotice(opts configChangeNoticeForOptions) configChangeNotice {
-	switch opts.direction {
-	case uiConfigChangeSaved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeSaved}), style: styleChatBlue}
-	case uiConfigChangeRemoved:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeRemoved}), style: styleChatRed}
-	default:
-		return configChangeNotice{content: configFieldNoticeContent(configFieldNoticeContentOptions{label: opts.label, suffix: uiConfigNoticeUpdated}), style: styleChatYellow}
+		return configNoticeProfile{accentStyle: styleChatBlue, removedSuffix: uiConfigNoticeRemoved}
 	}
 }
 
@@ -118,6 +127,13 @@ func configMissingModelChatMessage() chatMessage {
 	return chatMessage{kind: msgError, content: configMissingModelMessage}
 }
 
+func appendMissingModelMessageIfNeeded(messages []chatMessage) []chatMessage {
+	if chatHasMissingModelMessage(messages) {
+		return messages
+	}
+	return append(messages, configMissingModelChatMessage())
+}
+
 type projectModelConfigOptions struct {
 	global  Config
 	project ProjectConfig
@@ -129,6 +145,20 @@ func explicitActiveModelConfigured(opts projectModelConfigOptions) bool {
 
 func explicitExplorationModelConfigured(opts projectModelConfigOptions) bool {
 	return opts.global.ExplorationModel != "" || opts.project.ExplorationModel != ""
+}
+
+func explicitConfiguredActiveModelID(opts projectModelConfigOptions) string {
+	if opts.project.ActiveModel != "" {
+		return opts.project.ActiveModel
+	}
+	return opts.global.ActiveModel
+}
+
+func explicitConfiguredExplorationModelID(opts projectModelConfigOptions) string {
+	if opts.project.ExplorationModel != "" {
+		return opts.project.ExplorationModel
+	}
+	return opts.global.ExplorationModel
 }
 
 func activeModelConfigScope(opts projectModelConfigOptions) string {

@@ -27,7 +27,7 @@ const (
 const (
 	uiConfigNoticeSaved   = " saved."
 	uiConfigNoticeUpdated = " updated."
-	uiConfigNoticeCleared = " cleared."
+	uiConfigNoticeUnset   = " unset."
 	uiConfigNoticeRemoved = " removed."
 	uiConfigEmptySave     = "Config saved."
 )
@@ -87,5 +87,19 @@ func isExplorationModelConfigLabel(label string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func configChangeLabelForField(f cfgField, projectTab bool) string {
+	if !projectTab {
+		return f.label
+	}
+	switch f.label {
+	case uiConfigLabelActiveModel:
+		return uiConfigLabelProjectActiveModel
+	case uiConfigLabelExplorationModel:
+		return uiConfigLabelProjectExplorationModel
+	default:
+		return f.label
 	}
 }

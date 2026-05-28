@@ -1591,13 +1591,13 @@ func TestConfigSavedMessagesUseDistinctModelAndAPIKeyNotices(t *testing.T) {
 	apiStyle := msgs[0].inlineBlocks[0].text
 
 	if activeStyle == exploreStyle || activeStyle == apiStyle || exploreStyle == apiStyle {
-		t.Fatalf("notices should use distinct styles:\nactive=%q\nexplore=%q\napi=%q", activeStyle, exploreStyle, apiStyle)
+		t.Fatalf("notices should use distinct colors:\nactive=%q\nexplore=%q\napi=%q", activeStyle, exploreStyle, apiStyle)
 	}
-	if !strings.Contains(activeStyle, styleChatYellow) {
-		t.Fatalf("active model updated style = %q, want yellow italic accent", activeStyle)
+	if !strings.Contains(activeStyle, styleChatDimYellow) {
+		t.Fatalf("active model updated style = %q, want dim yellow on full notice", activeStyle)
 	}
-	if !strings.Contains(exploreStyle, styleChatMagenta) {
-		t.Fatalf("exploration model style = %q, want magenta italic accent", exploreStyle)
+	if !strings.Contains(exploreStyle, styleChatDimGreen) {
+		t.Fatalf("exploration model saved style = %q, want dim green on full notice", exploreStyle)
 	}
 	if !strings.Contains(apiStyle, styleChatGreen) {
 		t.Fatalf("api key style = %q, want green italic accent", apiStyle)
@@ -1655,8 +1655,8 @@ func TestConfigSavedMessagesGenericSettingsUseRedForRemoved(t *testing.T) {
 	if msgs[1].content != "Thinking removed." {
 		t.Fatalf("removed message = %q", msgs[1].content)
 	}
-	if !strings.Contains(msgs[0].inlineBlocks[0].text, styleChatYellow) {
-		t.Fatalf("updated style = %q, want yellow italic accent", msgs[0].inlineBlocks[0].text)
+	if !strings.Contains(msgs[0].inlineBlocks[0].text, styleChatDimYellow) {
+		t.Fatalf("updated style = %q, want dim yellow italic accent", msgs[0].inlineBlocks[0].text)
 	}
 	if !strings.Contains(msgs[1].inlineBlocks[0].text, styleChatRed) {
 		t.Fatalf("removed style = %q, want red italic accent", msgs[1].inlineBlocks[0].text)
@@ -1669,14 +1669,14 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 		direction string
 		wantStyle string
 	}{
-		{"Active Model", "saved", styleChatCyan},
-		{"Active Model", "updated", styleChatYellow},
-		{"Exploration Model", "saved", styleChatMagenta},
-		{"Exploration Model", "updated", styleChatYellow},
+		{"Active Model", "saved", styleChatDimGreen},
+		{"Active Model", "updated", styleChatDimYellow},
+		{"Exploration Model", "saved", styleChatDimGreen},
+		{"Exploration Model", "updated", styleChatDimYellow},
 		{"OpenRouter API Key", "saved", styleChatGreen},
-		{"OpenRouter API Key", "updated", styleChatYellow},
+		{"OpenRouter API Key", "updated", styleChatDimYellow},
 		{"Personality", "saved", styleChatBlue},
-		{"Personality", "updated", styleChatYellow},
+		{"Personality", "updated", styleChatDimYellow},
 	}
 	for _, tc := range cases {
 		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: tc.label, direction: tc.direction})
@@ -1684,10 +1684,29 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 			t.Errorf("%s %s style = %q, want %q", tc.label, tc.direction, notice.style, tc.wantStyle)
 		}
 	}
-	for _, label := range []string{"Active Model", "Exploration Model", "OpenRouter API Key", "Personality"} {
+	for _, label := range []string{"Active Model", "Exploration Model"} {
+		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: label, direction: "removed"})
+		if notice.style != styleChatDimRed {
+			t.Errorf("%s unset style = %q, want dim red on full notice", label, notice.style)
+		}
+	}
+	for _, label := range []string{"OpenRouter API Key", "Personality"} {
 		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: label, direction: "removed"})
 		if notice.style != styleChatRed {
 			t.Errorf("%s removed style = %q, want red italic accent", label, notice.style)
+		}
+	}
+	for _, tc := range []struct {
+		label   string
+		content string
+	}{
+		{"Active Model", "Active Model unset."},
+		{"Exploration Model", "Exploration Model unset."},
+		{"Project Exploration Model", "Project Exploration Model unset."},
+	} {
+		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: tc.label, direction: uiConfigChangeRemoved})
+		if notice.content != tc.content {
+			t.Errorf("%s removed content = %q, want %q", tc.label, notice.content, tc.content)
 		}
 	}
 
@@ -1808,6 +1827,44 @@ func TestStartAgentRequiresExplicitActiveModel(t *testing.T) {
 	}
 }
 
+func TestHandleEnterShowsMissingModelMessage(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+		},
+		langdagClient: newTestClient("ok"),
+		configReady:   true,
+		models:        defaultTestModels(),
+		headless:      true,
+		width:         80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+	app.setInputValue("hello")
+
+	app.handleEnter()
+
+	if app.agent != nil || app.agentRunning {
+		t.Fatal("agent should not start without explicit model")
+	}
+	foundUser := false
+	foundError := false
+	for _, msg := range app.messages {
+		if msg.kind == msgUser && msg.content == "hello" {
+			foundUser = true
+		}
+		if msg.content == configMissingModelMessage {
+			foundError = true
+			assertMissingModelMessage(t, msg)
+		}
+	}
+	if !foundUser {
+		t.Fatalf("messages = %v, want user message in chat", chatMessageContents(app.messages))
+	}
+	if !foundError {
+		t.Fatalf("messages = %v, want missing model error in chat", chatMessageContents(app.messages))
+	}
+}
+
 func TestExplicitActiveModelConfigured(t *testing.T) {
 	global := Config{ActiveModel: "openrouter/test"}
 	if !explicitActiveModelConfigured(projectModelConfigOptions{global: global, project: ProjectConfig{}}) {
@@ -1874,6 +1931,171 @@ func TestDisplayConfiguredModelIDUsesConfiguredWhenFallback(t *testing.T) {
 	}
 	if got := displayConfiguredModelID(displayConfiguredModelIDOptions{result: result, configured: "openrouter/owl-alpha"}); got != "openrouter/owl-alpha" {
 		t.Fatalf("displayConfiguredModelID = %q, want configured ID on fallback", got)
+	}
+}
+
+func TestConfigChangeLabelForProjectTabUsesProjectLabels(t *testing.T) {
+	fields := (&App{}).projectTabFields()
+	if len(fields) < 2 {
+		t.Fatal("expected project tab model fields")
+	}
+	if got := configChangeLabelForField(fields[0], true); got != uiConfigLabelProjectActiveModel {
+		t.Fatalf("active model label = %q, want %q", got, uiConfigLabelProjectActiveModel)
+	}
+	if got := configChangeLabelForField(fields[1], true); got != uiConfigLabelProjectExplorationModel {
+		t.Fatalf("exploration model label = %q, want %q", got, uiConfigLabelProjectExplorationModel)
+	}
+	if got := configChangeLabelForField(fields[0], false); got != uiConfigLabelActiveModel {
+		t.Fatalf("global tab should keep field label = %q", got)
+	}
+}
+
+func TestShowResolvedModelDisplayShowsConfiguredIDBeforeCatalogLoads(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+		},
+		projectConfig: ProjectConfig{ActiveModel: "poolside/laguna-xs.2:free"},
+		configReady:   true,
+		headless:      true,
+		width:         80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	app.showResolvedModelDisplay()
+	if len(app.messages) != 1 {
+		t.Fatalf("message count = %d, want model display before catalog loads", len(app.messages))
+	}
+	want := "Using active: poolside/laguna-xs.2:free (project)"
+	if app.messages[0].content != want {
+		t.Fatalf("display = %q, want %q", app.messages[0].content, want)
+	}
+}
+
+func TestShowResolvedModelDisplayClearsWhenNoExplicitModel(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+		},
+		projectConfig: ProjectConfig{ActiveModel: "openrouter/active"},
+		configReady:   true,
+		models:        []ModelDef{{ID: "openrouter/active", Provider: ProviderOpenRouter}},
+		headless:      true,
+		width:         80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+	app.showResolvedModelDisplay()
+	if len(app.messages) != 1 || !strings.Contains(app.messages[0].content, "Using active:") {
+		t.Fatalf("initial display = %v", chatMessageContents(app.messages))
+	}
+
+	app.projectConfig.ActiveModel = ""
+	app.rebuildEffectiveConfig()
+	app.showResolvedModelDisplay()
+
+	found := false
+	for _, msg := range app.messages {
+		if msg.modelDisplay {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("model display should remain in chat history after unset, got %v", chatMessageContents(app.messages))
+	}
+	if app.lastModelDisplayLine != "" {
+		t.Fatalf("lastModelDisplayLine = %q, want empty live tracking after unset", app.lastModelDisplayLine)
+	}
+}
+
+func TestExitConfigModeModelDisplayPreservesHistoryOnUpdate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repoRoot := t.TempDir()
+	app := &App{
+		repoRoot:    repoRoot,
+		configReady: true,
+		resultCh:    make(chan any, 8),
+		headless:    true,
+		width:       80,
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+		},
+		cfgDraft: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+		},
+		models: []ModelDef{},
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	saveModel := func(direction string, modelID string) {
+		t.Helper()
+		app.cfgActive = true
+		if modelID == "" {
+			app.cfgProjectDraft = ProjectConfig{}
+		} else {
+			app.cfgProjectDraft = ProjectConfig{ActiveModel: modelID}
+		}
+		app.cfgChangedLabels = map[string]string{uiConfigLabelProjectActiveModel: direction}
+		app.exitConfigMode(true)
+	}
+
+	saveModel(uiConfigChangeSaved, "poolside/laguna-xs.2:free")
+	afterSave := chatMessageContents(app.messages)
+	if len(afterSave) != 2 || afterSave[0] != "Project Active Model saved." ||
+		afterSave[1] != "Using active: poolside/laguna-xs.2:free (project)" {
+		t.Fatalf("after save:\n%s", strings.Join(afterSave, "\n"))
+	}
+
+	saveModel(uiConfigChangeUpdated, "openrouter/bodybuilder")
+	afterUpdate := chatMessageContents(app.messages)
+	want := []string{
+		"Project Active Model saved.",
+		"Using active: poolside/laguna-xs.2:free (project)",
+		"Project Active Model updated.",
+		"Using active: openrouter/bodybuilder (project)",
+	}
+	if len(afterUpdate) != len(want) {
+		t.Fatalf("after update:\n%s", strings.Join(afterUpdate, "\n"))
+	}
+	for i, content := range want {
+		if afterUpdate[i] != content {
+			t.Fatalf("after update[%d] = %q, want %q\nfull:\n%s", i, afterUpdate[i], content, strings.Join(afterUpdate, "\n"))
+		}
+	}
+}
+
+func TestShowResolvedModelDisplayUpdatesProjectActiveModel(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+		},
+		projectConfig: ProjectConfig{ActiveModel: "openrouter/pareto-code"},
+		configReady:   true,
+		models:        []ModelDef{},
+		headless:      true,
+		width:         80,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	app.showResolvedModelDisplay()
+	wantFirst := "Using active: openrouter/pareto-code (project)"
+	if len(app.messages) != 1 || app.messages[0].content != wantFirst {
+		t.Fatalf("first display = %v", chatMessageContents(app.messages))
+	}
+
+	app.projectConfig.ActiveModel = "openrouter/other-model"
+	app.rebuildEffectiveConfig()
+	app.refreshResolvedModelDisplay()
+
+	if len(app.messages) != 1 {
+		t.Fatalf("message count = %d, want single model display line", len(app.messages))
+	}
+	wantSecond := "Using active: openrouter/other-model (project)"
+	if app.messages[0].content != wantSecond {
+		t.Fatalf("updated display = %q, want %q", app.messages[0].content, wantSecond)
+	}
+	if !app.messages[0].modelDisplay {
+		t.Fatal("expected model display message after update")
 	}
 }
 

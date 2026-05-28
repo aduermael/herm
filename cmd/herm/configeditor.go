@@ -179,33 +179,42 @@ func (a *App) exitConfigMode(save bool) {
 				a.messages = append(a.messages, msg)
 			}
 		}
-		// Refresh models including Ollama and OpenRouter if configured
-		if a.config.ollamaBaseURL() != "" {
-			go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.ollamaBaseURL()) }()
+		// Refresh models including Ollama, OpenRouter, and Apple if configured.
+		if !a.headless {
+			if a.config.ollamaBaseURL() != "" {
+				go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.ollamaBaseURL()) }()
+			}
+			if a.config.openRouterAPIKey() != "" {
+				a.openRouterFetched = false // allow re-fetch with new key
+				go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.openRouterAPIKey()) }()
+			}
+			a.appleFetched = false
+			go func() { a.resultCh <- fetchAppleModelsCmd(a.config.appleFMBaseURL()) }()
 		}
-		if a.config.openRouterAPIKey() != "" {
-			a.openRouterFetched = false // allow re-fetch with new key
-			go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.openRouterAPIKey()) }()
-		}
-		a.appleFetched = false
-		go func() { a.resultCh <- fetchAppleModelsCmd(a.config.appleFMBaseURL()) }()
-		// Show updated model resolution and project diagnostics.
+		// Append model status after save notices; preserve earlier Using lines in chat.
+		noticeEnd := len(a.messages)
 		if a.models != nil {
-			a.refreshResolvedModelDisplay()
+			a.normalizeProjectConfigWithCurrentModels()
 		}
-		// Reinitialize langdag client with updated config
-		cfg := a.config
-		models := a.models
-		catalog := a.modelCatalog
-		provider := cfg.defaultLangdagProviderForModels(models)
-		go func() {
-			client, err := newLangdagClientForModelsWithCatalog(newLangdagClientForModelsWithCatalogOptions{
-				cfg:     cfg,
-				models:  models,
-				catalog: catalog,
-			})
-			a.resultCh <- langdagReadyMsg{client: client, provider: provider, runtimeApple: hasRuntimeAppleModels(models), err: err}
-		}()
+		a.appendModelDisplayAfterConfigSave(noticeEnd)
+		if a.models != nil {
+			a.showProjectModelDiagnostics()
+		}
+		// Reinitialize langdag client with updated config.
+		if !a.headless {
+			cfg := a.config
+			models := a.models
+			catalog := a.modelCatalog
+			provider := cfg.defaultLangdagProviderForModels(models)
+			go func() {
+				client, err := newLangdagClientForModelsWithCatalog(newLangdagClientForModelsWithCatalogOptions{
+					cfg:     cfg,
+					models:  models,
+					catalog: catalog,
+				})
+				a.resultCh <- langdagReadyMsg{client: client, provider: provider, runtimeApple: hasRuntimeAppleModels(models), err: err}
+			}()
+		}
 	}
 	a.cfgActive = false
 	a.cfgEditing = false
@@ -818,7 +827,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			} else if f.toggle != nil {
 				oldVal := f.get(a.cfgDraft)
 				f.toggle(&a.cfgDraft)
-				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: f.label, oldVal: oldVal, newVal: f.get(a.cfgDraft)})
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(f, a.cfgTab == cfgTabProject && a.projectConfigRoot() != ""), oldVal: oldVal, newVal: f.get(a.cfgDraft)})
 			} else if f.get != nil && f.set != nil {
 				a.cfgEditing = true
 				val := f.get(a.cfgDraft)
@@ -836,7 +845,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 				if f.set != nil && f.get != nil && f.get(a.cfgDraft) != "" {
 					oldVal := f.get(a.cfgDraft)
 					f.set(&a.cfgDraft, "")
-					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: f.label, oldVal: oldVal, newVal: ""})
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(f, true), oldVal: oldVal, newVal: ""})
 					a.renderInput()
 				}
 			}
@@ -894,7 +903,7 @@ func (a *App) handleConfigEditByte(opts handleConfigEditByteOptions) {
 			oldVal := f.get(a.cfgDraft)
 			newVal := string(a.cfgEditBuf)
 			f.set(&a.cfgDraft, newVal)
-			recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: f.label, oldVal: oldVal, newVal: newVal})
+			recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: configChangeLabelForField(f, a.cfgTab == cfgTabProject && a.projectConfigRoot() != ""), oldVal: oldVal, newVal: newVal})
 		}
 		a.cfgEditing = false
 		a.cfgEditBuf = nil
