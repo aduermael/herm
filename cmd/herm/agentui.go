@@ -66,7 +66,10 @@ func (a *App) showModelChange(modelID string) {
 	if modelID == "" {
 		return
 	}
-	explorationID := a.config.resolveExplorationModel(a.models)
+	var explorationID string
+	if a.config.ExplorationModel != "" || a.projectConfig.ExplorationModel != "" {
+		explorationID = a.config.resolveExplorationModel(a.models)
+	}
 	offline := a.ollamaFetched && a.config.ollamaBaseURL() != "" && a.isOllamaOffline(modelID)
 	line, blocks := modelDisplayLine(modelDisplayLineOptions{modelID: modelID, explorationID: explorationID, offline: offline})
 	if line == a.lastModelDisplayLine {
@@ -90,16 +93,16 @@ type modelDisplayLineOptions struct {
 
 func modelDisplayLine(opts modelDisplayLineOptions) (string, []inlineBlock) {
 	modelID, explorationID, offline := opts.modelID, opts.explorationID, opts.offline
-	content := "Using " + modelID
-	activeText := "\033[34;3mUsing " + modelID
+	content := "Using active: " + modelID
+	activeText := styleChatCyan + "Using active: " + modelID
 	if offline {
 		content += " (offline)"
 		activeText += " \033[33m(offline)"
 	}
 	blocks := []inlineBlock{newInlineBlock(activeText)}
 	if explorationID != "" && explorationID != modelID {
-		content += " exploration: " + explorationID
-		blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "exploration: " + explorationID}))
+		content += ", exploration: " + explorationID
+		blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: styleChatMagenta, text: ", exploration: " + explorationID}))
 	}
 	return content, blocks
 }
@@ -130,19 +133,30 @@ func (a *App) normalizeProjectConfigWithCurrentModels() {
 	a.rebuildEffectiveConfig()
 }
 
+func (a *App) removeModelDiagnosticMessages() {
+	kept := a.messages[:0]
+	for _, msg := range a.messages {
+		if !msg.modelDiagnostic {
+			kept = append(kept, msg)
+		}
+	}
+	a.messages = kept
+}
+
 func (a *App) showProjectModelDiagnostics() {
 	diagnostics := a.projectModelDiagnostics()
 	signature := strings.Join(diagnostics, "\n")
-	if signature == "" {
-		a.lastModelDiagnostics = ""
-		return
-	}
 	if signature == a.lastModelDiagnostics {
 		return
 	}
+	a.removeModelDiagnosticMessages()
 	a.lastModelDiagnostics = signature
 	for _, diagnostic := range diagnostics {
-		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "\033[33m⚠\033[34;3m " + diagnostic})
+		a.messages = append(a.messages, chatMessage{
+			kind:            msgInfo,
+			content:         "\033[33m⚠\033[34;3m " + diagnostic,
+			modelDiagnostic: true,
+		})
 	}
 }
 
@@ -150,17 +164,17 @@ func (a *App) projectModelDiagnostics() []string {
 	if !a.configReady || a.models == nil {
 		return nil
 	}
-	if len(a.config.configuredDeploymentIDs()) == 0 && a.projectConfig.ActiveModel == "" && a.projectConfig.ExplorationModel == "" {
+	if len(a.config.configuredDeploymentIDs()) == 0 && a.config.ActiveModel == "" && a.config.ExplorationModel == "" {
 		return nil
 	}
 	var diagnostics []string
-	if a.projectConfig.ActiveModel != "" {
+	if a.config.ActiveModel != "" {
 		result := a.config.resolveActiveModelResult(a.models)
 		if result.Fallback && result.Diagnostic != "" {
 			diagnostics = append(diagnostics, result.Diagnostic)
 		}
 	}
-	if a.projectConfig.ExplorationModel != "" {
+	if a.config.ExplorationModel != "" {
 		result := a.config.resolveExplorationModelResult(a.models)
 		if result.Fallback && result.Diagnostic != "" {
 			diagnostics = append(diagnostics, result.Diagnostic)
@@ -180,7 +194,10 @@ func (a *App) maybeShowInitialModels() {
 	a.messages = append(a.messages, versionDisplayMessage())
 	a.showProjectModelDiagnostics()
 	if a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "" {
-		a.showModelChange(a.config.resolveActiveModel(a.models))
+		result := a.config.resolveActiveModelResult(a.models)
+		if !result.Fallback {
+			a.showModelChange(result.ResolvedModelID)
+		}
 	}
 }
 
@@ -190,8 +207,8 @@ func versionDisplayMessage() chatMessage {
 		kind:    msgInfo,
 		content: content,
 		inlineBlocks: []inlineBlock{
-			styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "v" + Version}),
-			styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "(container: " + hermImageTag + ")"}),
+			styledInlineBlock(styledInlineBlockOptions{style: styleChatBlue, text: "v" + Version}),
+			styledInlineBlock(styledInlineBlockOptions{style: styleChatBlue, text: "(container: " + hermImageTag + ")"}),
 		},
 	}
 }
@@ -203,7 +220,10 @@ func (a *App) refreshResolvedModelDisplay() {
 	a.normalizeProjectConfigWithCurrentModels()
 	a.showProjectModelDiagnostics()
 	if a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "" {
-		a.showModelChange(a.config.resolveActiveModel(a.models))
+		result := a.config.resolveActiveModelResult(a.models)
+		if !result.Fallback {
+			a.showModelChange(result.ResolvedModelID)
+		}
 	}
 }
 
@@ -272,7 +292,8 @@ func (a *App) startAgent(userMessage string) {
 		tools = append(tools, NewGitTool(NewGitToolOptions{WorkDir: a.worktreePath, CoAuthor: a.config.effectiveGitCoAuthor()}))
 	}
 
-	modelID := a.config.resolveActiveModel(a.models)
+	modelResult := a.config.resolveActiveModelResult(a.models)
+	modelID := modelResult.ResolvedModelID
 	if modelID == "" {
 		a.messages = append(a.messages, chatMessage{kind: msgError, content: "model not found, `/model` to pick a valid one"})
 		a.render()
@@ -385,7 +406,9 @@ func (a *App) startAgent(userMessage string) {
 		a.traceCollector.AddUserMessage(userMessage)
 	}
 
-	a.showModelChange(modelID)
+	if !modelResult.Fallback && (a.config.ActiveModel != "" || a.projectConfig.ActiveModel != "") {
+		a.showModelChange(modelID)
+	}
 
 	ctxWindow := 0
 	if m := findModelByID(findModelByIDOptions{models: a.models, id: modelID}); m != nil {

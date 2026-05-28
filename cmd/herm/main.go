@@ -45,10 +45,11 @@ const (
 )
 
 type chatMessage struct {
-	kind         chatMsgKind
-	content      string
-	inlineBlocks []inlineBlock // optional atomic one-line UI blocks for terminal layout
-	isError      bool          // for tool results
+	kind            chatMsgKind
+	content         string
+	inlineBlocks    []inlineBlock // optional atomic one-line UI blocks for terminal layout
+	modelDiagnostic bool          // true for active/exploration model fallback warnings
+	isError         bool          // for tool results
 	duration     time.Duration // tool execution duration
 	leadBlank    bool          // blank line before this message
 	toolName     string        // original tool name (for tool call grouping/output rules)
@@ -206,7 +207,7 @@ type App struct {
 	cfgEditing       bool
 	cfgEditBuf       []rune
 	cfgEditCursor    int
-	cfgChangedLabels map[string]string // tracks field labels and their change direction ("saved", "removed", "changed")
+	cfgChangedLabels map[string]string // tracks field labels and their change direction ("saved", "removed", "updated")
 	cfgDraft         Config
 	cfgProjectDraft  ProjectConfig
 	configJSONEditor func(string) error // injectable for tests; nil uses $VISUAL/$EDITOR

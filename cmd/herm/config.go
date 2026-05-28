@@ -794,8 +794,8 @@ func (c Config) lookupConfiguredModelID(opts lookupConfiguredModelIDOptions) con
 		return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelAmbiguous}
 	}
 
-	if c.trustOfflineOllamaModel(trustOfflineOllamaModelOptions{modelID: modelID, models: models}) {
-		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: ollamaCanonicalModelID(modelID), Status: configuredModelUsable}
+	if resolved, ok := c.trustUncataloguedNativeModel(trustUncataloguedNativeModelOptions{modelID: modelID, models: models}); ok {
+		return configuredModelResolution{ConfiguredModelID: modelID, ResolvedModelID: resolved, Status: configuredModelUsable}
 	}
 	return configuredModelResolution{ConfiguredModelID: modelID, Status: configuredModelUnknown}
 }
@@ -872,9 +872,31 @@ func configuredModelDiagnostic(opts configuredModelDiagnosticOptions) string {
 		reason = "unknown"
 	}
 	if fallback == "" {
-		return fmt.Sprintf("project %s %q is %s; no fallback model is available", field, configured, reason)
+		return fmt.Sprintf("%s %q is %s; no fallback model is available", field, configured, reason)
 	}
-	return fmt.Sprintf("project %s %q is %s; using fallback model %q", field, configured, reason, fallback)
+	return fmt.Sprintf("%s %q is %s; using fallback model %q", field, configured, reason, fallback)
+}
+
+// trustUncataloguedNativeModelOptions is the parameter bundle for trustUncataloguedNativeModel.
+type trustUncataloguedNativeModelOptions struct {
+	modelID string
+	models  []ModelDef
+}
+
+// trustUncataloguedNativeModel returns a resolved model ID when a configured deployment
+// can route native model IDs that are not yet present in the embedded catalog.
+func (c Config) trustUncataloguedNativeModel(opts trustUncataloguedNativeModelOptions) (string, bool) {
+	modelID, models := opts.modelID, opts.models
+	if modelID == "" {
+		return "", false
+	}
+	if c.trustOfflineOllamaModel(trustOfflineOllamaModelOptions{modelID: modelID, models: models}) {
+		return ollamaCanonicalModelID(modelID), true
+	}
+	if c.configuredDeploymentIDs()["openrouter"] {
+		return modelID, true
+	}
+	return "", false
 }
 
 type trustOfflineOllamaModelOptions struct {

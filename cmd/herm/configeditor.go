@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -170,8 +171,9 @@ func (a *App) exitConfigMode(save bool) {
 			}
 		}
 		if !saveErr {
-			msg, kind := configSavedMessage(a.cfgChangedLabels)
-			a.messages = append(a.messages, chatMessage{kind: kind, content: msg})
+			for _, msg := range configSavedMessages(a.cfgChangedLabels) {
+				a.messages = append(a.messages, msg)
+			}
 		}
 		// Refresh models including Ollama and OpenRouter if configured
 		if a.config.ollamaBaseURL() != "" {
@@ -216,41 +218,122 @@ func recordConfigChange(changed map[string]string, label, oldVal, newVal string)
 	} else if newVal == "" {
 		changed[label] = "removed"
 	} else {
-		changed[label] = "changed"
+		changed[label] = "updated"
 	}
 }
 
-func configSavedMessage(changed map[string]string) (string, chatMsgKind) {
+type configChangeNotice struct {
+	content string
+	style   string
+}
+
+func isActiveModelConfigLabel(label string) bool {
+	switch label {
+	case "Active Model", "Project Active Model":
+		return true
+	default:
+		return false
+	}
+}
+
+func isExplorationModelConfigLabel(label string) bool {
+	switch label {
+	case "Exploration Model", "Project Exploration Model":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAPIKeyConfigLabel(label string) bool {
+	return strings.Contains(label, "API Key")
+}
+
+func configChangeNoticeFor(label, direction string) configChangeNotice {
+	switch {
+	case isActiveModelConfigLabel(label):
+		return activeModelConfigNotice(label, direction)
+	case isExplorationModelConfigLabel(label):
+		return explorationModelConfigNotice(label, direction)
+	case isAPIKeyConfigLabel(label):
+		return apiKeyConfigNotice(label, direction)
+	default:
+		return genericConfigNotice(label, direction)
+	}
+}
+
+func activeModelConfigNotice(label, direction string) configChangeNotice {
+	switch direction {
+	case "saved":
+		return configChangeNotice{content: label + " saved.", style: styleChatCyan}
+	case "removed":
+		return configChangeNotice{content: label + " cleared.", style: styleChatRed}
+	default:
+		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
+	}
+}
+
+func explorationModelConfigNotice(label, direction string) configChangeNotice {
+	switch direction {
+	case "saved":
+		return configChangeNotice{content: label + " saved.", style: styleChatMagenta}
+	case "removed":
+		return configChangeNotice{content: label + " cleared.", style: styleChatRed}
+	default:
+		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
+	}
+}
+
+func apiKeyConfigNotice(label, direction string) configChangeNotice {
+	switch direction {
+	case "saved":
+		return configChangeNotice{content: label + " saved.", style: styleChatGreen}
+	case "removed":
+		return configChangeNotice{content: label + " removed.", style: styleChatRed}
+	default:
+		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
+	}
+}
+
+func genericConfigNotice(label, direction string) configChangeNotice {
+	switch direction {
+	case "saved":
+		return configChangeNotice{content: label + " saved.", style: styleChatBlue}
+	case "removed":
+		return configChangeNotice{content: label + " removed.", style: styleChatRed}
+	default:
+		return configChangeNotice{content: label + " updated.", style: styleChatYellow}
+	}
+}
+
+func configSavedMessages(changed map[string]string) []chatMessage {
 	if len(changed) == 0 {
-		return "Config saved.", msgSuccess
+		return []chatMessage{configChangeChatMessage(configChangeNotice{
+			content: "Config saved.",
+			style:   styleChatMuted,
+		})}
 	}
-	type entry struct {
-		label     string
-		direction string
+	labels := make([]string, 0, len(changed))
+	for label := range changed {
+		labels = append(labels, label)
 	}
-	entries := make([]entry, 0, len(changed))
-	hasRemoved := false
-	for label, direction := range changed {
-		entries = append(entries, entry{label, direction})
-		if direction == "removed" {
-			hasRemoved = true
-		}
+	sort.Strings(labels)
+
+	msgs := make([]chatMessage, 0, len(labels))
+	for _, label := range labels {
+		msgs = append(msgs, configChangeChatMessage(configChangeNoticeFor(label, changed[label])))
 	}
-	parts := make([]string, len(entries))
-	for i, e := range entries {
-		parts[i] = e.label + " " + e.direction
+	return msgs
+}
+
+func configChangeChatMessage(notice configChangeNotice) chatMessage {
+	return chatMessage{
+		kind:    msgInfo,
+		content: notice.content,
+		inlineBlocks: []inlineBlock{
+			styledInlineBlock(styledInlineBlockOptions{style: notice.style, text: notice.content}),
+		},
 	}
-	var msg string
-	if len(parts) == 1 {
-		msg = parts[0] + "."
-	} else {
-		msg = strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1] + "."
-	}
-	kind := msgSuccess
-	if hasRemoved {
-		kind = msgInfo
-	}
-	return msg, kind
 }
 
 // openConfigModelPickerOptions is the parameter bundle for openConfigModelPicker.
@@ -463,12 +546,20 @@ func (a *App) settingsTabFields() []cfgField {
 		{label: "Active Model", get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) {
 			c.ActiveModel = normalizeConfigModelIDForModels(normalizeConfigModelIDForModelsOptions{cfg: *c, modelID: v, smartDefault: defaultCanonicalActiveModel, models: a.models})
 		}, picker: func(a *App) {
-			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) { a.cfgDraft.ActiveModel = id }})
+			oldVal := a.cfgDraft.ActiveModel
+			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ActiveModel }, onSelect: func(id string) {
+				a.cfgDraft.ActiveModel = id
+				recordConfigChange(a.cfgChangedLabels, "Active Model", oldVal, id)
+			}})
 		}},
 		{label: "Exploration Model", get: func(c Config) string { return c.ExplorationModel }, display: func(c Config) string { return a.resolvedExplorationDisplay(c) }, set: func(c *Config, v string) {
 			c.ExplorationModel = normalizeConfigModelIDForModels(normalizeConfigModelIDForModelsOptions{cfg: *c, modelID: v, smartDefault: defaultCanonicalExplorationModel, models: a.models})
 		}, picker: func(a *App) {
-			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) { a.cfgDraft.ExplorationModel = id }})
+			oldVal := a.cfgDraft.ExplorationModel
+			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) {
+				a.cfgDraft.ExplorationModel = id
+				recordConfigChange(a.cfgChangedLabels, "Exploration Model", oldVal, id)
+			}})
 		}},
 		{label: "Paste Collapse", get: func(c Config) string { return strconv.Itoa(c.PasteCollapseMinChars) }, set: func(c *Config, v string) {
 			if n, err := strconv.Atoi(v); err == nil {
@@ -540,7 +631,11 @@ func (a *App) projectTabFields() []cfgField {
 			},
 			globalHint: func(c Config) string { return c.ActiveModel },
 			picker: func(a *App) {
-				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ActiveModel }, onSelect: func(id string) { a.cfgProjectDraft.ActiveModel = id }})
+				oldVal := a.cfgProjectDraft.ActiveModel
+				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ActiveModel }, onSelect: func(id string) {
+					a.cfgProjectDraft.ActiveModel = id
+					recordConfigChange(a.cfgChangedLabels, "Project Active Model", oldVal, id)
+				}})
 			},
 		},
 		{
@@ -557,7 +652,11 @@ func (a *App) projectTabFields() []cfgField {
 			},
 			globalHint: func(c Config) string { return a.resolvedExplorationDisplay(c) },
 			picker: func(a *App) {
-				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) { a.cfgProjectDraft.ExplorationModel = id }})
+				oldVal := a.cfgProjectDraft.ExplorationModel
+				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) {
+					a.cfgProjectDraft.ExplorationModel = id
+					recordConfigChange(a.cfgChangedLabels, "Project Exploration Model", oldVal, id)
+				}})
 			},
 		},
 		{
@@ -838,9 +937,7 @@ func (a *App) handleConfigByte(opts handleConfigByteOptions) {
 			if f.action != nil {
 				f.action(a)
 			} else if f.picker != nil {
-				oldVal := f.get(a.cfgDraft)
 				f.picker(a)
-				recordConfigChange(a.cfgChangedLabels, f.label, oldVal, f.get(a.cfgDraft))
 			} else if f.toggle != nil {
 				oldVal := f.get(a.cfgDraft)
 				f.toggle(&a.cfgDraft)

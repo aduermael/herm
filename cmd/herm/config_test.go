@@ -1301,6 +1301,22 @@ func TestResolveActiveModel_NoOllamaURLNoFallback(t *testing.T) {
 	}
 }
 
+func TestResolveActiveModel_TrustsOpenRouterNativeModelNotInCatalog(t *testing.T) {
+	cfg := Config{
+		Deployments: map[string]DeploymentConfig{
+			"openrouter": {APIKey: "sk-or"},
+		},
+		ActiveModel: "minimax/minimax-m2.5:free",
+	}
+	result := cfg.resolveActiveModelResult(nil)
+	if result.Status != configuredModelUsable || result.Fallback {
+		t.Fatalf("resolveActiveModelResult = %+v, want usable trusted OpenRouter native model", result)
+	}
+	if result.ResolvedModelID != "minimax/minimax-m2.5:free" {
+		t.Fatalf("ResolvedModelID = %q, want configured OpenRouter model ID", result.ResolvedModelID)
+	}
+}
+
 func TestResolveExplorationModel_OllamaOfflineTrustsSaved(t *testing.T) {
 	cfg := Config{
 		OllamaBaseURL:    testOllamaURL,
@@ -1538,5 +1554,148 @@ func TestConfigThinkingRoundTrip(t *testing.T) {
 
 	if loaded.Thinking == nil || !*loaded.Thinking {
 		t.Errorf("round-trip: Thinking = %v, want true", loaded.Thinking)
+	}
+}
+
+func TestConfigSavedMessagesUseDistinctModelAndAPIKeyNotices(t *testing.T) {
+	msgs := configSavedMessages(map[string]string{
+		"Project Active Model":      "updated",
+		"Project Exploration Model": "saved",
+		"OpenRouter API Key":        "saved",
+	})
+
+	if len(msgs) != 3 {
+		t.Fatalf("message count = %d, want 3", len(msgs))
+	}
+
+	contents := make([]string, len(msgs))
+	for i, msg := range msgs {
+		if len(msg.inlineBlocks) != 1 {
+			t.Fatalf("message %d inline blocks = %d, want 1", i, len(msg.inlineBlocks))
+		}
+		contents[i] = msg.content
+	}
+
+	if contents[0] != "OpenRouter API Key saved." {
+		t.Fatalf("first message = %q, want API key notice first (sorted)", contents[0])
+	}
+	if contents[1] != "Project Active Model updated." {
+		t.Fatalf("active model message = %q", contents[1])
+	}
+	if contents[2] != "Project Exploration Model saved." {
+		t.Fatalf("exploration model message = %q", contents[2])
+	}
+
+	activeStyle := msgs[1].inlineBlocks[0].text
+	exploreStyle := msgs[2].inlineBlocks[0].text
+	apiStyle := msgs[0].inlineBlocks[0].text
+
+	if activeStyle == exploreStyle || activeStyle == apiStyle || exploreStyle == apiStyle {
+		t.Fatalf("notices should use distinct styles:\nactive=%q\nexplore=%q\napi=%q", activeStyle, exploreStyle, apiStyle)
+	}
+	if !strings.Contains(activeStyle, styleChatYellow) {
+		t.Fatalf("active model updated style = %q, want yellow italic accent", activeStyle)
+	}
+	if !strings.Contains(exploreStyle, styleChatMagenta) {
+		t.Fatalf("exploration model style = %q, want magenta italic accent", exploreStyle)
+	}
+	if !strings.Contains(apiStyle, styleChatGreen) {
+		t.Fatalf("api key style = %q, want green italic accent", apiStyle)
+	}
+}
+
+func TestConfigSavedMessagesUseProjectThemeOpacity(t *testing.T) {
+	cases := []struct {
+		label     string
+		direction string
+	}{
+		{"Active Model", "saved"},
+		{"Active Model", "updated"},
+		{"Active Model", "removed"},
+		{"Exploration Model", "saved"},
+		{"Exploration Model", "updated"},
+		{"Exploration Model", "removed"},
+		{"OpenRouter API Key", "saved"},
+		{"OpenRouter API Key", "updated"},
+		{"OpenRouter API Key", "removed"},
+		{"Personality", "saved"},
+		{"Personality", "updated"},
+		{"Personality", "removed"},
+	}
+	for _, tc := range cases {
+		style := configChangeNoticeFor(tc.label, tc.direction).style
+		if !strings.HasSuffix(style, ";3m") {
+			t.Errorf("%s %s style = %q, want chat accent (;3m italic)", tc.label, tc.direction, style)
+		}
+		if strings.Contains(style, ";1") || strings.Contains(style, ";2m") {
+			t.Errorf("%s %s uses bold/dim luminosity: %q", tc.label, tc.direction, style)
+		}
+		if strings.Contains(style, "\033[9") {
+			t.Errorf("%s %s uses bright ANSI color: %q", tc.label, tc.direction, style)
+		}
+	}
+	emptyStyle := configSavedMessages(nil)[0].inlineBlocks[0].text
+	if !strings.Contains(emptyStyle, styleChatMuted) {
+		t.Fatalf("empty save style = %q, want muted italic accent", emptyStyle)
+	}
+}
+
+func TestConfigSavedMessagesGenericSettingsUseRedForRemoved(t *testing.T) {
+	msgs := configSavedMessages(map[string]string{
+		"Personality": "updated",
+		"Thinking":    "removed",
+	})
+
+	if len(msgs) != 2 {
+		t.Fatalf("message count = %d, want 2", len(msgs))
+	}
+	if msgs[0].content != "Personality updated." {
+		t.Fatalf("updated message = %q", msgs[0].content)
+	}
+	if msgs[1].content != "Thinking removed." {
+		t.Fatalf("removed message = %q", msgs[1].content)
+	}
+	if !strings.Contains(msgs[0].inlineBlocks[0].text, styleChatYellow) {
+		t.Fatalf("updated style = %q, want yellow italic accent", msgs[0].inlineBlocks[0].text)
+	}
+	if !strings.Contains(msgs[1].inlineBlocks[0].text, styleChatRed) {
+		t.Fatalf("removed style = %q, want red italic accent", msgs[1].inlineBlocks[0].text)
+	}
+}
+
+func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
+	cases := []struct {
+		label     string
+		direction string
+		wantStyle string
+	}{
+		{"Active Model", "saved", styleChatCyan},
+		{"Active Model", "updated", styleChatYellow},
+		{"Exploration Model", "saved", styleChatMagenta},
+		{"Exploration Model", "updated", styleChatYellow},
+		{"OpenRouter API Key", "saved", styleChatGreen},
+		{"OpenRouter API Key", "updated", styleChatYellow},
+		{"Personality", "saved", styleChatBlue},
+		{"Personality", "updated", styleChatYellow},
+	}
+	for _, tc := range cases {
+		notice := configChangeNoticeFor(tc.label, tc.direction)
+		if notice.style != tc.wantStyle {
+			t.Errorf("%s %s style = %q, want %q", tc.label, tc.direction, notice.style, tc.wantStyle)
+		}
+	}
+	for _, label := range []string{"Active Model", "Exploration Model", "OpenRouter API Key", "Personality"} {
+		notice := configChangeNoticeFor(label, "removed")
+		if notice.style != styleChatRed {
+			t.Errorf("%s removed style = %q, want red italic accent", label, notice.style)
+		}
+	}
+
+	empty := configSavedMessages(nil)
+	if len(empty) != 1 || empty[0].content != "Config saved." {
+		t.Fatalf("empty save message = %#v", empty)
+	}
+	if !strings.Contains(empty[0].inlineBlocks[0].text, styleChatMuted) {
+		t.Fatalf("empty save style = %q, want muted italic accent", empty[0].inlineBlocks[0].text)
 	}
 }

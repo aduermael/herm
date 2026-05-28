@@ -148,7 +148,7 @@ func TestStartAgentStartupAndRuntimeUseProjectBareCanonicalModel(t *testing.T) {
 		t.Errorf("effective startup/runtime ActiveModel = %q, want canonical anthropic/claude-opus-4-6", app.config.ActiveModel)
 	}
 	startupRows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(startupRows, "Using anthropic/claude-opus-4-6") {
+	if !strings.Contains(startupRows, "Using active: anthropic/claude-opus-4-6") {
 		t.Fatalf("startup model display did not use project Opus override:\n%s", startupRows)
 	}
 	if got := app.config.resolveActiveModel(app.models); got != "anthropic/claude-opus-4-6" {

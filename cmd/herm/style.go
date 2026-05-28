@@ -110,6 +110,18 @@ func buildLogo(width int) []string {
 
 // ─── Styling helpers ───
 
+// Chat accent styles use italic at normal luminosity — the default for info,
+// success, error, and model lines in the TUI (see styledInfo/Success/Error).
+const (
+	styleChatCyan    = "\033[36;3m"
+	styleChatMagenta = "\033[35;3m"
+	styleChatGreen   = "\033[32;3m"
+	styleChatYellow  = "\033[33;3m"
+	styleChatBlue    = "\033[34;3m"
+	styleChatRed     = "\033[31;3m"
+	styleChatMuted   = "\033[2;3m"
+)
+
 type styledConfigFieldLabelOptions struct {
 	label    string
 	selected bool
@@ -183,15 +195,15 @@ func styledToolResult(opts styledToolResultOptions) string {
 }
 
 func styledError(msg string) string {
-	return "\033[31;3m" + msg + "\033[0m"
+	return styleChatRed + msg + "\033[0m"
 }
 
 func styledSuccess(msg string) string {
-	return "\033[32;3m" + msg + "\033[0m"
+	return styleChatGreen + msg + "\033[0m"
 }
 
 func styledInfo(msg string) string {
-	return "\033[34;3m" + msg + "\033[0m"
+	return styleChatBlue + msg + "\033[0m"
 }
 
 func styledSystemPrompt(msg string) string {
