@@ -17,7 +17,19 @@ import (
 
 // ─── Commands and autocomplete ───
 
-var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", "/session", "/shell", "/update", "/usage", "/worktrees"}
+var commands = []string{
+	"/branches",
+	"/clear",
+	"/compact",
+	"/config",
+	"/model",
+	"/session",
+	"/shell",
+	"/update",
+	"/usage",
+	"/worktrees",
+	"/doctor",
+}
 var sessionSubcommands = []string{"/session list", "/session load", "/session show"}
 
 func filterCommands(prefix string) []string {
@@ -212,6 +224,9 @@ func (a *App) handleCommand(input string) {
 
 	case "/update":
 		a.handleUpdateCommand()
+
+	case "/doctor":
+		a.handleDoctorCommand()
 
 	default:
 		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Unknown command: %s", cmd)})
