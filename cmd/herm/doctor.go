@@ -1,3 +1,4 @@
+// Package main implements the doctor command to diagnose the local environment.
 package main
 
 import (
