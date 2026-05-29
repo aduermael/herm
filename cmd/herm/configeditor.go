@@ -112,6 +112,13 @@ func (a *App) enterConfigMode() {
 	a.cfgEditCursor = 0
 	a.cfgChangedLabels = make(map[string]string)
 	a.cfgDraft = a.globalConfig
+	// Clear stale model fields when no providers are configured.
+	// This prevents hidden model values from persisting when the user
+	// later adds a provider, ensuring they get the "Select Model" hint.
+	if len(a.cfgDraft.configuredProviders()) == 0 {
+		a.cfgDraft.ActiveModel = ""
+		a.cfgDraft.ExplorationModel = ""
+	}
 	if a.cfgDraft.Deployments != nil {
 		cloned := make(map[string]DeploymentConfig, len(a.cfgDraft.Deployments))
 		for id, d := range a.cfgDraft.Deployments {
