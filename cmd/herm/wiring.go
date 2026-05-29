@@ -225,10 +225,12 @@ func (a *App) startInit() {
 }
 
 func (a *App) startBackendForWorkspace(workspace string) {
-	if a.backend != backendContainer {
-		return
+	switch a.backend {
+	case backendContainer:
+		go bootContainer(bootContainerCmdOptions{workspace: workspace, sessionID: a.sessionID, ch: a.resultCh, stop: a.stopCh})
+	case backendCPSL:
+		go bootCPSLWorker(bootCPSLWorkerCmdOptions{config: a.cpsl, workspace: workspace, ch: a.resultCh})
 	}
-	go bootContainer(bootContainerCmdOptions{workspace: workspace, sessionID: a.sessionID, ch: a.resultCh, stop: a.stopCh})
 }
 
 // modelCatalogCachePath returns the path where the dynamically fetched model

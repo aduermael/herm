@@ -25,6 +25,10 @@ type cliOptions struct {
 func main() {
 	log.SetOutput(io.Discard)
 
+	if len(os.Args) > 1 && os.Args[1] == "__cpsl-worker" {
+		os.Exit(runCPSLWorker(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
+
 	opts, err := parseCLI(parseCLIOptions{args: os.Args[1:], stderr: os.Stderr})
 	if err != nil {
 		os.Exit(2)

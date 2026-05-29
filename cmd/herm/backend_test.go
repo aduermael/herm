@@ -5,13 +5,21 @@ import (
 	"time"
 )
 
-func TestCPSLBackendDoesNotBootContainer(t *testing.T) {
+func TestCPSLBackendStartsWorkerAndDoesNotBootContainer(t *testing.T) {
 	origBootContainer := bootContainer
-	t.Cleanup(func() { bootContainer = origBootContainer })
+	origBootCPSLWorker := bootCPSLWorker
+	t.Cleanup(func() {
+		bootContainer = origBootContainer
+		bootCPSLWorker = origBootCPSLWorker
+	})
 
-	called := false
+	containerCalled := false
 	bootContainer = func(bootContainerCmdOptions) {
-		called = true
+		containerCalled = true
+	}
+	workerCalled := make(chan bootCPSLWorkerCmdOptions, 1)
+	bootCPSLWorker = func(opts bootCPSLWorkerCmdOptions) {
+		workerCalled <- opts
 	}
 
 	app := &App{
@@ -20,10 +28,19 @@ func TestCPSLBackendDoesNotBootContainer(t *testing.T) {
 		resultCh:  make(chan any, 1),
 		stopCh:    make(chan struct{}),
 	}
-	app.startBackendForWorkspace(t.TempDir())
+	workspace := t.TempDir()
+	app.startBackendForWorkspace(workspace)
 
-	if called {
+	if containerCalled {
 		t.Fatal("CPSL backend started container boot")
+	}
+	select {
+	case opts := <-workerCalled:
+		if opts.workspace != workspace {
+			t.Fatalf("workspace = %q, want %q", opts.workspace, workspace)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("CPSL backend did not start worker")
 	}
 }
 
@@ -71,6 +88,35 @@ func TestCPSLRuntimeToolsExcludeContainerToolsBeforeWorker(t *testing.T) {
 	if tools := app.runtimeTools(); len(tools) != 0 {
 		t.Fatalf("runtimeTools returned %d tools in CPSL mode before worker, want 0", len(tools))
 	}
+}
+
+func TestAppCleanupClosesCPSLWorker(t *testing.T) {
+	closed := false
+	app := &App{
+		stopCh: make(chan struct{}),
+		cpslWorker: &CPSLWorkerClient{
+			stdin: testWriteCloser{closeFunc: func() { closed = true }},
+			wait:  func() error { return nil },
+		},
+	}
+
+	app.cleanup()
+
+	if !closed {
+		t.Fatal("cleanup did not close CPSL worker")
+	}
+}
+
+type testWriteCloser struct {
+	closeFunc func()
+}
+
+func (testWriteCloser) Write(p []byte) (int, error) { return len(p), nil }
+func (w testWriteCloser) Close() error {
+	if w.closeFunc != nil {
+		w.closeFunc()
+	}
+	return nil
 }
 
 func TestContainerRuntimeToolsUnchangedWhenReady(t *testing.T) {
