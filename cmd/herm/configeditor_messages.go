@@ -135,9 +135,6 @@ func configSelectModelHintChatMessage() chatMessage {
 }
 
 func appendMissingModelMessageIfNeeded(messages []chatMessage) []chatMessage {
-	if chatHasMissingModelMessage(messages) {
-		return messages
-	}
 	return append(messages, configMissingModelChatMessage())
 }
 
@@ -197,15 +194,6 @@ func configNeedsModelSelection(opts projectModelConfigOptions) bool {
 		return false
 	}
 	return len(opts.global.configuredProviders()) > 0
-}
-
-func chatHasMissingModelMessage(messages []chatMessage) bool {
-	for _, msg := range messages {
-		if msg.content == configMissingModelMessage {
-			return true
-		}
-	}
-	return false
 }
 
 func chatHasSelectModelHintMessage(messages []chatMessage) bool {
