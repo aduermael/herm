@@ -19,16 +19,12 @@ import (
 
 var Version = "dev"
 
-// ─── Constants ───
-
 const (
 	promptPrefix       = "▸ "
 	promptPrefixCols   = 2
 	charsPerToken      = 4        // rough estimate for context bar
 	maxAttachmentBytes = 20 << 20 // 20 MB
 )
-
-// ─── Block and message types ───
 
 type chatMsgKind int
 
@@ -51,12 +47,10 @@ type chatMessage struct {
 	modelDiagnostic bool          // true for active/exploration model fallback warnings
 	modelDisplay    bool          // true for the "Using active/exploration" status line
 	isError         bool          // for tool results
-	duration     time.Duration // tool execution duration
-	leadBlank    bool          // blank line before this message
-	toolName     string        // original tool name (for tool call grouping/output rules)
+	duration        time.Duration // tool execution duration
+	leadBlank       bool          // blank line before this message
+	toolName        string        // original tool name (for tool call grouping/output rules)
 }
-
-// ─── App modes ───
 
 type appMode int
 
@@ -67,8 +61,6 @@ const (
 	modeWorktrees
 	modeBranches
 )
-
-// ─── App struct ───
 
 type App struct {
 	// Terminal
@@ -578,10 +570,6 @@ func (a *App) handleEnter() {
 	a.startAgent(content)
 	a.render()
 }
-
-// ─── Commands ───
-
-// ─── Async results ───
 
 // startInit lives in wiring.go.
 
