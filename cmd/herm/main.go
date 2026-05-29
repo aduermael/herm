@@ -19,6 +19,8 @@ import (
 
 var Version = "dev"
 
+// ─── Constants ───
+
 const (
 	promptPrefix       = "▸ "
 	promptPrefixCols   = 2
@@ -288,6 +290,7 @@ func (a *App) Run() error {
 
 	startTime := time.Now()
 
+	// Panic-safe terminal restoration
 	defer func() {
 		if r := recover(); r != nil {
 			term.Restore(fd, oldState)
@@ -907,6 +910,9 @@ func (a *App) handleResult(result any) {
 		if msg.err == nil && msg.version != "" {
 			a.updateAvailable = msg.version
 			current := Version
+			if current == "dev" {
+				current = "dev"
+			}
 			a.messages = append(a.messages, chatMessage{
 				kind:    msgInfo,
 				content: fmt.Sprintf("Update available: v%s (current: %s). Run /update to upgrade.", msg.version, current),
