@@ -1,0 +1,201 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+type fakeCPSLEvaluator struct {
+	evalFunc func(session cpslSession, requestJSON string) (string, error)
+}
+
+func (f fakeCPSLEvaluator) eval(session cpslSession, requestJSON string) (string, error) {
+	return f.evalFunc(session, requestJSON)
+}
+
+func TestServeCPSLWorkerEvalPreservesID(t *testing.T) {
+	request := `{"id":7,"op":"eval","language":"bash","input":"pwd","timeout_ms":1000}` + "\n"
+	var stdout bytes.Buffer
+
+	err := serveCPSLWorker(serveCPSLWorkerOptions{
+		evaluator: fakeCPSLEvaluator{evalFunc: func(_ cpslSession, requestJSON string) (string, error) {
+			var req struct {
+				Language  string `json:"language"`
+				Input     string `json:"input"`
+				TimeoutMS int    `json:"timeout_ms"`
+			}
+			if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+				t.Fatalf("eval request JSON: %v", err)
+			}
+			if req.Language != "bash" || req.Input != "pwd" || req.TimeoutMS != 1000 {
+				t.Fatalf("eval request = %#v", req)
+			}
+			return `{"ok":true,"stdout":"/workdir\n","stderr":"","exit_code":0,"error":null,"warnings":[],"cwd":"/workdir"}`, nil
+		}},
+		session: 1,
+		stdin:   strings.NewReader(request),
+		stdout:  &stdout,
+		stderr:  ioDiscard{},
+	})
+	if err != nil {
+		t.Fatalf("serveCPSLWorker: %v", err)
+	}
+
+	response := decodeWorkerTestResponse(t, stdout.Bytes())
+	if response.ID != 7 {
+		t.Fatalf("response ID = %d, want 7", response.ID)
+	}
+	if !response.OK || response.Stdout != "/workdir\n" {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestServeCPSLWorkerMalformedAndUnsupportedRequests(t *testing.T) {
+	input := strings.Join([]string{
+		`not-json`,
+		`{"id":2,"op":"stat","language":"bash","input":"pwd","timeout_ms":1000}`,
+		`{"id":3,"op":"eval","language":"python","input":"pwd","timeout_ms":1000}`,
+		"",
+	}, "\n")
+	var stdout bytes.Buffer
+
+	err := serveCPSLWorker(serveCPSLWorkerOptions{
+		evaluator: fakeCPSLEvaluator{evalFunc: func(cpslSession, string) (string, error) {
+			t.Fatal("eval should not be called")
+			return "", nil
+		}},
+		stdin:  strings.NewReader(input),
+		stdout: &stdout,
+		stderr: ioDiscard{},
+	})
+	if err != nil {
+		t.Fatalf("serveCPSLWorker: %v", err)
+	}
+
+	responses := decodeWorkerTestResponses(t, stdout.Bytes())
+	if len(responses) != 3 {
+		t.Fatalf("got %d responses, want 3", len(responses))
+	}
+	if responses[0].ID != 0 || responses[0].Error.Code != "invalid_request" {
+		t.Fatalf("malformed response = %#v", responses[0])
+	}
+	if responses[1].ID != 2 || responses[1].Error.Code != "invalid_request" {
+		t.Fatalf("unsupported op response = %#v", responses[1])
+	}
+	if responses[2].ID != 3 || responses[2].Error.Code != "unsupported_language" {
+		t.Fatalf("unsupported language response = %#v", responses[2])
+	}
+}
+
+func TestServeCPSLWorkerTimeoutRespondsAndTerminates(t *testing.T) {
+	request := `{"id":9,"op":"eval","language":"bash","input":"sleep","timeout_ms":5}` + "\n"
+	var stdout bytes.Buffer
+
+	err := serveCPSLWorker(serveCPSLWorkerOptions{
+		evaluator: fakeCPSLEvaluator{evalFunc: func(cpslSession, string) (string, error) {
+			time.Sleep(100 * time.Millisecond)
+			return `{"ok":true,"stdout":"","stderr":"","exit_code":0,"error":null,"warnings":[],"cwd":"/workdir"}`, nil
+		}},
+		stdin:  strings.NewReader(request),
+		stdout: &stdout,
+		stderr: ioDiscard{},
+	})
+	if !errors.Is(err, errCPSLWorkerTerminated) {
+		t.Fatalf("serveCPSLWorker err = %v, want termination sentinel", err)
+	}
+
+	response := decodeWorkerTestResponse(t, stdout.Bytes())
+	if response.ID != 9 || response.OK || response.Error == nil || response.Error.Code != "timeout" {
+		t.Fatalf("timeout response = %#v", response)
+	}
+}
+
+func TestCPSLSessionConfigJSON(t *testing.T) {
+	configJSON, err := cpslSessionConfigJSON("/tmp/work", []string{"example.com"}, []string{"deny.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config cpslSessionConfig
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.InitialCWD != "/workdir" || config.Language != "bash" {
+		t.Fatalf("config = %#v", config)
+	}
+	if len(config.Mounts) != 1 || config.Mounts[0].Host != "/tmp/work" || config.Mounts[0].VirtualPath != "/workdir" || config.Mounts[0].Mode != "rw" {
+		t.Fatalf("mounts = %#v", config.Mounts)
+	}
+	if len(config.HTTP.AllowDomains) != 1 || config.HTTP.AllowDomains[0] != "example.com" {
+		t.Fatalf("allow domains = %#v", config.HTTP.AllowDomains)
+	}
+	if len(config.HTTP.DenyDomains) != 1 || config.HTTP.DenyDomains[0] != "deny.example.com" {
+		t.Fatalf("deny domains = %#v", config.HTTP.DenyDomains)
+	}
+}
+
+func TestCPSLSessionConfigJSONUsesEmptyDomainArrays(t *testing.T) {
+	configJSON, err := cpslSessionConfigJSON("/tmp/work", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(configJSON, `"allow_domains":null`) || strings.Contains(configJSON, `"deny_domains":null`) {
+		t.Fatalf("config JSON encoded nil domain list: %s", configJSON)
+	}
+	if !strings.Contains(configJSON, `"allow_domains":[]`) || !strings.Contains(configJSON, `"deny_domains":[]`) {
+		t.Fatalf("config JSON did not encode empty domain arrays: %s", configJSON)
+	}
+}
+
+func TestValidateCPSLBackendMetadataJSON(t *testing.T) {
+	valid := `{"name":"cpsl","abi_version":1,"version":"0.1.0","languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`
+	if err := validateCPSLBackendMetadataJSON(valid); err != nil {
+		t.Fatalf("valid metadata: %v", err)
+	}
+
+	tests := []string{
+		`{"name":"other","abi_version":1,"languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":2,"languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":1,"languages":["python"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":1,"languages":["bash"],"capabilities":{"mounts":false,"network_policy":true}}`,
+		`not-json`,
+	}
+	for _, tt := range tests {
+		if err := validateCPSLBackendMetadataJSON(tt); err == nil {
+			t.Fatalf("metadata %s returned nil error", tt)
+		}
+	}
+}
+
+func decodeWorkerTestResponse(t *testing.T, data []byte) cpslEvalResponse {
+	t.Helper()
+	responses := decodeWorkerTestResponses(t, data)
+	if len(responses) != 1 {
+		t.Fatalf("got %d responses, want 1", len(responses))
+	}
+	return responses[0]
+}
+
+func decodeWorkerTestResponses(t *testing.T, data []byte) []cpslEvalResponse {
+	t.Helper()
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var responses []cpslEvalResponse
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var response cpslEvalResponse
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			t.Fatalf("decode response %q: %v", line, err)
+		}
+		responses = append(responses, response)
+	}
+	return responses
+}
+
+type ioDiscard struct{}
+
+func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }

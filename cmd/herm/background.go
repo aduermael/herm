@@ -42,6 +42,15 @@ type containerReadyMsg struct {
 	imageName    string
 }
 
+type cpslReadyMsg struct {
+	client       *CPSLWorkerClient
+	worktreePath string
+}
+
+type cpslErrMsg struct {
+	err error
+}
+
 type containerErrMsg struct {
 	err error
 }
@@ -274,6 +283,29 @@ dockerOK:
 }
 
 var bootContainer = bootContainerCmd
+
+// bootCPSLWorkerCmdOptions is the parameter bundle for bootCPSLWorkerCmd.
+type bootCPSLWorkerCmdOptions struct {
+	config    cpslConfig
+	workspace string
+	ch        chan<- any
+}
+
+func bootCPSLWorkerCmd(opts bootCPSLWorkerCmdOptions) {
+	client, err := NewCPSLWorkerClient(newCPSLWorkerClientOptions{
+		LibraryPath:  opts.config.LibraryPath,
+		Workspace:    opts.workspace,
+		AllowDomains: append([]string(nil), opts.config.AllowDomains...),
+		DenyDomains:  append([]string(nil), opts.config.DenyDomains...),
+	})
+	if err != nil {
+		opts.ch <- cpslErrMsg{err: errCPSLLibrary}
+		return
+	}
+	opts.ch <- cpslReadyMsg{client: client, worktreePath: opts.workspace}
+}
+
+var bootCPSLWorker = bootCPSLWorkerCmd
 
 // ensureImageLocalOptions is the parameter bundle for ensureImageLocal.
 type ensureImageLocalOptions struct {

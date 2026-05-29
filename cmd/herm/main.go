@@ -115,6 +115,9 @@ type App struct {
 	containerReady          bool
 	containerErr            error
 	containerStatusText     string
+	cpslWorker              *CPSLWorkerClient
+	cpslReady               bool
+	cpslErr                 error
 	containerRetryMsgIdx    int
 	containerRetryMsgActive bool
 	configReady             bool // true after workspace/project config has been merged
@@ -864,6 +867,21 @@ func (a *App) handleResult(result any) {
 			a.containerStatusText = shortID
 		}
 
+	case cpslReadyMsg:
+		a.cpslWorker = msg.client
+		if msg.worktreePath != "" {
+			a.worktreePath = msg.worktreePath
+		}
+		a.cpslReady = true
+		a.cpslErr = nil
+
+	case cpslErrMsg:
+		a.cpslErr = msg.err
+		a.cpslReady = false
+		if msg.err != nil {
+			a.messages = append(a.messages, chatMessage{kind: msgError, content: msg.err.Error()})
+		}
+
 	case containerStatusMsg:
 		a.containerStatusText = msg.text
 
@@ -956,6 +974,9 @@ func (a *App) cleanup() {
 	}
 	if a.container != nil {
 		_ = a.container.Stop()
+	}
+	if a.cpslWorker != nil {
+		_ = a.cpslWorker.Close()
 	}
 	if a.langdagClient != nil {
 		_ = a.langdagClient.Close()

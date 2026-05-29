@@ -42,10 +42,23 @@ func (a *App) waitHeadlessReady() error {
 		select {
 		case result := <-a.resultCh:
 			a.handleResult(result)
-			if a.configReady && a.langdagClient != nil && a.models != nil {
+			if a.backend == backendCPSL && a.cpslErr != nil {
+				fmt.Fprintln(os.Stderr, "error: "+a.cpslErr.Error())
+				return a.cpslErr
+			}
+			backendReady := a.backend != backendCPSL || a.cpslReady
+			if a.configReady && a.langdagClient != nil && a.models != nil && backendReady {
 				return nil
 			}
 		case <-timeout:
+			if a.backend == backendCPSL && !a.cpslReady {
+				if a.cpslErr != nil {
+					fmt.Fprintln(os.Stderr, "error: "+a.cpslErr.Error())
+					return a.cpslErr
+				}
+				fmt.Fprintln(os.Stderr, "error: timed out waiting for CPSL worker")
+				return fmt.Errorf("CPSL worker initialization timeout")
+			}
 			if a.langdagClient == nil {
 				fmt.Fprintln(os.Stderr, "error: timed out waiting for initialization")
 				return fmt.Errorf("initialization timeout")
