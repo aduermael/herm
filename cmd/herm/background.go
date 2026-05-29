@@ -262,6 +262,8 @@ dockerOK:
 	ch <- containerReadyMsg{client: client, worktreePath: workspace, imageName: imageName}
 }
 
+var bootContainer = bootContainerCmd
+
 // ensureImageLocalOptions is the parameter bundle for ensureImageLocal.
 type ensureImageLocalOptions struct {
 	image string
