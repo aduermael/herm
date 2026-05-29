@@ -232,7 +232,9 @@ type App struct {
 	cliContinueID      string // --continue/--from node ID for headless continuation
 	cliConfigOverrides string // --config-overrides JSON object
 	cliCacheDir        string // --cache directory for request cache
-	headless           bool   // true when running in --prompt mode (no TUI)
+	backend            backendKind
+	cpsl               cpslConfig
+	headless           bool // true when running in --prompt mode (no TUI)
 
 	// JSON trace debug file
 	traceCollector *TraceCollector
@@ -564,7 +566,7 @@ func (a *App) handleEnter() {
 	}
 
 	a.messages = append(a.messages, chatMessage{kind: msgUser, content: display, leadBlank: true})
-	if !a.containerReady {
+	if a.backend == backendContainer && !a.containerReady {
 		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Container is still starting — the agent won't have bash or file tools until it's ready."})
 	}
 	a.startAgent(content)
@@ -830,9 +832,7 @@ func (a *App) handleResult(result any) {
 		wtPath := msg.worktreePath
 		go func() { a.resultCh <- fetchStatusCmd(wtPath) }()
 		go func() { a.resultCh <- fetchProjectSnapshot(wtPath) }()
-		go func() {
-			bootContainerCmd(bootContainerCmdOptions{workspace: wtPath, sessionID: a.sessionID, ch: a.resultCh, stop: a.stopCh})
-		}()
+		a.startBackendForWorkspace(wtPath)
 		go cleanupTmpDir(wtPath)
 		go cleanupAgentOutputDir(wtPath)
 		// Start periodic commit info refresh (only if git is available)

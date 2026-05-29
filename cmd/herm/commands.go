@@ -403,7 +403,7 @@ func (a *App) switchToWorktree(opts switchToWorktreeOptions) {
 	a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: fmt.Sprintf("Switched to worktree '%s' (%s)", name, branch)})
 
 	// Reboot container with new workspace if container is ready.
-	if a.containerReady && a.container != nil {
+	if a.backend == backendContainer && a.containerReady && a.container != nil {
 		a.containerReady = false
 		a.containerStatusText = "restarting…"
 		go func() {
@@ -438,6 +438,11 @@ func (a *App) isInWorktree() bool {
 // ─── Shell mode ───
 
 func (a *App) enterShellMode() {
+	if a.backend == backendCPSL {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "Shell mode is unavailable in CPSL mode."})
+		a.render()
+		return
+	}
 	if a.containerErr != nil {
 		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Container error: %v", a.containerErr)})
 		a.render()

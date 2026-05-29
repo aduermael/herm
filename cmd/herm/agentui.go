@@ -223,47 +223,7 @@ func (a *App) startAgent(userMessage string) {
 		}
 	}
 
-	var tools []Tool
-	if a.containerReady && a.container != nil {
-		tools = append(tools, NewBashTool(NewBashToolOptions{Container: a.container, Timeout: 120}))
-		tools = append(tools, NewGlobTool(a.container))
-		tools = append(tools, NewGrepTool(a.container))
-		tools = append(tools, NewReadFileTool(a.container))
-		tools = append(tools, NewOutlineTool(a.container))
-		tools = append(tools, NewEditFileTool(a.container))
-		tools = append(tools, NewWriteFileTool(a.container))
-		if a.worktreePath != "" {
-			hermDir := filepath.Join(a.worktreePath, ".herm")
-			cacheDir := filepath.Join(a.worktreePath, ".herm", "cache")
-			mounts := []MountSpec{
-				{Source: a.worktreePath, Destination: a.worktreePath},
-				{Source: a.attachmentDir(), Destination: "/attachments", ReadOnly: true},
-				{Source: cacheDir, Destination: "/cache", ReadOnly: false},
-			}
-			var projectID string
-			if repoRoot := gitRepoRoot(); repoRoot != "" {
-				projectID, _ = ensureProjectID(repoRoot)
-			}
-			onRebuild := func(imageName string) {
-				a.containerImage = imageName
-			}
-			onStatus := func(text string) {
-				a.resultCh <- containerStatusMsg{text: text}
-			}
-			tools = append(tools, NewDevEnvTool(NewDevEnvToolOptions{
-				Container: a.container,
-				HermDir:   hermDir,
-				Workspace: a.worktreePath,
-				Mounts:    mounts,
-				ProjectID: projectID,
-				OnRebuild: onRebuild,
-				OnStatus:  onStatus,
-			}))
-		}
-	}
-	if a.worktreePath != "" {
-		tools = append(tools, NewGitTool(NewGitToolOptions{WorkDir: a.worktreePath, CoAuthor: a.config.effectiveGitCoAuthor()}))
-	}
+	tools := a.runtimeTools()
 
 	modelID := a.config.resolveActiveModel(a.models)
 	if modelID == "" {
@@ -429,6 +389,59 @@ func (a *App) startAgent(userMessage string) {
 
 	parentNodeID := a.agentNodeID
 	go agent.Run(context.Background(), RunOptions{UserMessage: userMessage, ParentNodeID: parentNodeID})
+}
+
+func (a *App) runtimeTools() []Tool {
+	if a.backend == backendCPSL {
+		return nil
+	}
+
+	var tools []Tool
+	if a.containerReady && a.container != nil {
+		tools = append(tools, NewBashTool(NewBashToolOptions{Container: a.container, Timeout: 120}))
+		tools = append(tools, NewGlobTool(a.container))
+		tools = append(tools, NewGrepTool(a.container))
+		tools = append(tools, NewReadFileTool(a.container))
+		tools = append(tools, NewOutlineTool(a.container))
+		tools = append(tools, NewEditFileTool(a.container))
+		tools = append(tools, NewWriteFileTool(a.container))
+		if a.worktreePath != "" {
+			tools = append(tools, a.newDevEnvTool())
+		}
+	}
+	if a.worktreePath != "" {
+		tools = append(tools, NewGitTool(NewGitToolOptions{WorkDir: a.worktreePath, CoAuthor: a.config.effectiveGitCoAuthor()}))
+	}
+	return tools
+}
+
+func (a *App) newDevEnvTool() *DevEnvTool {
+	hermDir := filepath.Join(a.worktreePath, ".herm")
+	cacheDir := filepath.Join(a.worktreePath, ".herm", "cache")
+	mounts := []MountSpec{
+		{Source: a.worktreePath, Destination: a.worktreePath},
+		{Source: a.attachmentDir(), Destination: "/attachments", ReadOnly: true},
+		{Source: cacheDir, Destination: "/cache", ReadOnly: false},
+	}
+	var projectID string
+	if repoRoot := gitRepoRoot(); repoRoot != "" {
+		projectID, _ = ensureProjectID(repoRoot)
+	}
+	onRebuild := func(imageName string) {
+		a.containerImage = imageName
+	}
+	onStatus := func(text string) {
+		a.resultCh <- containerStatusMsg{text: text}
+	}
+	return NewDevEnvTool(NewDevEnvToolOptions{
+		Container: a.container,
+		HermDir:   hermDir,
+		Workspace: a.worktreePath,
+		Mounts:    mounts,
+		ProjectID: projectID,
+		OnRebuild: onRebuild,
+		OnStatus:  onStatus,
+	})
 }
 
 // hasActiveSubAgents returns true if any sub-agent in the display map is still running.
