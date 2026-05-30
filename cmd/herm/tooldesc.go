@@ -1,6 +1,6 @@
-// tooldesc.go loads tool descriptions from embedded markdown files in
-// prompts/tools/. Each file has frontmatter (name, description) plus a body
-// of guidance; combined, they form a tool's Definition().Description.
+// tooldesc.go loads backend-specific tool descriptions from embedded markdown
+// files. Each file has frontmatter (name, description) plus a body of guidance;
+// combined, they form a tool's Definition().Description.
 package main
 
 import (
@@ -31,8 +31,8 @@ type loadToolDescriptionsOptions struct {
 	backend         backendKind
 }
 
-// loadToolDescriptions reads all markdown files from the embedded prompts/tools/
-// directory and returns a map keyed by tool name. Dynamic placeholders
+// loadToolDescriptions reads markdown files from the selected backend profile
+// directories and returns a map keyed by tool name. Dynamic placeholders
 // (__CONTAINER_IMAGE__, __WORK_DIR__, __EXPLORE_MAX_TURNS__, __GENERAL_MAX_TURNS__)
 // are replaced with the provided values.
 func loadToolDescriptions(opts loadToolDescriptionsOptions) map[string]ToolDesc {
@@ -43,12 +43,10 @@ func loadToolDescriptions(opts loadToolDescriptionsOptions) map[string]ToolDesc 
 		opts.generalMaxTurns = defaultGeneralMaxTurns
 	}
 
-	descs := loadToolDescriptionsFromDir("tools", opts)
-	if descs == nil {
-		return nil
-	}
-	if opts.backend == backendCPSL {
-		for name, td := range loadToolDescriptionsFromDir("tools_cpsl", opts) {
+	profile := promptProfileForBackend(opts.backend)
+	descs := make(map[string]ToolDesc)
+	for _, dir := range profile.toolDescriptionDirs {
+		for name, td := range loadToolDescriptionsFromDir(dir, opts) {
 			descs[name] = td
 		}
 	}

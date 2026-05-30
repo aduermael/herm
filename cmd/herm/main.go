@@ -115,9 +115,10 @@ type App struct {
 	containerReady          bool
 	containerErr            error
 	containerStatusText     string
-	cpslWorker              *CPSLWorkerClient
+	cpslWorker              cpslWorkerBackend
 	cpslReady               bool
 	cpslErr                 error
+	cpslStatusText          string
 	containerRetryMsgIdx    int
 	containerRetryMsgActive bool
 	configReady             bool // true after workspace/project config has been merged
@@ -907,13 +908,18 @@ func (a *App) handleResult(result any) {
 		}
 		a.cpslReady = true
 		a.cpslErr = nil
+		a.cpslStatusText = "ready (/workdir)"
 
 	case cpslErrMsg:
 		a.cpslErr = msg.err
 		a.cpslReady = false
+		a.cpslStatusText = "error"
 		if msg.err != nil {
 			a.messages = append(a.messages, chatMessage{kind: msgError, content: msg.err.Error()})
 		}
+
+	case cpslStatusMsg:
+		a.cpslStatusText = msg.text
 
 	case containerStatusMsg:
 		a.containerStatusText = msg.text

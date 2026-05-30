@@ -1,5 +1,5 @@
-{{/* communication: response style guidelines. Used by system.md only (main agent). */}}
-{{define "communication"}}
+{{/* common/communication: response style guidelines. Used by main agents. */}}
+{{define "common/communication"}}
 
 ## Communication
 

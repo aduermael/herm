@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -186,16 +188,89 @@ func TestContainerRuntimeToolsUnchangedWhenReady(t *testing.T) {
 	}
 }
 
+func TestVersionDisplayMessageCPSLDoesNotMentionContainer(t *testing.T) {
+	msg := versionDisplayMessage(backendCPSL)
+	if !strings.Contains(msg.content, "CPSL sandbox") {
+		t.Fatalf("version message = %q, want CPSL sandbox label", msg.content)
+	}
+	if strings.Contains(msg.content, "container") {
+		t.Fatalf("version message = %q, should not mention container in CPSL mode", msg.content)
+	}
+}
+
 func TestCPSLCommandAutocompleteExcludesUnavailableCommands(t *testing.T) {
 	matches := filterCommandsForBackend("/", backendCPSL)
 	seen := make(map[string]bool, len(matches))
 	for _, match := range matches {
 		seen[match] = true
 	}
-	for _, forbidden := range []string{"/branches", "/shell", "/worktrees"} {
+	if !seen["/shell"] {
+		t.Fatalf("CPSL autocomplete did not include /shell in %v", matches)
+	}
+	for _, forbidden := range []string{"/branches", "/worktrees"} {
 		if seen[forbidden] {
 			t.Fatalf("CPSL autocomplete included unavailable command %q in %v", forbidden, matches)
 		}
+	}
+}
+
+func TestRunCPSLShellRoutesCommandsThroughWorker(t *testing.T) {
+	exitCode := 0
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stdout:   "/workdir\n",
+			ExitCode: &exitCode,
+			CWD:      "/workdir/reports",
+		},
+	}
+	var output bytes.Buffer
+
+	err := runCPSLShell(runCPSLShellOptions{
+		evaluator:      worker,
+		input:          strings.NewReader("/bin/pwd\nexit\n"),
+		output:         &output,
+		timeoutSeconds: 33,
+	})
+
+	if err != nil {
+		t.Fatalf("runCPSLShell: %v", err)
+	}
+	if worker.command != "/bin/pwd" {
+		t.Fatalf("command = %q, want /bin/pwd", worker.command)
+	}
+	if worker.timeout != 33 {
+		t.Fatalf("timeout = %d, want 33", worker.timeout)
+	}
+	got := output.String()
+	if !strings.Contains(got, "/workdir\n") || !strings.Contains(got, "cpsl:/workdir/reports$") {
+		t.Fatalf("CPSL shell output = %q, want stdout and updated cwd prompt", got)
+	}
+}
+
+func TestRunCPSLShellNonZeroAndEvalFailureDoNotFallback(t *testing.T) {
+	exitCode := 7
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stderr:   "missing\n",
+			ExitCode: &exitCode,
+			CWD:      cpslWorkerInitialCW,
+		},
+	}
+	var output bytes.Buffer
+
+	err := runCPSLShell(runCPSLShellOptions{
+		evaluator: worker,
+		input:     strings.NewReader("missing\nexit\n"),
+		output:    &output,
+	})
+
+	if err != nil {
+		t.Fatalf("runCPSLShell: %v", err)
+	}
+	if got := output.String(); !strings.Contains(got, "missing\n") || !strings.Contains(got, "exit code: 7") {
+		t.Fatalf("CPSL shell output = %q, want stderr and exit code", got)
 	}
 }
 
