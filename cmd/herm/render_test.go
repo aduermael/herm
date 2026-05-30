@@ -2918,11 +2918,14 @@ func TestIsSleepWaitCommand(t *testing.T) {
 		want     bool
 	}{
 		{"pure sleep", "bash", `{"command":"sleep 15"}`, true},
+		{"pure sleep local sandbox bash", toolLocalSandboxExecBash, `{"command":"sleep 15"}`, true},
 		{"sleep with echo", "bash", `{"command":"sleep 30 && echo done"}`, true},
 		{"sleep with quoted echo", "bash", `{"command":"sleep 5 && echo \"done waiting\""}`, true},
 		{"sleep in pipeline", "bash", `{"command":"sleep 5 && ls -la && echo done"}`, false},
+		{"sleep in local sandbox bash pipeline", toolLocalSandboxExecBash, `{"command":"sleep 5 && ls -la && echo done"}`, false},
 		{"non-sleep bash", "bash", `{"command":"ls -la"}`, false},
 		{"non-bash tool", "agent", `{"command":"sleep 10"}`, false},
+		{"native sandbox tool", toolLocalSandboxExec, `{"script":"task.wait(10)"}`, false},
 		{"empty command", "bash", `{"command":""}`, false},
 		{"sleep with leading space", "bash", `{"command":"  sleep 10"}`, true},
 	}

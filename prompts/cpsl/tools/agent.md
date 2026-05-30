@@ -36,7 +36,7 @@ When spawning multiple general-mode sub-agents, ensure they work on separate fil
 **Reading results:**
 - Results have a compact header: `[agent:<id> turns:<N/M> summary:<method>]` followed by an `[output: <path>]` pointer to the full output file.
 - `summary:model` - structured summary (STATUS/FILES/FINDINGS/NEXT); usually sufficient to act on.
-- `summary:truncated` - naive truncation; inspect the full output file with Luau, for example `print(fs.read("/workdir/.herm/agents/<agent_id>.md"))`.
+- `summary:truncated` - naive truncation; inspect the full output file with `local_sandbox_exec`, for example `print(fs.read("/workdir/.herm/agents/<agent_id>.md"))`.
 - `[errors: ...]` - sub-agent hit errors; review and consider retrying with a narrower task.
 - Turns count LLM response cycles, not individual tool calls (one response with 5 tool calls = 1 turn). N=M means the sub-agent hit its turn limit and may have incomplete results.
 

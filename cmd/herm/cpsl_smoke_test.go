@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,7 +94,7 @@ func writeCPSLSmokeToolCall(w io.Writer, idx int, script string) {
 	item := map[string]any{
 		"type":      "function_call",
 		"call_id":   callID,
-		"name":      "luau",
+		"name":      toolLocalSandboxExec,
 		"arguments": string(args),
 	}
 	writeCPSLSmokeSSE(w, map[string]any{
@@ -104,7 +105,7 @@ func writeCPSLSmokeToolCall(w io.Writer, idx int, script string) {
 	writeCPSLSmokeSSE(w, map[string]any{
 		"type":         "response.function_call_arguments.done",
 		"output_index": 0,
-		"name":         "luau",
+		"name":         toolLocalSandboxExec,
 		"arguments":    string(args),
 	})
 	writeCPSLSmokeSSE(w, map[string]any{
@@ -201,6 +202,7 @@ func TestCPSLHeadlessSmoke(t *testing.T) {
 		assertFileContains(t, filepath.Join(workspace, "phase8-output.csv"), "phase8,ok")
 
 		requests := llm.bodiesSince(start)
+		requireSmokeRequestToolContract(t, requests)
 		requireSmokeRequestContains(t, requests, "/workdir")
 		requireSmokeRequestContains(t, requests, "phase8-input.md")
 		requireSmokeRequestContains(t, requests, "phase8 fixture")
@@ -394,4 +396,33 @@ func requireSmokeRequestContains(t *testing.T, requests []string, want string) {
 		}
 	}
 	t.Fatalf("no LLM request contained %q; requests:\n%s", want, strings.Join(requests, "\n--- request ---\n"))
+}
+
+func requireSmokeRequestToolContract(t *testing.T, requests []string) {
+	t.Helper()
+	for _, request := range requests {
+		var body struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		}
+		if err := json.Unmarshal([]byte(request), &body); err != nil || len(body.Tools) == 0 {
+			continue
+		}
+
+		var names []string
+		for _, tool := range body.Tools {
+			names = append(names, tool.Name)
+		}
+		if len(names) < 2 || names[0] != toolLocalSandboxExec || names[1] != toolLocalSandboxExecBash {
+			t.Fatalf("CPSL request tools = %v, want %s then %s first", names, toolLocalSandboxExec, toolLocalSandboxExecBash)
+		}
+		for _, forbidden := range []string{toolBash, "luau"} {
+			if slices.Contains(names, forbidden) {
+				t.Fatalf("CPSL request tools = %v, should not include %q", names, forbidden)
+			}
+		}
+		return
+	}
+	t.Fatalf("no LLM request contained tool definitions; requests:\n%s", strings.Join(requests, "\n--- request ---\n"))
 }

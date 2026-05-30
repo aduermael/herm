@@ -653,6 +653,9 @@ func TestCPSLBashToolDefinitionDescribesSandboxInput(t *testing.T) {
 	def := tool.Definition()
 	schema := string(def.InputSchema)
 
+	if def.Name != toolLocalSandboxExecBash {
+		t.Fatalf("tool name = %q, want %s", def.Name, toolLocalSandboxExecBash)
+	}
 	for _, want := range []string{"Bash-compatible sandbox input", "run `help`", "sandbox command/module discovery"} {
 		if !strings.Contains(schema, want) {
 			t.Fatalf("CPSL bash schema missing %q: %s", want, schema)
@@ -742,10 +745,10 @@ func TestCPSLLuauToolDefinitionDescribesNativeRuntime(t *testing.T) {
 	def := tool.Definition()
 	schema := string(def.InputSchema)
 
-	if def.Name != "luau" {
-		t.Fatalf("tool name = %q, want luau", def.Name)
+	if def.Name != toolLocalSandboxExec {
+		t.Fatalf("tool name = %q, want %s", def.Name, toolLocalSandboxExec)
 	}
-	for _, want := range []string{"Native Luau source", "local sandbox", "/workdir", "reusable .luau source"} {
+	for _, want := range []string{"Native Luau source", "local sandbox", "/workdir", "Use this by default", "reusable .luau source"} {
 		if !strings.Contains(schema, want) {
 			t.Fatalf("CPSL luau schema missing %q: %s", want, schema)
 		}
