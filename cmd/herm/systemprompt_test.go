@@ -80,7 +80,7 @@ func TestSystemPromptSeparatesProjectContextFromRole(t *testing.T) {
 	if strings.Contains(prompt, "cmd/herm/terminal_title_test.goYou") {
 		t.Fatal("system prompt should not concatenate project context with role text")
 	}
-	if !strings.Contains(prompt, "cmd/herm/terminal_title_test.go\n## Role\n\nYou are an expert coding agent") {
+	if fileIdx, roleIdx := strings.Index(prompt, "cmd/herm/terminal_title_test.go"), strings.Index(prompt, "## Role\n\nYou are an expert coding agent"); fileIdx < 0 || roleIdx <= fileIdx {
 		t.Fatal("system prompt should separate project context from role text with an explicit role boundary")
 	}
 }
@@ -91,7 +91,7 @@ func TestSubAgentSystemPromptSeparatesProjectContextFromRole(t *testing.T) {
 	if strings.Contains(prompt, "cmd/herm/subagent.goYou") {
 		t.Fatal("sub-agent prompt should not concatenate project context with role text")
 	}
-	if !strings.Contains(prompt, "cmd/herm/subagent.go\n## Role\n\nYou are a sub-agent") {
+	if fileIdx, roleIdx := strings.Index(prompt, "cmd/herm/subagent.go"), strings.Index(prompt, "## Role\n\nYou are a sub-agent"); fileIdx < 0 || roleIdx <= fileIdx {
 		t.Fatal("sub-agent prompt should separate project context from role text with an explicit role boundary")
 	}
 	if !strings.Contains(prompt, "Treat the snapshot as background for the assigned task, not as a separate task list") {
@@ -283,7 +283,26 @@ func TestBuildSystemPromptNoPersonality(t *testing.T) {
 
 func TestPromptTemplateParsing(t *testing.T) {
 	// Verify all expected templates are defined in the embedded FS.
-	expected := []string{"system", "system_subagent", "role", "role_subagent", "tools", "practices", "communication", "personality", "skills", "environment"}
+	expected := []string{
+		"common/communication",
+		"common/main_workflow",
+		"common/personality",
+		"common/practices",
+		"common/project_context",
+		"common/skills",
+		"common/subagent_budget",
+		"common/subagent_intro",
+		"container/environment",
+		"container/role",
+		"container/role_subagent",
+		"container/subagent_exploration",
+		"container/tools",
+		"cpsl/environment",
+		"cpsl/role",
+		"cpsl/role_subagent",
+		"cpsl/subagent_exploration",
+		"cpsl/tools",
+	}
 	for _, name := range expected {
 		tmpl := prompts.Templates.Lookup(name)
 		if tmpl == nil {
@@ -390,12 +409,12 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "No container is running"} {
+	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible commands", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	for _, forbidden := range []string{"Container image", "dev container", "Dockerfile", "Host exceptions", "devenv"} {
+	for _, forbidden := range []string{"Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "local_sandbox_exec"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("CPSL prompt contains %q:\n%s", forbidden, prompt)
 		}
@@ -412,12 +431,12 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "No container is running"} {
+	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible commands", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	for _, forbidden := range []string{"Container image", "dev container", "Dockerfile", "Host exceptions", "devenv", "glob to discover", "read_file"} {
+	for _, forbidden := range []string{"Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "local_sandbox_exec", "glob to discover", "read_file"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("CPSL sub-agent prompt contains %q:\n%s", forbidden, prompt)
 		}
@@ -772,12 +791,20 @@ func TestToolDescriptionContainsGuidance(t *testing.T) {
 
 func TestCPSLToolDescriptionOverrides(t *testing.T) {
 	descs := loadToolDescriptions(loadToolDescriptionsOptions{workDir: "/workspace", backend: backendCPSL})
+	if len(descs) != 2 {
+		t.Fatalf("CPSL tool descriptions = %#v, want only bash and agent", descs)
+	}
+	for _, forbidden := range []string{"glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
+		if _, ok := descs[forbidden]; ok {
+			t.Fatalf("CPSL tool descriptions included unavailable tool %q", forbidden)
+		}
+	}
 
 	bash := descs["bash"]
 	if !strings.Contains(bash.Full, "CPSL") || !strings.Contains(bash.Full, "/workdir") {
 		t.Fatalf("CPSL bash description = %q, want CPSL and /workdir", bash.Full)
 	}
-	if strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "devenv") {
+	if strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "Docker") || strings.Contains(bash.Full, "devenv") {
 		t.Fatalf("CPSL bash description contains container-only guidance: %q", bash.Full)
 	}
 
@@ -785,7 +812,7 @@ func TestCPSLToolDescriptionOverrides(t *testing.T) {
 	if !strings.Contains(agent.Full, "CPSL-safe") || !strings.Contains(agent.Full, "/workdir/.herm/agents") {
 		t.Fatalf("CPSL agent description = %q, want CPSL-safe output guidance", agent.Full)
 	}
-	if strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "read_file") {
+	if strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "Docker") || strings.Contains(agent.Full, "read_file") {
 		t.Fatalf("CPSL agent description contains unavailable-tool guidance: %q", agent.Full)
 	}
 }
@@ -1167,10 +1194,12 @@ func TestBudgetConstantsFlowIntoAllOutputs(t *testing.T) {
 		WorkDir:                 "/work",
 		ContainerImage:          "alpine:latest",
 		Date:                    "2026-01-01",
+		WorkflowFirstStep:       "Understand what's needed.",
+		ProjectOrientation:      "Use the project snapshot.",
 		DefaultSubAgentMaxTurns: altGeneral,
 	}
 	var buf bytes.Buffer
-	if err := prompts.Templates.ExecuteTemplate(&buf, "role", data); err != nil {
+	if err := prompts.Templates.ExecuteTemplate(&buf, "common/main_workflow", data); err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
 	role := buf.String()

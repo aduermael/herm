@@ -3,8 +3,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +23,6 @@ var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", 
 var sessionSubcommands = []string{"/session list", "/session load", "/session show"}
 var cpslUnavailableCommands = map[string]bool{
 	"/branches":  true,
-	"/shell":     true,
 	"/worktrees": true,
 }
 
@@ -236,7 +237,7 @@ func (a *App) handleCommand(input string) {
 		if a.commandUnavailableInCPSL(cmd) {
 			return
 		}
-		a.enterShellMode()
+		a.enterShellMode(input)
 
 	case "/session":
 		a.handleSessionCommand(input)
@@ -467,12 +468,15 @@ func (a *App) isInWorktree() bool {
 
 // ─── Shell mode ───
 
-func (a *App) enterShellMode() {
+func (a *App) enterShellMode(input string) {
 	if a.backend == backendCPSL {
-		a.messages = append(a.messages, chatMessage{kind: msgError, content: "Shell mode is unavailable in CPSL mode."})
-		a.render()
+		a.enterCPSLShellMode(input)
 		return
 	}
+	a.enterContainerShellMode()
+}
+
+func (a *App) enterContainerShellMode() {
 	if a.containerErr != nil {
 		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Container error: %v", a.containerErr)})
 		a.render()
@@ -539,4 +543,139 @@ func (a *App) enterShellMode() {
 	}
 
 	a.renderFull()
+}
+
+func (a *App) enterCPSLShellMode(input string) {
+	if cpslShellLanguageUnsupported(input) {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "CPSL shell currently supports Bash-compatible input only."})
+		a.render()
+		return
+	}
+	if a.cpslErr != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("CPSL error: %v", a.cpslErr)})
+		a.render()
+		return
+	}
+	if !a.cpslReady || a.cpslWorker == nil {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL sandbox is starting... please try again in a moment."})
+		a.render()
+		return
+	}
+
+	a.stopStdinReader()
+	fmt.Print("\033[?25h")
+	fmt.Print("\033[>4;0m")
+	fmt.Print("\033[?2004l")
+	if a.oldState != nil {
+		_ = term.Restore(a.fd, a.oldState)
+	}
+
+	shellErr := runCPSLShell(runCPSLShellOptions{
+		evaluator:      a.cpslWorker,
+		input:          os.Stdin,
+		output:         os.Stdout,
+		timeoutSeconds: 120,
+	})
+
+	if a.oldState != nil {
+		if _, err := term.MakeRaw(a.fd); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to re-enter raw mode: %v\n", err)
+			a.quit = true
+			return
+		}
+	}
+	flushStdin(a.fd)
+	fmt.Print("\033[?2004h")
+	fmt.Print("\033[>4;2m")
+	setHermTerminalTitle(os.Stdout)
+	a.startStdinReader()
+	a.width = getWidth()
+
+	if shellErr != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("CPSL shell error: %v", shellErr)})
+	} else {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL shell session ended."})
+	}
+	a.renderFull()
+}
+
+func cpslShellLanguageUnsupported(input string) bool {
+	fields := strings.Fields(input)
+	for _, field := range fields[1:] {
+		switch field {
+		case "--lua", "--luau":
+			return true
+		}
+	}
+	return false
+}
+
+type runCPSLShellOptions struct {
+	evaluator      cpslBashEvaluator
+	input          io.Reader
+	output         io.Writer
+	timeoutSeconds int
+}
+
+func runCPSLShell(opts runCPSLShellOptions) error {
+	if opts.evaluator == nil {
+		return fmt.Errorf("CPSL worker not configured")
+	}
+	input := opts.input
+	if input == nil {
+		input = os.Stdin
+	}
+	output := opts.output
+	if output == nil {
+		output = os.Stdout
+	}
+	timeout := opts.timeoutSeconds
+	if timeout <= 0 {
+		timeout = 120
+	}
+
+	cwd := cpslWorkerInitialCW
+	fmt.Fprintf(output, "CPSL shell at %s. Type exit to return to Herm.\n", cwd)
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	for {
+		fmt.Fprintf(output, "cpsl:%s$ ", cwd)
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return err
+			}
+			fmt.Fprintln(output)
+			return nil
+		}
+
+		command := scanner.Text()
+		switch strings.TrimSpace(command) {
+		case "":
+			continue
+		case "exit", "/exit":
+			return nil
+		}
+
+		response, err := opts.evaluator.EvalBash(context.Background(), command, timeout)
+		if err != nil {
+			fmt.Fprintln(output, cpslBashError(response, err))
+			return nil
+		}
+		if !response.OK {
+			fmt.Fprintln(output, cpslBashError(response, nil))
+			return nil
+		}
+		if response.Stdout != "" {
+			fmt.Fprint(output, response.Stdout)
+		}
+		if response.Stderr != "" {
+			fmt.Fprint(output, response.Stderr)
+		}
+		if response.ExitCode != nil && *response.ExitCode != 0 {
+			fmt.Fprintf(output, "exit code: %d\n", *response.ExitCode)
+		}
+		if response.CWD != "" {
+			cwd = response.CWD
+		}
+	}
 }

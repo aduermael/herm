@@ -174,21 +174,29 @@ func (a *App) maybeShowInitialModels() {
 	}
 	a.normalizeProjectConfigWithCurrentModels()
 	a.shownInitialModel = true
-	a.messages = append(a.messages, versionDisplayMessage())
+	a.messages = append(a.messages, versionDisplayMessage(a.backend))
 	a.showProjectModelDiagnostics()
 	a.showModelChange(a.config.resolveActiveModel(a.models))
 }
 
-func versionDisplayMessage() chatMessage {
-	content := "v" + Version + " (container: " + hermImageTag + ")"
+func versionDisplayMessage(backend backendKind) chatMessage {
+	suffix := backendVersionSuffix(backend)
+	content := "v" + Version + " " + suffix
 	return chatMessage{
 		kind:    msgInfo,
 		content: content,
 		inlineBlocks: []inlineBlock{
 			styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "v" + Version}),
-			styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: "(container: " + hermImageTag + ")"}),
+			styledInlineBlock(styledInlineBlockOptions{style: "\033[34;3m", text: suffix}),
 		},
 	}
+}
+
+func backendVersionSuffix(backend backendKind) string {
+	if backend == backendCPSL {
+		return "(CPSL sandbox)"
+	}
+	return "(container: " + hermImageTag + ")"
 }
 
 func (a *App) refreshResolvedModelDisplay() {

@@ -1,5 +1,5 @@
-{{/* personality: optional custom personality. Renders only when .Personality is set. Used by system.md only. */}}
-{{define "personality"}}{{if .Personality}}
+{{/* common/personality: optional custom personality. Used by main agents. */}}
+{{define "common/personality"}}{{if .Personality}}
 
 ## Personality
 

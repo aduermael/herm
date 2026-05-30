@@ -51,6 +51,10 @@ type cpslErrMsg struct {
 	err error
 }
 
+type cpslStatusMsg struct {
+	text string
+}
+
 type containerErrMsg struct {
 	err error
 }
@@ -292,6 +296,7 @@ type bootCPSLWorkerCmdOptions struct {
 }
 
 func bootCPSLWorkerCmd(opts bootCPSLWorkerCmdOptions) {
+	opts.ch <- cpslStatusMsg{text: "starting…"}
 	client, err := NewCPSLWorkerClient(newCPSLWorkerClientOptions{
 		LibraryPath:  opts.config.LibraryPath,
 		Workspace:    opts.workspace,
@@ -299,6 +304,7 @@ func bootCPSLWorkerCmd(opts bootCPSLWorkerCmdOptions) {
 		DenyDomains:  append([]string(nil), opts.config.DenyDomains...),
 	})
 	if err != nil {
+		opts.ch <- cpslStatusMsg{text: "library unavailable"}
 		opts.ch <- cpslErrMsg{err: errCPSLLibrary}
 		return
 	}

@@ -544,6 +544,23 @@ func TestBuildInputRows(t *testing.T) {
 	}
 }
 
+func TestBuildInputRowsCPSLStatusUsesCPSLLabel(t *testing.T) {
+	app := &App{
+		width:          80,
+		backend:        backendCPSL,
+		cpslStatusText: "ready (/workdir)",
+	}
+
+	rows := app.buildInputRows()
+	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	if !strings.Contains(plain, "cpsl: ready (/workdir)") {
+		t.Fatalf("CPSL status rows = %q, want cpsl status label", plain)
+	}
+	if strings.Contains(plain, "container:") {
+		t.Fatalf("CPSL status rows = %q, should not include container label", plain)
+	}
+}
+
 func TestLayoutInlineBlocks(t *testing.T) {
 	strip := func(rows []string) []string {
 		out := make([]string, 0, len(rows))

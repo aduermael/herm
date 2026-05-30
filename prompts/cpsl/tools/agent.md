@@ -4,7 +4,7 @@ description: Spawn a CPSL-safe sub-agent to handle a complex subtask
 runs_on: cpsl
 ---
 
-Spawn a sub-agent with its own context window. Sub-agents inherit the same CPSL-safe prompt and tool set: commands run in CPSL at `/workdir`, no container is running, and no host shell or host git tool is available.
+Spawn a sub-agent with its own context window. Sub-agents inherit the same CPSL-safe prompt and tool set: commands run in CPSL at `/workdir`, cannot leave the sandbox, and have no host shell or host git tool.
 
 **Modes - you must specify one:**
 - `"explore"` - uses a fast, cheap model. For research, search, reading files, investigating issues, gathering information.

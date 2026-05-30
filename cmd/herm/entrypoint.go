@@ -38,7 +38,11 @@ func main() {
 		return
 	}
 	if opts.version {
-		fmt.Println("herm " + Version + " (container: " + hermImageTag + ")")
+		backend := backendContainer
+		if opts.cpsl.LibraryPath != "" {
+			backend = backendCPSL
+		}
+		fmt.Println("herm " + Version + " " + backendVersionSuffix(backend))
 		return
 	}
 

@@ -14,6 +14,11 @@ import (
 
 const cpslWorkerStartupTimeout = 10 * time.Second
 
+type cpslWorkerBackend interface {
+	cpslBashEvaluator
+	Close() error
+}
+
 type CPSLWorkerClient struct {
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
