@@ -1,5 +1,5 @@
 ---
-name: luau
+name: local_sandbox_exec
 description: Run native Luau source in the local sandbox at /workdir
 runs_on: cpsl
 ---

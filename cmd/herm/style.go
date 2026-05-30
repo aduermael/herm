@@ -532,7 +532,7 @@ func shouldShowToolOutput(opts shouldShowToolOutputOptions) bool {
 	switch entry.toolName {
 	case "edit_file", "write_file":
 		return true
-	case "luau", "bash", "git":
+	case toolLocalSandboxExec, toolLocalSandboxExecBash, "luau", "bash", "git":
 		return opts.idx == opts.lastResultIdx
 	default:
 		return false

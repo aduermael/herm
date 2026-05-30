@@ -27,6 +27,12 @@ const (
 	truncTailLines = 60        // lines to keep from the end
 )
 
+const (
+	toolBash                 = "bash"
+	toolLocalSandboxExec     = "local_sandbox_exec"
+	toolLocalSandboxExecBash = "local_sandbox_exec_bash"
+)
+
 type bashRunner interface {
 	RunBash(ctx context.Context, command string, timeout int) (CommandResult, error)
 }
@@ -98,6 +104,7 @@ func formatCPSLEvalError(response cpslEvalResponse, err error) error {
 
 // BashTool executes commands through the configured bash runner.
 type BashTool struct {
+	name                string
 	runner              bashRunner
 	timeout             int // default timeout in seconds
 	descriptionFallback string
@@ -117,6 +124,7 @@ func NewBashTool(opts NewBashToolOptions) *BashTool {
 		timeout = 120
 	}
 	return &BashTool{
+		name:                toolBash,
 		runner:              containerBashRunner{container: opts.Container},
 		timeout:             timeout,
 		descriptionFallback: "Run a shell command in the dev container. Output is truncated to 80 lines / 12KB (head+tail).",
@@ -137,6 +145,7 @@ func NewCPSLBashTool(opts NewCPSLBashToolOptions) *BashTool {
 		timeout = 120
 	}
 	return &BashTool{
+		name:                toolLocalSandboxExecBash,
 		runner:              cpslBashRunner{worker: opts.Worker},
 		timeout:             timeout,
 		descriptionFallback: "Run Bash-compatible sandbox command input at /workdir. Output is truncated to 80 lines / 12KB (head+tail).",
@@ -145,14 +154,18 @@ func NewCPSLBashTool(opts NewCPSLBashToolOptions) *BashTool {
 }
 
 func (t *BashTool) Definition() types.ToolDefinition {
+	name := t.name
+	if name == "" {
+		name = toolBash
+	}
 	commandDescription := t.commandDescription
 	if commandDescription == "" {
 		commandDescription = "The bash command to execute"
 	}
 	commandDescriptionJSON, _ := json.Marshal(commandDescription)
 	return types.ToolDefinition{
-		Name:        "bash",
-		Description: getToolDescription(getToolDescriptionOptions{name: "bash", fallback: t.descriptionFallback}),
+		Name:        name,
+		Description: getToolDescription(getToolDescriptionOptions{name: name, fallback: t.descriptionFallback}),
 		InputSchema: json.RawMessage(fmt.Sprintf(`{
 			"type": "object",
 			"properties": {
@@ -242,14 +255,14 @@ func NewCPSLLuauTool(opts NewCPSLLuauToolOptions) *CPSLLuauTool {
 
 func (t *CPSLLuauTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
-		Name:        "luau",
-		Description: getToolDescription(getToolDescriptionOptions{name: "luau", fallback: "Run native Luau source in the local sandbox at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
+		Name:        toolLocalSandboxExec,
+		Description: getToolDescription(getToolDescriptionOptions{name: toolLocalSandboxExec, fallback: "Run native Luau source in the local sandbox at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"script": {
 					"type": "string",
-					"description": "Native Luau source to run in the local sandbox at /workdir. For repeated automation, keep reusable .luau source in the workspace and pass that source here."
+					"description": "Native Luau source to run in the local sandbox at /workdir. Use this by default for sandbox execution. For repeated automation, keep reusable .luau source in the workspace and pass that source here."
 				},
 				"timeout": {
 					"type": "integer",

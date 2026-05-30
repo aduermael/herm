@@ -107,7 +107,7 @@ func TestCPSLRuntimeToolsExcludeContainerToolsBeforeWorker(t *testing.T) {
 	}
 }
 
-func TestCPSLRuntimeToolsExposeOnlyLuauAfterWorkerReady(t *testing.T) {
+func TestCPSLRuntimeToolsExposeLocalSandboxToolsAfterWorkerReady(t *testing.T) {
 	app := &App{
 		backend:        backendCPSL,
 		containerReady: true,
@@ -121,13 +121,13 @@ func TestCPSLRuntimeToolsExposeOnlyLuauAfterWorkerReady(t *testing.T) {
 
 	tools := app.runtimeTools()
 	names := toolNameSet(tools)
-	if len(names) != 1 || !names["luau"] {
-		t.Fatalf("runtimeTools names = %#v, want only luau", names)
+	if len(names) != 2 || !names[toolLocalSandboxExec] || !names[toolLocalSandboxExecBash] {
+		t.Fatalf("runtimeTools names = %#v, want local_sandbox_exec and local_sandbox_exec_bash", names)
 	}
-	if got := tools[0].Definition().Name; got != "luau" {
-		t.Fatalf("first CPSL runtime tool = %q, want luau", got)
+	if got := tools[0].Definition().Name; got != toolLocalSandboxExec {
+		t.Fatalf("first CPSL runtime tool = %q, want %s", got, toolLocalSandboxExec)
 	}
-	for _, forbidden := range []string{"bash", "glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
+	for _, forbidden := range []string{toolBash, "luau", "glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
 		if names[forbidden] {
 			t.Fatalf("runtimeTools exposed %q in CPSL mode", forbidden)
 		}
@@ -374,6 +374,7 @@ func TestCPSLSubAgentToolsPreserveCPSLSafeSet(t *testing.T) {
 	parent := NewSubAgentTool(SubAgentConfig{
 		Tools: []Tool{
 			NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: nil, Timeout: 120}),
+			NewCPSLBashTool(NewCPSLBashToolOptions{Worker: nil, Timeout: 120}),
 		},
 		MaxDepth: 2,
 		Backend:  backendCPSL,
@@ -381,8 +382,8 @@ func TestCPSLSubAgentToolsPreserveCPSLSafeSet(t *testing.T) {
 
 	tools := parent.buildSubAgentTools(ModeGeneral)
 	names := toolNameSet(tools)
-	if len(names) != 2 || !names["luau"] || !names["agent"] {
-		t.Fatalf("sub-agent tool names = %#v, want luau and nested agent", names)
+	if len(names) != 3 || !names[toolLocalSandboxExec] || !names[toolLocalSandboxExecBash] || !names["agent"] {
+		t.Fatalf("sub-agent tool names = %#v, want local sandbox tools and nested agent", names)
 	}
 	for _, tool := range tools {
 		if child, ok := tool.(*SubAgentTool); ok && child.backend != backendCPSL {
