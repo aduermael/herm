@@ -987,6 +987,56 @@ func TestCtrlWClearsSecretField(t *testing.T) {
 	}
 }
 
+func TestEnterConfigModeClearsStaleProjectModelsWhenNoProviders(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	repoRoot := t.TempDir()
+
+	app := &App{
+		repoRoot: repoRoot,
+		globalConfig: Config{
+			ActiveModel:      "orphan/global-active",
+			ExplorationModel: "orphan/global-explore",
+		},
+		projectConfig: ProjectConfig{
+			ActiveModel:      "anthropic/claude-opus-4-6",
+			ExplorationModel: "anthropic/claude-haiku-4-5",
+			Personality:      "kept",
+		},
+		models:   defaultTestModels(),
+		resultCh: make(chan any, 8),
+		headless: true,
+	}
+
+	app.enterConfigMode()
+	app.stopConfigTicker()
+
+	if app.cfgDraft.ActiveModel != "" || app.cfgDraft.ExplorationModel != "" {
+		t.Fatalf("global draft models = %q/%q, want cleared", app.cfgDraft.ActiveModel, app.cfgDraft.ExplorationModel)
+	}
+	if app.cfgProjectDraft.ActiveModel != "" || app.cfgProjectDraft.ExplorationModel != "" {
+		t.Fatalf("project draft models = %q/%q, want cleared", app.cfgProjectDraft.ActiveModel, app.cfgProjectDraft.ExplorationModel)
+	}
+	if app.cfgProjectDraft.Personality != "kept" {
+		t.Fatalf("Personality = %q, want unrelated project fields preserved", app.cfgProjectDraft.Personality)
+	}
+
+	app.cfgDraft.Deployments = map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}
+	app.exitConfigMode(true)
+
+	if app.projectConfig.ActiveModel != "" || app.projectConfig.ExplorationModel != "" {
+		t.Fatalf("saved project models = %q/%q, want cleared after adding provider", app.projectConfig.ActiveModel, app.projectConfig.ExplorationModel)
+	}
+	if app.projectConfig.Personality != "kept" {
+		t.Fatalf("saved Personality = %q, want preserved", app.projectConfig.Personality)
+	}
+	if modelsReadyForAgent(app.projectModelConfig()) {
+		t.Fatal("modelsReadyForAgent should be false so user gets Select Active Model hint")
+	}
+	if !configNeedsModelSelection(app.projectModelConfig()) {
+		t.Fatal("configNeedsModelSelection should be true after adding provider without explicit model")
+	}
+}
+
 func TestEnterConfigModeSetsPreferredAPIKeyCursorFromEffectiveProvider(t *testing.T) {
 	cases := []struct {
 		name      string

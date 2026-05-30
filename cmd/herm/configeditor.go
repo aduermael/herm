@@ -127,6 +127,10 @@ func (a *App) enterConfigMode() {
 		a.cfgDraft.Deployments = cloned
 	}
 	a.cfgProjectDraft = a.projectConfig
+	if len(a.cfgDraft.configuredProviders()) == 0 {
+		a.cfgProjectDraft.ActiveModel = ""
+		a.cfgProjectDraft.ExplorationModel = ""
+	}
 	a.startConfigTicker()
 	a.renderInput()
 }
