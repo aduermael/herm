@@ -153,8 +153,8 @@ func handleCPSLWorkerRequest(evaluator cpslSessionEvaluator, session cpslSession
 	if request.Op != cpslWorkerOpEval {
 		return cpslWorkerAction{response: cpslErrorResponse(request.ID, "invalid_request", "Unsupported CPSL worker operation")}
 	}
-	if request.Language != cpslWorkerLanguage {
-		return cpslWorkerAction{response: cpslErrorResponse(request.ID, "unsupported_language", "Only bash is supported by this CPSL worker")}
+	if !isSupportedCPSLLanguage(request.Language) {
+		return cpslWorkerAction{response: cpslErrorResponse(request.ID, "unsupported_language", "Supported CPSL worker languages are luau and bash")}
 	}
 	if request.TimeoutMS <= 0 {
 		return cpslWorkerAction{response: cpslErrorResponse(request.ID, "invalid_request", "timeout_ms must be positive")}

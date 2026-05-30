@@ -19,7 +19,7 @@ func (f fakeCPSLEvaluator) eval(session cpslSession, requestJSON string) (string
 }
 
 func TestServeCPSLWorkerEvalPreservesID(t *testing.T) {
-	request := `{"id":7,"op":"eval","language":"bash","input":"pwd","timeout_ms":1000}` + "\n"
+	request := `{"id":7,"op":"eval","language":"luau","input":"print('ok')","timeout_ms":1000}` + "\n"
 	var stdout bytes.Buffer
 
 	err := serveCPSLWorker(serveCPSLWorkerOptions{
@@ -32,10 +32,10 @@ func TestServeCPSLWorkerEvalPreservesID(t *testing.T) {
 			if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
 				t.Fatalf("eval request JSON: %v", err)
 			}
-			if req.Language != "bash" || req.Input != "pwd" || req.TimeoutMS != 1000 {
+			if req.Language != "luau" || req.Input != "print('ok')" || req.TimeoutMS != 1000 {
 				t.Fatalf("eval request = %#v", req)
 			}
-			return `{"ok":true,"stdout":"/workdir\n","stderr":"","exit_code":0,"error":null,"warnings":[],"cwd":"/workdir"}`, nil
+			return `{"ok":true,"stdout":"ok\n","stderr":"","exit_code":0,"error":null,"warnings":[],"cwd":"/workdir"}`, nil
 		}},
 		session: 1,
 		stdin:   strings.NewReader(request),
@@ -50,7 +50,7 @@ func TestServeCPSLWorkerEvalPreservesID(t *testing.T) {
 	if response.ID != 7 {
 		t.Fatalf("response ID = %d, want 7", response.ID)
 	}
-	if !response.OK || response.Stdout != "/workdir\n" {
+	if !response.OK || response.Stdout != "ok\n" {
 		t.Fatalf("response = %#v", response)
 	}
 }
@@ -149,7 +149,7 @@ func TestCPSLSessionConfigJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
 		t.Fatal(err)
 	}
-	if config.InitialCWD != "/workdir" || config.Language != "bash" {
+	if config.InitialCWD != "/workdir" || config.Language != "luau" {
 		t.Fatalf("config = %#v", config)
 	}
 	if len(config.Mounts) != 1 || config.Mounts[0].Host != "/tmp/work" || config.Mounts[0].VirtualPath != "/workdir" || config.Mounts[0].Mode != "rw" {
@@ -182,16 +182,17 @@ func TestCPSLSessionConfigJSONUsesEmptyDomainArrays(t *testing.T) {
 }
 
 func TestValidateCPSLBackendMetadataJSON(t *testing.T) {
-	valid := `{"name":"cpsl","abi_version":1,"version":"0.1.0","languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`
+	valid := `{"name":"cpsl","abi_version":1,"version":"0.1.0","languages":["luau","bash"],"capabilities":{"mounts":true,"network_policy":true}}`
 	if err := validateCPSLBackendMetadataJSON(valid); err != nil {
 		t.Fatalf("valid metadata: %v", err)
 	}
 
 	tests := []string{
 		`{"name":"other","abi_version":1,"languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
-		`{"name":"cpsl","abi_version":2,"languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":2,"languages":["luau","bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
 		`{"name":"cpsl","abi_version":1,"languages":["python"],"capabilities":{"mounts":true,"network_policy":true}}`,
-		`{"name":"cpsl","abi_version":1,"languages":["bash"],"capabilities":{"mounts":false,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":1,"languages":["luau"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":1,"languages":["luau","bash"],"capabilities":{"mounts":false,"network_policy":true}}`,
 		`not-json`,
 	}
 	for _, tt := range tests {

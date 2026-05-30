@@ -65,8 +65,11 @@ func validateCPSLBackendMetadataJSON(metadataJSON string) error {
 	if metadata.ABIVersion != cpslABIVersion {
 		return fmt.Errorf("invalid CPSL metadata ABI version %d", metadata.ABIVersion)
 	}
-	if !containsString(metadata.Languages, cpslWorkerLanguage) {
-		return fmt.Errorf("CPSL metadata does not advertise bash support")
+	if !containsString(metadata.Languages, cpslLanguageLuau) {
+		return fmt.Errorf("CPSL metadata does not advertise native Luau support")
+	}
+	if !containsString(metadata.Languages, cpslLanguageBash) {
+		return fmt.Errorf("CPSL metadata does not advertise bash compatibility support")
 	}
 	if !metadata.Capabilities.Mounts || !metadata.Capabilities.NetworkPolicy {
 		return fmt.Errorf("CPSL metadata does not advertise required capabilities")
@@ -124,7 +127,7 @@ func cpslSessionConfigJSON(workspace string, allowDomains, denyDomains []string)
 			Mode:        "rw",
 		}},
 		InitialCWD: cpslWorkerInitialCW,
-		Language:   cpslWorkerLanguage,
+		Language:   cpslLanguageLuau,
 		HTTP: cpslHTTPConfig{
 			Mode:         "policy",
 			AllowDomains: cloneCPSLStringList(allowDomains),

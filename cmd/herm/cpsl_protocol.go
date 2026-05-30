@@ -8,7 +8,8 @@ import (
 const (
 	cpslABIVersion      = 1
 	cpslWorkerOpEval    = "eval"
-	cpslWorkerLanguage  = "bash"
+	cpslLanguageLuau    = "luau"
+	cpslLanguageBash    = "bash"
 	cpslWorkerInitialCW = "/workdir"
 )
 
@@ -68,6 +69,10 @@ func cpslTimeoutResponse(id int64, timeoutMS int) cpslEvalResponse {
 		"timeout",
 		fmt.Sprintf("Command timed out after %d ms", timeoutMS),
 	)
+}
+
+func isSupportedCPSLLanguage(language string) bool {
+	return language == cpslLanguageLuau || language == cpslLanguageBash
 }
 
 func decodeCPSLEvalResponse(data []byte, requestID int64) (cpslEvalResponse, error) {

@@ -16,6 +16,7 @@ import (
 
 // PromptData holds all values passed to the system prompt templates.
 type PromptData struct {
+	HasLuau            bool
 	HasBash            bool
 	HostTools          []string // tool names that execute on the host (e.g. "git")
 	HasDevenv          bool
@@ -171,6 +172,7 @@ func newPromptData(opts newPromptDataOptions) PromptData {
 	}
 
 	return PromptData{
+		HasLuau:                 toolNames["luau"],
 		HasBash:                 toolNames["bash"],
 		HostTools:               hostTools,
 		HasDevenv:               toolNames["devenv"],

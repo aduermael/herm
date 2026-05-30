@@ -233,7 +233,7 @@ func (a *App) startAgent(userMessage string) {
 
 	tools := a.runtimeTools()
 	if a.backend == backendCPSL && !a.cpslReady {
-		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL sandbox is still starting — the agent won't have bash until it's ready."})
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL sandbox is still starting — the agent won't have CPSL tools until it's ready."})
 		a.render()
 		return
 	}
@@ -412,7 +412,10 @@ func (a *App) runtimeTools() []Tool {
 		if !a.cpslReady || a.cpslWorker == nil {
 			return nil
 		}
-		return []Tool{NewCPSLBashTool(NewCPSLBashToolOptions{Worker: a.cpslWorker, Timeout: 120})}
+		return []Tool{
+			NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: a.cpslWorker, Timeout: 120}),
+			NewCPSLBashTool(NewCPSLBashToolOptions{Worker: a.cpslWorker, Timeout: 120}),
+		}
 	}
 
 	var tools []Tool

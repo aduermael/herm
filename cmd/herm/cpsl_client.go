@@ -15,7 +15,7 @@ import (
 const cpslWorkerStartupTimeout = 10 * time.Second
 
 type cpslWorkerBackend interface {
-	cpslBashEvaluator
+	cpslEvaluator
 	Close() error
 }
 
@@ -75,8 +75,8 @@ func NewCPSLWorkerClient(opts newCPSLWorkerClientOptions) (*CPSLWorkerClient, er
 	defer cancel()
 	response, err := client.eval(ctx, cpslWorkerRequest{
 		Op:        cpslWorkerOpEval,
-		Language:  cpslWorkerLanguage,
-		Input:     "pwd",
+		Language:  cpslLanguageLuau,
+		Input:     `print("ok")`,
 		TimeoutMS: int(cpslWorkerStartupTimeout / time.Millisecond),
 	})
 	if err != nil || !response.OK {
@@ -140,6 +140,14 @@ func cpslWorkerProcessArgs(opts cpslWorkerProcessOptions) []string {
 }
 
 func (c *CPSLWorkerClient) EvalBash(ctx context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error) {
+	return c.EvalCPSL(ctx, cpslLanguageBash, input, timeoutSeconds)
+}
+
+func (c *CPSLWorkerClient) EvalLuau(ctx context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error) {
+	return c.EvalCPSL(ctx, cpslLanguageLuau, input, timeoutSeconds)
+}
+
+func (c *CPSLWorkerClient) EvalCPSL(ctx context.Context, language, input string, timeoutSeconds int) (cpslEvalResponse, error) {
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 120
 	}
@@ -148,7 +156,7 @@ func (c *CPSLWorkerClient) EvalBash(ctx context.Context, input string, timeoutSe
 	}
 	return c.eval(ctx, cpslWorkerRequest{
 		Op:        cpslWorkerOpEval,
-		Language:  cpslWorkerLanguage,
+		Language:  language,
 		Input:     input,
 		TimeoutMS: timeoutSeconds * 1000,
 	})

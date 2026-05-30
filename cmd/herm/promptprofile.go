@@ -36,7 +36,7 @@ func promptProfileForBackend(backend backendKind) backendPromptProfile {
 				"common/practices",
 			},
 			toolDescriptionDirs: []string{"cpsl/tools"},
-			workflowFirstStep:   "Understand what's needed — inspect relevant files and data, ask if ambiguous. If a command or runtime is missing, adapt within CPSL.",
+			workflowFirstStep:   "Understand what's needed — inspect relevant files and data with native Luau/CPSL modules, ask if ambiguous. If a command or runtime is missing, adapt within CPSL.",
 			projectOrientation:  "The Environment section contains a pre-gathered project snapshot. Use it to orient yourself before inspecting files through CPSL. If you need deeper context, inspect only the key files needed for the task.",
 			workDir:             func(string) string { return cpslWorkerInitialCW },
 		}

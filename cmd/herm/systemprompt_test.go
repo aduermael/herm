@@ -398,7 +398,7 @@ func TestSubAgentPromptHostToolsOmittedWhenAbsent(t *testing.T) {
 }
 
 func TestBuildSystemPromptCPSLMode(t *testing.T) {
-	tools := []Tool{stubTool{"bash"}, stubTool{"agent"}}
+	tools := []Tool{stubTool{"luau"}, stubTool{"bash"}, stubTool{"agent"}}
 	prompt := buildSystemPrompt(buildSystemPromptOptions{
 		tools:       tools,
 		serverTools: nil,
@@ -409,7 +409,7 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible command interface", "`help`", "`<module> help`", "`compgen`", "do not fall back"} {
+	for _, want := range []string{"CPSL", "/workdir", "native runtime is Luau", "`luau` tool as the primary", "`help()`", "`<module>.help()`", "reusable `.luau` script", "`compgen`", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
 		}
@@ -422,7 +422,7 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 }
 
 func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
-	tools := []Tool{stubTool{"bash"}}
+	tools := []Tool{stubTool{"luau"}, stubTool{"bash"}}
 	prompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{
 		tools:       tools,
 		serverTools: nil,
@@ -431,7 +431,7 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible command interface", "`help`", "`<module> help`", "`compgen`", "do not fall back"} {
+	for _, want := range []string{"CPSL", "/workdir", "native runtime is Luau", "`luau` tool as the primary", "`help()`", "`<module>.help()`", "reusable `.luau` script", "`compgen`", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
 		}
@@ -791,13 +791,26 @@ func TestToolDescriptionContainsGuidance(t *testing.T) {
 
 func TestCPSLToolDescriptionOverrides(t *testing.T) {
 	descs := loadToolDescriptions(loadToolDescriptionsOptions{workDir: "/workspace", backend: backendCPSL})
-	if len(descs) != 2 {
-		t.Fatalf("CPSL tool descriptions = %#v, want only bash and agent", descs)
+	if len(descs) != 3 {
+		t.Fatalf("CPSL tool descriptions = %#v, want luau, bash, and agent", descs)
 	}
 	for _, forbidden := range []string{"glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
 		if _, ok := descs[forbidden]; ok {
 			t.Fatalf("CPSL tool descriptions included unavailable tool %q", forbidden)
 		}
+	}
+
+	luau := descs["luau"]
+	if !strings.Contains(luau.Full, "native Luau") || !strings.Contains(luau.Full, "/workdir") {
+		t.Fatalf("CPSL luau description = %q, want native Luau and /workdir", luau.Full)
+	}
+	for _, want := range []string{"`help()`", "`<module>.help()`", "reusable `.luau` scripts"} {
+		if !strings.Contains(luau.Full, want) {
+			t.Fatalf("CPSL luau description missing %q: %q", want, luau.Full)
+		}
+	}
+	if strings.Contains(luau.Full, "dev container") || strings.Contains(luau.Full, "Docker") || strings.Contains(luau.Full, "devenv") {
+		t.Fatalf("CPSL luau description contains container-only guidance: %q", luau.Full)
 	}
 
 	bash := descs["bash"]

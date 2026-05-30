@@ -150,8 +150,10 @@ func TestCPSLWorkerClientPassesDomainsToProcess(t *testing.T) {
 
 func TestCPSLWorkerClientEvalSuccess(t *testing.T) {
 	var inputs []string
+	var languages []string
 	_, proc := newFakeCPSLProcess(t, func(request cpslWorkerRequest, encoder *json.Encoder) {
 		inputs = append(inputs, request.Input)
+		languages = append(languages, request.Language)
 		exitCode := 0
 		_ = encoder.Encode(cpslEvalResponse{
 			ID:       request.ID,
@@ -178,8 +180,18 @@ func TestCPSLWorkerClientEvalSuccess(t *testing.T) {
 	if !response.OK || response.Stdout != "echo ok\n" {
 		t.Fatalf("response = %#v", response)
 	}
-	if strings.Join(inputs, ",") != "pwd,echo ok" {
+	response, err = client.EvalLuau(context.Background(), "print('native')", 1)
+	if err != nil {
+		t.Fatalf("EvalLuau: %v", err)
+	}
+	if !response.OK || response.Stdout != "print('native')\n" {
+		t.Fatalf("luau response = %#v", response)
+	}
+	if strings.Join(inputs, ",") != `print("ok"),echo ok,print('native')` {
 		t.Fatalf("inputs = %#v", inputs)
+	}
+	if strings.Join(languages, ",") != "luau,bash,luau" {
+		t.Fatalf("languages = %#v", languages)
 	}
 }
 

@@ -546,8 +546,9 @@ func (a *App) enterContainerShellMode() {
 }
 
 func (a *App) enterCPSLShellMode(input string) {
-	if cpslShellLanguageUnsupported(input) {
-		a.messages = append(a.messages, chatMessage{kind: msgError, content: "CPSL shell currently supports Bash-compatible input only."})
+	language, err := cpslShellLanguageFromInput(input)
+	if err != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: err.Error()})
 		a.render()
 		return
 	}
@@ -572,6 +573,7 @@ func (a *App) enterCPSLShellMode(input string) {
 
 	shellErr := runCPSLShell(runCPSLShellOptions{
 		evaluator:      a.cpslWorker,
+		language:       language,
 		input:          os.Stdin,
 		output:         os.Stdout,
 		timeoutSeconds: 120,
@@ -599,19 +601,25 @@ func (a *App) enterCPSLShellMode(input string) {
 	a.renderFull()
 }
 
-func cpslShellLanguageUnsupported(input string) bool {
+func cpslShellLanguageFromInput(input string) (string, error) {
+	language := cpslLanguageBash
 	fields := strings.Fields(input)
 	for _, field := range fields[1:] {
 		switch field {
+		case "--bash":
+			language = cpslLanguageBash
 		case "--lua", "--luau":
-			return true
+			language = cpslLanguageLuau
+		default:
+			return "", fmt.Errorf("unsupported CPSL shell option %q; use /shell, /shell --bash, or /shell --luau", field)
 		}
 	}
-	return false
+	return language, nil
 }
 
 type runCPSLShellOptions struct {
-	evaluator      cpslBashEvaluator
+	evaluator      cpslEvaluator
+	language       string
 	input          io.Reader
 	output         io.Writer
 	timeoutSeconds int
@@ -633,13 +641,26 @@ func runCPSLShell(opts runCPSLShellOptions) error {
 	if timeout <= 0 {
 		timeout = 120
 	}
+	language := opts.language
+	if language == "" {
+		language = cpslLanguageBash
+	}
+	if !isSupportedCPSLLanguage(language) {
+		return fmt.Errorf("unsupported CPSL shell language %q", language)
+	}
 
 	cwd := cpslWorkerInitialCW
-	fmt.Fprintf(output, "CPSL shell at %s. Type exit to return to Herm.\n", cwd)
+	label := "shell"
+	promptMarker := "$"
+	if language == cpslLanguageLuau {
+		label = "Luau"
+		promptMarker = ">"
+	}
+	fmt.Fprintf(output, "CPSL %s at %s. Type exit to return to Herm.\n", label, cwd)
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
 	for {
-		fmt.Fprintf(output, "cpsl:%s$ ", cwd)
+		fmt.Fprintf(output, "cpsl:%s%s ", cwd, promptMarker)
 		if !scanner.Scan() {
 			if err := scanner.Err(); err != nil {
 				return err
@@ -656,13 +677,13 @@ func runCPSLShell(opts runCPSLShellOptions) error {
 			return nil
 		}
 
-		response, err := opts.evaluator.EvalBash(context.Background(), command, timeout)
+		response, err := opts.evaluator.EvalCPSL(context.Background(), language, command, timeout)
 		if err != nil {
-			fmt.Fprintln(output, cpslBashError(response, err))
+			fmt.Fprintln(output, formatCPSLEvalError(response, err))
 			return nil
 		}
 		if !response.OK {
-			fmt.Fprintln(output, cpslBashError(response, nil))
+			fmt.Fprintln(output, formatCPSLEvalError(response, nil))
 			return nil
 		}
 		if response.Stdout != "" {
