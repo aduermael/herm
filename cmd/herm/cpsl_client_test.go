@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -76,11 +77,75 @@ func (f *fakeCPSLProcess) wasKilled() bool {
 
 func withFakeCPSLProcess(t *testing.T, proc *cpslWorkerProcess) {
 	t.Helper()
-	orig := startCPSLWorkerProcess
-	startCPSLWorkerProcess = func(cpslWorkerProcessOptions) (*cpslWorkerProcess, error) {
+	withFakeCPSLProcessStart(t, func(cpslWorkerProcessOptions) (*cpslWorkerProcess, error) {
 		return proc, nil
-	}
+	})
+}
+
+func withFakeCPSLProcessStart(t *testing.T, start func(cpslWorkerProcessOptions) (*cpslWorkerProcess, error)) {
+	t.Helper()
+	orig := startCPSLWorkerProcess
+	startCPSLWorkerProcess = start
 	t.Cleanup(func() { startCPSLWorkerProcess = orig })
+}
+
+func TestCPSLWorkerProcessArgsPreserveRepeatedDomains(t *testing.T) {
+	args := cpslWorkerProcessArgs(cpslWorkerProcessOptions{
+		LibraryPath:  "/tmp/libcpsl.so",
+		Workspace:    "/tmp/work",
+		AllowDomains: []string{"example.com", "api.example.com"},
+		DenyDomains:  []string{"blocked.example.com", "blocked-api.example.com"},
+	})
+	want := []string{
+		"__cpsl-worker",
+		"--library", "/tmp/libcpsl.so",
+		"--workspace", "/tmp/work",
+		"--allow-domain", "example.com",
+		"--allow-domain", "api.example.com",
+		"--deny-domain", "blocked.example.com",
+		"--deny-domain", "blocked-api.example.com",
+	}
+	if !slices.Equal(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestCPSLWorkerClientPassesDomainsToProcess(t *testing.T) {
+	var got cpslWorkerProcessOptions
+	_, proc := newFakeCPSLProcess(t, func(request cpslWorkerRequest, encoder *json.Encoder) {
+		exitCode := 0
+		_ = encoder.Encode(cpslEvalResponse{
+			ID:       request.ID,
+			OK:       true,
+			Stdout:   "/workdir\n",
+			Stderr:   "",
+			ExitCode: &exitCode,
+			Warnings: []string{},
+			CWD:      "/workdir",
+		})
+	})
+	withFakeCPSLProcessStart(t, func(opts cpslWorkerProcessOptions) (*cpslWorkerProcess, error) {
+		got = opts
+		return proc, nil
+	})
+
+	client, err := NewCPSLWorkerClient(newCPSLWorkerClientOptions{
+		LibraryPath:  "/tmp/libcpsl.so",
+		Workspace:    "/tmp/work",
+		AllowDomains: []string{"example.com", "api.example.com"},
+		DenyDomains:  []string{"blocked.example.com", "blocked-api.example.com"},
+	})
+	if err != nil {
+		t.Fatalf("NewCPSLWorkerClient: %v", err)
+	}
+	defer client.Close()
+
+	if !slices.Equal(got.AllowDomains, []string{"example.com", "api.example.com"}) {
+		t.Fatalf("AllowDomains = %#v", got.AllowDomains)
+	}
+	if !slices.Equal(got.DenyDomains, []string{"blocked.example.com", "blocked-api.example.com"}) {
+		t.Fatalf("DenyDomains = %#v", got.DenyDomains)
+	}
 }
 
 func TestCPSLWorkerClientEvalSuccess(t *testing.T) {

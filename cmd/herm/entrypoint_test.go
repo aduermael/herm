@@ -19,6 +19,7 @@ func TestParseCLI_CPSLFlags(t *testing.T) {
 			"--allow-domain", "example.com",
 			"--allow-domain", "api.example.com",
 			"--deny-domain", "blocked.example.com",
+			"--deny-domain", "blocked-api.example.com",
 			"-p", "say ok",
 		},
 		stderr: &stderr,
@@ -39,7 +40,7 @@ func TestParseCLI_CPSLFlags(t *testing.T) {
 	if !reflect.DeepEqual(opts.cpsl.AllowDomains, []string{"example.com", "api.example.com"}) {
 		t.Fatalf("AllowDomains = %#v", opts.cpsl.AllowDomains)
 	}
-	if !reflect.DeepEqual(opts.cpsl.DenyDomains, []string{"blocked.example.com"}) {
+	if !reflect.DeepEqual(opts.cpsl.DenyDomains, []string{"blocked.example.com", "blocked-api.example.com"}) {
 		t.Fatalf("DenyDomains = %#v", opts.cpsl.DenyDomains)
 	}
 	if opts.prompt != "say ok" {

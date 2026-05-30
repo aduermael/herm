@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -114,8 +115,33 @@ func TestServeCPSLWorkerTimeoutRespondsAndTerminates(t *testing.T) {
 	}
 }
 
+func TestParseCPSLWorkerOptionsRepeatedDomains(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := parseCPSLWorkerOptions([]string{
+		"--library", "/tmp/libcpsl.so",
+		"--workspace", "/tmp/work",
+		"--allow-domain", "example.com",
+		"--allow-domain", "api.example.com",
+		"--deny-domain", "blocked.example.com",
+		"--deny-domain", "blocked-api.example.com",
+	}, &stderr)
+	if err != nil {
+		t.Fatalf("parseCPSLWorkerOptions: %v", err)
+	}
+	if !slices.Equal(opts.allowDomains, []string{"example.com", "api.example.com"}) {
+		t.Fatalf("allowDomains = %#v", opts.allowDomains)
+	}
+	if !slices.Equal(opts.denyDomains, []string{"blocked.example.com", "blocked-api.example.com"}) {
+		t.Fatalf("denyDomains = %#v", opts.denyDomains)
+	}
+}
+
 func TestCPSLSessionConfigJSON(t *testing.T) {
-	configJSON, err := cpslSessionConfigJSON("/tmp/work", []string{"example.com"}, []string{"deny.example.com"})
+	configJSON, err := cpslSessionConfigJSON(
+		"/tmp/work",
+		[]string{"example.com", "api.example.com"},
+		[]string{"deny.example.com", "deny-api.example.com"},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,11 +155,16 @@ func TestCPSLSessionConfigJSON(t *testing.T) {
 	if len(config.Mounts) != 1 || config.Mounts[0].Host != "/tmp/work" || config.Mounts[0].VirtualPath != "/workdir" || config.Mounts[0].Mode != "rw" {
 		t.Fatalf("mounts = %#v", config.Mounts)
 	}
-	if len(config.HTTP.AllowDomains) != 1 || config.HTTP.AllowDomains[0] != "example.com" {
+	if !slices.Equal(config.HTTP.AllowDomains, []string{"example.com", "api.example.com"}) {
 		t.Fatalf("allow domains = %#v", config.HTTP.AllowDomains)
 	}
-	if len(config.HTTP.DenyDomains) != 1 || config.HTTP.DenyDomains[0] != "deny.example.com" {
+	if !slices.Equal(config.HTTP.DenyDomains, []string{"deny.example.com", "deny-api.example.com"}) {
 		t.Fatalf("deny domains = %#v", config.HTTP.DenyDomains)
+	}
+	for _, forbidden := range []string{"credentials", "callback", "prompt"} {
+		if strings.Contains(configJSON, forbidden) {
+			t.Fatalf("config JSON included unsupported http field %q: %s", forbidden, configJSON)
+		}
 	}
 }
 
