@@ -18,8 +18,8 @@ import (
 )
 
 type cpslSmokeLLMStep struct {
-	command string
-	text    string
+	script string
+	text   string
 }
 
 type cpslSmokeLLMServer struct {
@@ -80,20 +80,20 @@ func (s *cpslSmokeLLMServer) handle(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "text/event-stream")
-	if step.command != "" {
-		writeCPSLSmokeToolCall(w, idx, step.command)
+	if step.script != "" {
+		writeCPSLSmokeToolCall(w, idx, step.script)
 		return
 	}
 	writeCPSLSmokeText(w, idx, step.text)
 }
 
-func writeCPSLSmokeToolCall(w io.Writer, idx int, command string) {
+func writeCPSLSmokeToolCall(w io.Writer, idx int, script string) {
 	callID := fmt.Sprintf("call_cpsl_%d", idx)
-	args, _ := json.Marshal(map[string]string{"command": command})
+	args, _ := json.Marshal(map[string]string{"script": script})
 	item := map[string]any{
 		"type":      "function_call",
 		"call_id":   callID,
-		"name":      "bash",
+		"name":      "luau",
 		"arguments": string(args),
 	}
 	writeCPSLSmokeSSE(w, map[string]any{
@@ -104,7 +104,7 @@ func writeCPSLSmokeToolCall(w io.Writer, idx int, command string) {
 	writeCPSLSmokeSSE(w, map[string]any{
 		"type":         "response.function_call_arguments.done",
 		"output_index": 0,
-		"name":         "bash",
+		"name":         "luau",
 		"arguments":    string(args),
 	})
 	writeCPSLSmokeSSE(w, map[string]any{
@@ -169,21 +169,20 @@ func TestCPSLHeadlessSmoke(t *testing.T) {
 	}))
 	t.Cleanup(httpTarget.Close)
 
-	t.Run("files and unsupported development command", func(t *testing.T) {
+	t.Run("native luau files and data", func(t *testing.T) {
 		workspace := newCPSLSmokeWorkspace(t)
-		command := strings.Join([]string{
-			"pwd",
-			"ls",
-			"cat phase8-input.md",
-			"cat data.json",
-			"cat data.csv",
-			"printf '# Phase 8 Report\\nstatus: cpsl-smoke\\n' > phase8-report.md",
-			"printf '{\"generated\":true,\"kind\":\"json\"}\\n' > phase8-output.json",
-			"printf 'name,value\\nphase8,ok\\n' > phase8-output.csv",
-			"npm install left-pad",
+		script := strings.Join([]string{
+			`print("/workdir")`,
+			`print(json.encode(fs.list("/workdir")))`,
+			`print(fs.read("/workdir/phase8-input.md"))`,
+			`print(fs.read("/workdir/data.json"))`,
+			`print(fs.read("/workdir/data.csv"))`,
+			`fs.write("/workdir/phase8-report.md", "# Phase 8 Report\nstatus: cpsl-smoke\n")`,
+			`fs.write("/workdir/phase8-output.json", "{\"generated\":true,\"kind\":\"json\"}\n")`,
+			`fs.write("/workdir/phase8-output.csv", "name,value\nphase8,ok\n")`,
 		}, "\n")
 		start := llm.enqueue(
-			cpslSmokeLLMStep{command: command},
+			cpslSmokeLLMStep{script: script},
 			cpslSmokeLLMStep{text: "phase8 file smoke complete"},
 		)
 
@@ -205,13 +204,12 @@ func TestCPSLHeadlessSmoke(t *testing.T) {
 		requireSmokeRequestContains(t, requests, "/workdir")
 		requireSmokeRequestContains(t, requests, "phase8-input.md")
 		requireSmokeRequestContains(t, requests, "phase8 fixture")
-		requireSmokeRequestContains(t, requests, "no package management in sandbox")
 	})
 
 	t.Run("network denied by default", func(t *testing.T) {
 		workspace := newCPSLSmokeWorkspace(t)
 		start := llm.enqueue(
-			cpslSmokeLLMStep{command: "http get " + httpTargetURL},
+			cpslSmokeLLMStep{script: fmt.Sprintf("return http.get(%q)", httpTargetURL)},
 			cpslSmokeLLMStep{text: "phase8 network deny smoke complete"},
 		)
 
@@ -234,7 +232,7 @@ func TestCPSLHeadlessSmoke(t *testing.T) {
 	t.Run("network allowed by domain", func(t *testing.T) {
 		workspace := newCPSLSmokeWorkspace(t)
 		start := llm.enqueue(
-			cpslSmokeLLMStep{command: "http get " + httpTargetURL},
+			cpslSmokeLLMStep{script: fmt.Sprintf("local resp = http.get(%q)\nprint(resp.body)", httpTargetURL)},
 			cpslSmokeLLMStep{text: "phase8 network allow smoke complete"},
 		)
 

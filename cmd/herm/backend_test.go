@@ -107,7 +107,7 @@ func TestCPSLRuntimeToolsExcludeContainerToolsBeforeWorker(t *testing.T) {
 	}
 }
 
-func TestCPSLRuntimeToolsExposeOnlyBashAfterWorkerReady(t *testing.T) {
+func TestCPSLRuntimeToolsExposeLuauBeforeBashAfterWorkerReady(t *testing.T) {
 	app := &App{
 		backend:        backendCPSL,
 		containerReady: true,
@@ -119,9 +119,13 @@ func TestCPSLRuntimeToolsExposeOnlyBashAfterWorkerReady(t *testing.T) {
 		sessionID:      "session",
 	}
 
-	names := toolNameSet(app.runtimeTools())
-	if len(names) != 1 || !names["bash"] {
-		t.Fatalf("runtimeTools names = %#v, want only bash", names)
+	tools := app.runtimeTools()
+	names := toolNameSet(tools)
+	if len(names) != 2 || !names["luau"] || !names["bash"] {
+		t.Fatalf("runtimeTools names = %#v, want luau and bash", names)
+	}
+	if got := tools[0].Definition().Name; got != "luau" {
+		t.Fatalf("first CPSL runtime tool = %q, want luau", got)
 	}
 	for _, forbidden := range []string{"glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
 		if names[forbidden] {
@@ -239,12 +243,48 @@ func TestRunCPSLShellRoutesCommandsThroughWorker(t *testing.T) {
 	if worker.command != "/bin/pwd" {
 		t.Fatalf("command = %q, want /bin/pwd", worker.command)
 	}
+	if worker.language != cpslLanguageBash {
+		t.Fatalf("language = %q, want bash", worker.language)
+	}
 	if worker.timeout != 33 {
 		t.Fatalf("timeout = %d, want 33", worker.timeout)
 	}
 	got := output.String()
 	if !strings.Contains(got, "/workdir\n") || !strings.Contains(got, "cpsl:/workdir/reports$") {
 		t.Fatalf("CPSL shell output = %q, want stdout and updated cwd prompt", got)
+	}
+}
+
+func TestRunCPSLShellRoutesLuauThroughWorker(t *testing.T) {
+	exitCode := 0
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stdout:   "3\n",
+			ExitCode: &exitCode,
+			CWD:      cpslWorkerInitialCW,
+		},
+	}
+	var output bytes.Buffer
+
+	err := runCPSLShell(runCPSLShellOptions{
+		evaluator: worker,
+		language:  cpslLanguageLuau,
+		input:     strings.NewReader("print(1 + 2)\nexit\n"),
+		output:    &output,
+	})
+
+	if err != nil {
+		t.Fatalf("runCPSLShell: %v", err)
+	}
+	if worker.language != cpslLanguageLuau {
+		t.Fatalf("language = %q, want luau", worker.language)
+	}
+	if worker.command != "print(1 + 2)" {
+		t.Fatalf("script = %q, want Luau line", worker.command)
+	}
+	if got := output.String(); !strings.Contains(got, "CPSL Luau") || !strings.Contains(got, "cpsl:/workdir>") || !strings.Contains(got, "3\n") {
+		t.Fatalf("CPSL Luau shell output = %q", got)
 	}
 }
 
@@ -276,15 +316,18 @@ func TestRunCPSLShellNonZeroAndEvalFailureDoNotFallback(t *testing.T) {
 
 func TestCPSLSubAgentToolsPreserveCPSLSafeSet(t *testing.T) {
 	parent := NewSubAgentTool(SubAgentConfig{
-		Tools:    []Tool{NewCPSLBashTool(NewCPSLBashToolOptions{Worker: nil, Timeout: 120})},
+		Tools: []Tool{
+			NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: nil, Timeout: 120}),
+			NewCPSLBashTool(NewCPSLBashToolOptions{Worker: nil, Timeout: 120}),
+		},
 		MaxDepth: 2,
 		Backend:  backendCPSL,
 	})
 
 	tools := parent.buildSubAgentTools(ModeGeneral)
 	names := toolNameSet(tools)
-	if len(names) != 2 || !names["bash"] || !names["agent"] {
-		t.Fatalf("sub-agent tool names = %#v, want bash and nested agent", names)
+	if len(names) != 3 || !names["luau"] || !names["bash"] || !names["agent"] {
+		t.Fatalf("sub-agent tool names = %#v, want luau, bash, and nested agent", names)
 	}
 	for _, tool := range tools {
 		if child, ok := tool.(*SubAgentTool); ok && child.backend != backendCPSL {

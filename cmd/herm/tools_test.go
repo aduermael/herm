@@ -531,11 +531,13 @@ func TestBashToolDefaultTimeout(t *testing.T) {
 type fakeCPSLBashEvaluator struct {
 	response cpslEvalResponse
 	err      error
+	language string
 	command  string
 	timeout  int
 }
 
-func (f *fakeCPSLBashEvaluator) EvalBash(_ context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error) {
+func (f *fakeCPSLBashEvaluator) EvalCPSL(_ context.Context, language, input string, timeoutSeconds int) (cpslEvalResponse, error) {
+	f.language = language
 	f.command = input
 	f.timeout = timeoutSeconds
 	return f.response, f.err
@@ -564,6 +566,9 @@ func TestCPSLBashToolExecute_Success(t *testing.T) {
 	}
 	if worker.command != "echo hello" {
 		t.Fatalf("command = %q, want echo hello", worker.command)
+	}
+	if worker.language != cpslLanguageBash {
+		t.Fatalf("language = %q, want bash", worker.language)
 	}
 }
 
@@ -655,6 +660,95 @@ func TestCPSLBashToolDefinitionDescribesSandboxInput(t *testing.T) {
 	}
 	if strings.Contains(schema, "The bash command to execute") {
 		t.Fatalf("CPSL bash schema still uses generic host-bash wording: %s", schema)
+	}
+}
+
+func TestCPSLLuauToolExecute_Success(t *testing.T) {
+	exitCode := 0
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stdout:   "hello from luau\n",
+			Stderr:   "",
+			ExitCode: &exitCode,
+			Warnings: []string{},
+			CWD:      cpslWorkerInitialCW,
+		},
+	}
+	tool := NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: worker, Timeout: 120})
+
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"script":"print('hello')"}`))
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if result != "hello from luau\n" {
+		t.Fatalf("result = %q, want CPSL stdout", result)
+	}
+	if worker.language != cpslLanguageLuau {
+		t.Fatalf("language = %q, want luau", worker.language)
+	}
+	if worker.command != "print('hello')" {
+		t.Fatalf("script = %q, want print", worker.command)
+	}
+}
+
+func TestCPSLLuauToolExecute_EvalFailure(t *testing.T) {
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:     false,
+			Stdout: "partial\n",
+			Error:  &cpslEvalError{Code: "runtime_error", Message: "bad luau"},
+			CWD:    cpslWorkerInitialCW,
+		},
+	}
+	tool := NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: worker, Timeout: 120})
+
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"script":"bad syntax"}`))
+	if err == nil {
+		t.Fatal("expected CPSL eval failure")
+	}
+	if !strings.Contains(err.Error(), "runtime_error") || !strings.Contains(err.Error(), "partial") {
+		t.Fatalf("error = %q, want CPSL code and partial output", err.Error())
+	}
+}
+
+func TestCPSLLuauToolExecute_TimeoutClampAndHTMLUnescape(t *testing.T) {
+	exitCode := 0
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stdout:   "ok",
+			ExitCode: &exitCode,
+			Warnings: []string{},
+			CWD:      cpslWorkerInitialCW,
+		},
+	}
+	tool := NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: worker, Timeout: 120})
+
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"script":"print(1 &lt; 2)","timeout":700}`))
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if worker.command != "print(1 < 2)" {
+		t.Fatalf("script = %q, want HTML-unescaped script", worker.command)
+	}
+	if worker.timeout != 600 {
+		t.Fatalf("timeout = %d, want max clamp 600", worker.timeout)
+	}
+}
+
+func TestCPSLLuauToolDefinitionDescribesNativeRuntime(t *testing.T) {
+	tool := NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: &fakeCPSLBashEvaluator{}, Timeout: 120})
+	def := tool.Definition()
+	schema := string(def.InputSchema)
+
+	if def.Name != "luau" {
+		t.Fatalf("tool name = %q, want luau", def.Name)
+	}
+	for _, want := range []string{"Native Luau source", "CPSL", "/workdir", "reusable .luau scripts"} {
+		if !strings.Contains(schema, want) {
+			t.Fatalf("CPSL luau schema missing %q: %s", want, schema)
+		}
 	}
 }
 

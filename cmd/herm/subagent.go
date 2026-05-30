@@ -512,15 +512,15 @@ func (t *SubAgentTool) WaitForBackgroundAgentsContext(ctx context.Context, timeo
 
 // modeToolAllowlists maps each mode to its allowed tool set.
 // A nil allowlist (e.g. ModeGeneral) means all tools pass through.
-// Explore-mode includes read-only tools plus bash (needed for read-only
-// commands like ls, tree, and build checks — an accepted escape hatch
-// consistent with Claude Code).
+// Explore-mode includes read-only tools plus runtime execution tools. In CPSL,
+// Luau is the native sandbox interface and Bash is compatibility syntax.
 var modeToolAllowlists = map[string]map[string]bool{
 	ModeExplore: {
 		"glob":      true,
 		"grep":      true,
 		"read_file": true,
 		"outline":   true,
+		"luau":      true,
 		"bash":      true,
 	},
 	ModeGeneral: nil, // all tools

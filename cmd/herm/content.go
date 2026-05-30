@@ -295,6 +295,17 @@ type toolCallSummaryOptions struct {
 func toolCallSummary(opts toolCallSummaryOptions) string {
 	toolName, input := opts.toolName, opts.input
 	switch toolName {
+	case "luau":
+		var in struct {
+			Script string `json:"script"`
+		}
+		if json.Unmarshal(input, &in) == nil && in.Script != "" {
+			script := strings.TrimSpace(in.Script)
+			if len(script) > 120 {
+				script = script[:120] + "..."
+			}
+			return fmt.Sprintf("~ luau %s", compactWhitespace(script))
+		}
 	case "bash":
 		var in struct {
 			Command string `json:"command"`
@@ -357,6 +368,17 @@ type approvalCmdDescOptions struct {
 func approvalCmdDesc(opts approvalCmdDescOptions) string {
 	toolName, input := opts.toolName, opts.input
 	switch toolName {
+	case "luau":
+		var in struct {
+			Script string `json:"script"`
+		}
+		if json.Unmarshal(input, &in) == nil && in.Script != "" {
+			script := compactWhitespace(strings.TrimSpace(in.Script))
+			if len(script) > 80 {
+				script = script[:80] + "..."
+			}
+			return "luau: " + script
+		}
 	case "bash":
 		var in struct {
 			Command string `json:"command"`
@@ -396,6 +418,17 @@ type approvalShortDescOptions struct {
 func approvalShortDesc(opts approvalShortDescOptions) string {
 	toolName, input := opts.toolName, opts.input
 	switch toolName {
+	case "luau":
+		var in struct {
+			Script string `json:"script"`
+		}
+		if json.Unmarshal(input, &in) == nil && in.Script != "" {
+			script := compactWhitespace(strings.TrimSpace(in.Script))
+			if len(script) > 80 {
+				script = script[:80] + "..."
+			}
+			return fmt.Sprintf("luau: %s", script)
+		}
 	case "bash":
 		var in struct {
 			Command string `json:"command"`
@@ -416,6 +449,10 @@ func approvalShortDesc(opts approvalShortDescOptions) string {
 		}
 	}
 	return toolName
+}
+
+func compactWhitespace(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func collapseToolResult(result string) string {

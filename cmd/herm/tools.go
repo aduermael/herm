@@ -42,24 +42,24 @@ func (r containerBashRunner) RunBash(ctx context.Context, command string, timeou
 	return r.container.Exec(containerExecOptions{ctx: ctx, command: command, timeout: timeout})
 }
 
-type cpslBashEvaluator interface {
-	EvalBash(ctx context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error)
+type cpslEvaluator interface {
+	EvalCPSL(ctx context.Context, language, input string, timeoutSeconds int) (cpslEvalResponse, error)
 }
 
 type cpslBashRunner struct {
-	worker cpslBashEvaluator
+	worker cpslEvaluator
 }
 
 func (r cpslBashRunner) RunBash(ctx context.Context, command string, timeout int) (CommandResult, error) {
 	if r.worker == nil {
 		return CommandResult{}, fmt.Errorf("CPSL worker not configured")
 	}
-	response, err := r.worker.EvalBash(ctx, command, timeout)
+	response, err := r.worker.EvalCPSL(ctx, cpslLanguageBash, command, timeout)
 	if err != nil {
-		return CommandResult{}, cpslBashError(response, err)
+		return CommandResult{}, formatCPSLEvalError(response, err)
 	}
 	if !response.OK {
-		return CommandResult{}, cpslBashError(response, nil)
+		return CommandResult{}, formatCPSLEvalError(response, nil)
 	}
 	if response.ExitCode == nil {
 		return CommandResult{}, fmt.Errorf("CPSL response missing exit_code")
@@ -71,7 +71,7 @@ func (r cpslBashRunner) RunBash(ctx context.Context, command string, timeout int
 	}, nil
 }
 
-func cpslBashError(response cpslEvalResponse, err error) error {
+func formatCPSLEvalError(response cpslEvalResponse, err error) error {
 	code := "runtime_error"
 	message := ""
 	if response.Error != nil {
@@ -126,7 +126,7 @@ func NewBashTool(opts NewBashToolOptions) *BashTool {
 
 // NewCPSLBashToolOptions holds the parameters for NewCPSLBashTool.
 type NewCPSLBashToolOptions struct {
-	Worker  cpslBashEvaluator
+	Worker  cpslEvaluator
 	Timeout int
 }
 
@@ -218,6 +218,95 @@ func (t *BashTool) RequiresApproval(_ json.RawMessage) bool {
 }
 
 func (t *BashTool) HostTool() bool { return false }
+
+// NewCPSLLuauToolOptions holds the parameters for NewCPSLLuauTool.
+type NewCPSLLuauToolOptions struct {
+	Worker  cpslEvaluator
+	Timeout int
+}
+
+// CPSLLuauTool executes native Luau source through CPSL.
+type CPSLLuauTool struct {
+	worker  cpslEvaluator
+	timeout int
+}
+
+// NewCPSLLuauTool creates a tool that routes native Luau source through CPSL.
+func NewCPSLLuauTool(opts NewCPSLLuauToolOptions) *CPSLLuauTool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 120
+	}
+	return &CPSLLuauTool{worker: opts.Worker, timeout: timeout}
+}
+
+func (t *CPSLLuauTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        "luau",
+		Description: getToolDescription(getToolDescriptionOptions{name: "luau", fallback: "Run native Luau source in CPSL at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"script": {
+					"type": "string",
+					"description": "Native Luau source to run in CPSL at /workdir. Prefer reusable .luau scripts for repeated automation."
+				},
+				"timeout": {
+					"type": "integer",
+					"description": "Timeout in seconds (default: 120, max: 600)"
+				}
+			},
+			"required": ["script"]
+		}`),
+	}
+}
+
+type luauInput struct {
+	Script  string `json:"script"`
+	Timeout int    `json:"timeout,omitempty"`
+}
+
+func (t *CPSLLuauTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var in luauInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return "", fmt.Errorf("invalid luau input: %w", err)
+	}
+	if in.Script == "" {
+		return "", fmt.Errorf("script is required")
+	}
+
+	timeout := t.timeout
+	if in.Timeout > 0 {
+		timeout = in.Timeout
+	}
+	if timeout > 600 {
+		timeout = 600
+	}
+
+	if t.worker == nil {
+		return "", fmt.Errorf("CPSL worker not configured")
+	}
+	script := html.UnescapeString(in.Script)
+	response, err := t.worker.EvalCPSL(ctx, cpslLanguageLuau, script, timeout)
+	if err != nil {
+		return "", formatCPSLEvalError(response, err)
+	}
+	if !response.OK {
+		return "", formatCPSLEvalError(response, nil)
+	}
+
+	output := truncateOutput(response.Stdout + response.Stderr)
+	if response.ExitCode != nil && *response.ExitCode != 0 {
+		return fmt.Sprintf("exit code: %d\n%s", *response.ExitCode, output), nil
+	}
+	return output, nil
+}
+
+func (t *CPSLLuauTool) RequiresApproval(_ json.RawMessage) bool {
+	return false
+}
+
+func (t *CPSLLuauTool) HostTool() bool { return false }
 
 // truncateOutput trims output to bashMaxLines lines and bashMaxBytes bytes using
 // a head+tail strategy: keep the first truncHeadLines and last truncTailLines,
