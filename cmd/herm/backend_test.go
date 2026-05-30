@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -23,7 +24,12 @@ func TestCPSLBackendStartsWorkerAndDoesNotBootContainer(t *testing.T) {
 	}
 
 	app := &App{
-		backend:   backendCPSL,
+		backend: backendCPSL,
+		cpsl: cpslConfig{
+			LibraryPath:  "/tmp/libcpsl.so",
+			AllowDomains: []string{"example.com", "api.example.com"},
+			DenyDomains:  []string{"blocked.example.com"},
+		},
 		sessionID: "session",
 		resultCh:  make(chan any, 1),
 		stopCh:    make(chan struct{}),
@@ -38,6 +44,15 @@ func TestCPSLBackendStartsWorkerAndDoesNotBootContainer(t *testing.T) {
 	case opts := <-workerCalled:
 		if opts.workspace != workspace {
 			t.Fatalf("workspace = %q, want %q", opts.workspace, workspace)
+		}
+		if opts.config.LibraryPath != "/tmp/libcpsl.so" {
+			t.Fatalf("LibraryPath = %q", opts.config.LibraryPath)
+		}
+		if !slices.Equal(opts.config.AllowDomains, []string{"example.com", "api.example.com"}) {
+			t.Fatalf("AllowDomains = %#v", opts.config.AllowDomains)
+		}
+		if !slices.Equal(opts.config.DenyDomains, []string{"blocked.example.com"}) {
+			t.Fatalf("DenyDomains = %#v", opts.config.DenyDomains)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("CPSL backend did not start worker")

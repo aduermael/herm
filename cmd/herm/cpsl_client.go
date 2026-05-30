@@ -87,18 +87,7 @@ func startCPSLWorkerOSProcess(opts cpslWorkerProcessOptions) (*cpslWorkerProcess
 		return nil, err
 	}
 
-	args := []string{
-		"__cpsl-worker",
-		"--library", opts.LibraryPath,
-		"--workspace", opts.Workspace,
-	}
-	for _, domain := range opts.AllowDomains {
-		args = append(args, "--allow-domain", domain)
-	}
-	for _, domain := range opts.DenyDomains {
-		args = append(args, "--deny-domain", domain)
-	}
-
+	args := cpslWorkerProcessArgs(opts)
 	cmd := exec.Command(exe, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -128,6 +117,21 @@ func startCPSLWorkerOSProcess(opts cpslWorkerProcessOptions) (*cpslWorkerProcess
 		},
 		wait: cmd.Wait,
 	}, nil
+}
+
+func cpslWorkerProcessArgs(opts cpslWorkerProcessOptions) []string {
+	args := []string{
+		"__cpsl-worker",
+		"--library", opts.LibraryPath,
+		"--workspace", opts.Workspace,
+	}
+	for _, domain := range opts.AllowDomains {
+		args = append(args, "--allow-domain", domain)
+	}
+	for _, domain := range opts.DenyDomains {
+		args = append(args, "--deny-domain", domain)
+	}
+	return args
 }
 
 func (c *CPSLWorkerClient) EvalBash(ctx context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error) {
