@@ -19,10 +19,22 @@ import (
 
 var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", "/session", "/shell", "/update", "/usage", "/worktrees"}
 var sessionSubcommands = []string{"/session list", "/session load", "/session show"}
+var cpslUnavailableCommands = map[string]bool{
+	"/branches":  true,
+	"/shell":     true,
+	"/worktrees": true,
+}
 
 func filterCommands(prefix string) []string {
+	return filterCommandsForBackend(prefix, backendContainer)
+}
+
+func filterCommandsForBackend(prefix string, backend backendKind) []string {
 	var matches []string
 	for _, cmd := range commands {
+		if backend == backendCPSL && cpslUnavailableCommands[cmd] {
+			continue
+		}
 		if strings.HasPrefix(cmd, prefix) {
 			matches = append(matches, cmd)
 		}
@@ -38,6 +50,15 @@ func filterCommands(prefix string) []string {
 		}
 	}
 	return matches
+}
+
+func (a *App) commandUnavailableInCPSL(cmd string) bool {
+	if a.backend != backendCPSL || !cpslUnavailableCommands[cmd] {
+		return false
+	}
+	a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("%s is unavailable in CPSL mode.", cmd)})
+	a.render()
+	return true
 }
 
 func (a *App) handleCommand(input string) {
@@ -106,6 +127,9 @@ func (a *App) handleCommand(input string) {
 		a.renderInput()
 
 	case "/branches":
+		if a.commandUnavailableInCPSL(cmd) {
+			return
+		}
 		if a.worktreePath == "" {
 			a.messages = append(a.messages, chatMessage{kind: msgError, content: "No workspace path available."})
 			a.render()
@@ -150,6 +174,9 @@ func (a *App) handleCommand(input string) {
 		a.renderInput()
 
 	case "/worktrees":
+		if a.commandUnavailableInCPSL(cmd) {
+			return
+		}
 		repoRoot := gitRepoRoot()
 		if repoRoot == "" {
 			a.messages = append(a.messages, chatMessage{kind: msgError, content: "Not in a git repository."})
@@ -206,6 +233,9 @@ func (a *App) handleCommand(input string) {
 		a.renderInput()
 
 	case "/shell":
+		if a.commandUnavailableInCPSL(cmd) {
+			return
+		}
 		a.enterShellMode()
 
 	case "/session":

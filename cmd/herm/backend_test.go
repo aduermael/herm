@@ -90,6 +90,29 @@ func TestCPSLRuntimeToolsExcludeContainerToolsBeforeWorker(t *testing.T) {
 	}
 }
 
+func TestCPSLRuntimeToolsExposeOnlyBashAfterWorkerReady(t *testing.T) {
+	app := &App{
+		backend:        backendCPSL,
+		containerReady: true,
+		container:      NewContainerClient(ContainerConfig{Image: "test:latest"}),
+		cpslReady:      true,
+		cpslWorker:     &CPSLWorkerClient{},
+		worktreePath:   t.TempDir(),
+		resultCh:       make(chan any, 1),
+		sessionID:      "session",
+	}
+
+	names := toolNameSet(app.runtimeTools())
+	if len(names) != 1 || !names["bash"] {
+		t.Fatalf("runtimeTools names = %#v, want only bash", names)
+	}
+	for _, forbidden := range []string{"glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
+		if names[forbidden] {
+			t.Fatalf("runtimeTools exposed %q in CPSL mode", forbidden)
+		}
+	}
+}
+
 func TestAppCleanupClosesCPSLWorker(t *testing.T) {
 	closed := false
 	app := &App{
@@ -144,6 +167,38 @@ func TestContainerRuntimeToolsUnchangedWhenReady(t *testing.T) {
 	} {
 		if !names[name] {
 			t.Fatalf("runtimeTools missing %q in container mode", name)
+		}
+	}
+}
+
+func TestCPSLCommandAutocompleteExcludesUnavailableCommands(t *testing.T) {
+	matches := filterCommandsForBackend("/", backendCPSL)
+	seen := make(map[string]bool, len(matches))
+	for _, match := range matches {
+		seen[match] = true
+	}
+	for _, forbidden := range []string{"/branches", "/shell", "/worktrees"} {
+		if seen[forbidden] {
+			t.Fatalf("CPSL autocomplete included unavailable command %q in %v", forbidden, matches)
+		}
+	}
+}
+
+func TestCPSLSubAgentToolsPreserveCPSLSafeSet(t *testing.T) {
+	parent := NewSubAgentTool(SubAgentConfig{
+		Tools:    []Tool{NewCPSLBashTool(NewCPSLBashToolOptions{Worker: nil, Timeout: 120})},
+		MaxDepth: 2,
+		Backend:  backendCPSL,
+	})
+
+	tools := parent.buildSubAgentTools(ModeGeneral)
+	names := toolNameSet(tools)
+	if len(names) != 2 || !names["bash"] || !names["agent"] {
+		t.Fatalf("sub-agent tool names = %#v, want bash and nested agent", names)
+	}
+	for _, tool := range tools {
+		if child, ok := tool.(*SubAgentTool); ok && child.backend != backendCPSL {
+			t.Fatal("nested sub-agent did not preserve CPSL backend")
 		}
 	}
 }

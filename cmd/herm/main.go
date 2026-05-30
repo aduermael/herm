@@ -572,6 +572,11 @@ func (a *App) handleEnter() {
 	if a.backend == backendContainer && !a.containerReady {
 		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Container is still starting — the agent won't have bash or file tools until it's ready."})
 	}
+	if a.backend == backendCPSL && !a.cpslReady {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL sandbox is still starting — the agent won't have bash until it's ready."})
+		a.render()
+		return
+	}
 	a.startAgent(content)
 	a.render()
 }

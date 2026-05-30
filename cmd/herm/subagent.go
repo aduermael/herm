@@ -96,6 +96,7 @@ type SubAgentConfig struct {
 	WorkDir          string
 	Personality      string
 	ContainerImage   string
+	Backend          backendKind
 }
 
 // SubAgentTool spawns a sub-agent to handle complex subtasks autonomously.
@@ -114,6 +115,7 @@ type SubAgentTool struct {
 	workDir          string
 	personality      string
 	containerImage   string
+	backend          backendKind
 	doneTimeout      time.Duration     // max time to wait for goroutine after stream ends
 	streamTimeout    time.Duration     // stream chunk inactivity timeout for inner agents; 0 = default
 	parentEvents     chan<- AgentEvent // set after construction; forwards live events to TUI
@@ -154,6 +156,7 @@ func NewSubAgentTool(cfg SubAgentConfig) *SubAgentTool {
 		workDir:          cfg.WorkDir,
 		personality:      cfg.Personality,
 		containerImage:   cfg.ContainerImage,
+		backend:          cfg.Backend,
 		doneTimeout:      subAgentDoneTimeout,
 		agentNodes:       make(map[string]agentNodeState),
 		bgAgents:         make(map[string]*bgAgentState),
@@ -553,6 +556,7 @@ func (t *SubAgentTool) buildSubAgentTools(mode string) []Tool {
 			WorkDir:          t.workDir,
 			Personality:      t.personality,
 			ContainerImage:   t.containerImage,
+			Backend:          t.backend,
 		})
 		child.parentEvents = t.parentEvents
 		tools = append(tools, child)
@@ -631,6 +635,7 @@ func (t *SubAgentTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		serverTools:    t.serverTools,
 		workDir:        t.workDir,
 		containerImage: t.containerImage,
+		backend:        t.backend,
 		snap:           &snap,
 	})
 
@@ -737,6 +742,7 @@ func (t *SubAgentTool) executeBackground(_ context.Context, in subAgentInput) (s
 		serverTools:    t.serverTools,
 		workDir:        t.workDir,
 		containerImage: t.containerImage,
+		backend:        t.backend,
 		snap:           &snap,
 	})
 

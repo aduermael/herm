@@ -378,6 +378,52 @@ func TestSubAgentPromptHostToolsOmittedWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptCPSLMode(t *testing.T) {
+	tools := []Tool{stubTool{"bash"}, stubTool{"agent"}}
+	prompt := buildSystemPrompt(buildSystemPromptOptions{
+		tools:       tools,
+		serverTools: nil,
+		skills:      nil,
+		workDir:     t.TempDir(),
+		personality: "",
+		backend:     backendCPSL,
+		snap:        nil,
+	})
+
+	for _, want := range []string{"CPSL", "/workdir", "No container is running"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"Container image", "dev container", "Dockerfile", "Host exceptions", "devenv"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("CPSL prompt contains %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
+	tools := []Tool{stubTool{"bash"}}
+	prompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{
+		tools:       tools,
+		serverTools: nil,
+		workDir:     t.TempDir(),
+		backend:     backendCPSL,
+		snap:        nil,
+	})
+
+	for _, want := range []string{"CPSL", "/workdir", "No container is running"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"Container image", "dev container", "Dockerfile", "Host exceptions", "devenv", "glob to discover", "read_file"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("CPSL sub-agent prompt contains %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
 func TestToolHostToolReturnValues(t *testing.T) {
 	gt := NewGitTool(NewGitToolOptions{WorkDir: "/tmp", CoAuthor: false})
 	if !gt.HostTool() {
@@ -721,6 +767,26 @@ func TestToolDescriptionContainsGuidance(t *testing.T) {
 				t.Errorf("tool %q description missing keyword %q", tt.tool, kw)
 			}
 		}
+	}
+}
+
+func TestCPSLToolDescriptionOverrides(t *testing.T) {
+	descs := loadToolDescriptions(loadToolDescriptionsOptions{workDir: "/workspace", backend: backendCPSL})
+
+	bash := descs["bash"]
+	if !strings.Contains(bash.Full, "CPSL") || !strings.Contains(bash.Full, "/workdir") {
+		t.Fatalf("CPSL bash description = %q, want CPSL and /workdir", bash.Full)
+	}
+	if strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "devenv") {
+		t.Fatalf("CPSL bash description contains container-only guidance: %q", bash.Full)
+	}
+
+	agent := descs["agent"]
+	if !strings.Contains(agent.Full, "CPSL-safe") || !strings.Contains(agent.Full, "/workdir/.herm/agents") {
+		t.Fatalf("CPSL agent description = %q, want CPSL-safe output guidance", agent.Full)
+	}
+	if strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "read_file") {
+		t.Fatalf("CPSL agent description contains unavailable-tool guidance: %q", agent.Full)
 	}
 }
 

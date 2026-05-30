@@ -27,7 +27,8 @@ type PromptData struct {
 	HasOutline     bool
 	HasEditFile    bool
 	HasWriteFile   bool
-	IsSubAgent     bool   // true for sub-agent prompts: skips communication, personality, skills
+	IsSubAgent     bool // true for sub-agent prompts: skips communication, personality, skills
+	IsCPSL         bool // true when commands run in CPSL instead of a container
 	ContainerImage string
 	WorkDir        string
 	WorktreeBranch string // current branch in the git worktree, if known
@@ -61,6 +62,7 @@ type buildSystemPromptOptions struct {
 	personality    string
 	containerImage string
 	worktreeBranch string
+	backend        backendKind
 	snap           *projectSnapshot
 }
 
@@ -82,20 +84,22 @@ func buildSystemPrompt(opts buildSystemPromptOptions) string {
 		toolNames[st.Name] = true
 	}
 
+	isCPSL := opts.backend == backendCPSL
 	data := PromptData{
-		HasBash:        toolNames["bash"],
-		HostTools:      hostTools,
-		HasDevenv:      toolNames["devenv"],
-		HasAgent:       toolNames["agent"],
-		HasWebSearch:   toolNames[types.ServerToolWebSearch],
-		HasGlob:        toolNames["glob"],
-		HasGrep:        toolNames["grep"],
-		HasReadFile:    toolNames["read_file"],
-		HasOutline:     toolNames["outline"],
-		HasEditFile:    toolNames["edit_file"],
-		HasWriteFile:   toolNames["write_file"],
+		HasBash:                 toolNames["bash"],
+		HostTools:               hostTools,
+		HasDevenv:               toolNames["devenv"],
+		HasAgent:                toolNames["agent"],
+		HasWebSearch:            toolNames[types.ServerToolWebSearch],
+		HasGlob:                 toolNames["glob"],
+		HasGrep:                 toolNames["grep"],
+		HasReadFile:             toolNames["read_file"],
+		HasOutline:              toolNames["outline"],
+		HasEditFile:             toolNames["edit_file"],
+		HasWriteFile:            toolNames["write_file"],
+		IsCPSL:                  isCPSL,
 		ContainerImage:          opts.containerImage,
-		WorkDir:                 opts.workDir,
+		WorkDir:                 promptWorkDir(opts.backend, opts.workDir),
 		WorktreeBranch:          opts.worktreeBranch,
 		Date:                    time.Now().Format("2006-01-02 15:04 MST"),
 		Personality:             opts.personality,
@@ -103,7 +107,9 @@ func buildSystemPrompt(opts buildSystemPromptOptions) string {
 		DefaultSubAgentMaxTurns: defaultGeneralMaxTurns,
 	}
 
-	data.ContainerEnv = readContainerEnv(opts.workDir)
+	if !isCPSL {
+		data.ContainerEnv = readContainerEnv(opts.workDir)
+	}
 
 	if opts.snap != nil {
 		data.TopLevelListing = opts.snap.TopLevel
@@ -143,6 +149,7 @@ type buildSubAgentSystemPromptOptions struct {
 	serverTools    []types.ToolDefinition
 	workDir        string
 	containerImage string
+	backend        backendKind
 	snap           *projectSnapshot
 }
 
@@ -164,22 +171,29 @@ func buildSubAgentSystemPrompt(opts buildSubAgentSystemPromptOptions) string {
 		toolNames[st.Name] = true
 	}
 
+	isCPSL := opts.backend == backendCPSL
+	containerEnv := ""
+	if !isCPSL {
+		containerEnv = readContainerEnv(opts.workDir)
+	}
+
 	data := PromptData{
-		HasBash:        toolNames["bash"],
-		HostTools:      hostTools,
-		HasDevenv:      toolNames["devenv"],
-		HasAgent:       toolNames["agent"],
-		HasWebSearch:   toolNames[types.ServerToolWebSearch],
-		HasGlob:        toolNames["glob"],
-		HasGrep:        toolNames["grep"],
-		HasReadFile:    toolNames["read_file"],
-		HasOutline:     toolNames["outline"],
-		HasEditFile:    toolNames["edit_file"],
-		HasWriteFile:   toolNames["write_file"],
+		HasBash:                 toolNames["bash"],
+		HostTools:               hostTools,
+		HasDevenv:               toolNames["devenv"],
+		HasAgent:                toolNames["agent"],
+		HasWebSearch:            toolNames[types.ServerToolWebSearch],
+		HasGlob:                 toolNames["glob"],
+		HasGrep:                 toolNames["grep"],
+		HasReadFile:             toolNames["read_file"],
+		HasOutline:              toolNames["outline"],
+		HasEditFile:             toolNames["edit_file"],
+		HasWriteFile:            toolNames["write_file"],
 		IsSubAgent:              true,
+		IsCPSL:                  isCPSL,
 		ContainerImage:          opts.containerImage,
-		ContainerEnv:            readContainerEnv(opts.workDir),
-		WorkDir:                 opts.workDir,
+		ContainerEnv:            containerEnv,
+		WorkDir:                 promptWorkDir(opts.backend, opts.workDir),
 		Date:                    time.Now().Format("2006-01-02 15:04 MST"),
 		DefaultSubAgentMaxTurns: defaultGeneralMaxTurns,
 		// Personality, Skills, WorktreeBranch intentionally omitted for sub-agents.
@@ -196,4 +210,11 @@ func buildSubAgentSystemPrompt(opts buildSubAgentSystemPromptOptions) string {
 		panic("systemprompt: " + err.Error())
 	}
 	return buf.String()
+}
+
+func promptWorkDir(backend backendKind, hostWorkDir string) string {
+	if backend == backendCPSL {
+		return cpslWorkerInitialCW
+	}
+	return hostWorkDir
 }

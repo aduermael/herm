@@ -4,6 +4,11 @@
 ## Environment
 
 - Date: {{.Date}}
+{{- if .IsCPSL}}
+- Runtime: CPSL
+- Working directory: {{.WorkDir}}
+- Current folder mounted at: {{.WorkDir}}
+{{- else}}
 - Working directory: {{.WorkDir}}
 - Container image: {{.ContainerImage}}
 - Project mounted at: {{.WorkDir}}
@@ -15,6 +20,7 @@
 {{- end}}
 {{- if .ContainerEnv}}
 {{.ContainerEnv}}
+{{- end}}
 {{- end}}
 {{- if or .TopLevelListing .RecentCommits .GitStatus}}
 
