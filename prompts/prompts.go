@@ -27,7 +27,7 @@ var funcMap = template.FuncMap{
 // Templates is the parsed prompt template set (system, role, tools, etc.).
 var Templates = template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "*.md"))
 
-//go:embed tools/*.md
+//go:embed tools/*.md tools_cpsl/*.md
 var ToolDescFS embed.FS
 
 // Standalone content files embedded as strings — used by tool implementations

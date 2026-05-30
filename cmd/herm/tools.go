@@ -27,10 +27,80 @@ const (
 	truncTailLines = 60        // lines to keep from the end
 )
 
-// BashTool executes commands inside the Docker container via ContainerClient.
-type BashTool struct {
+type bashRunner interface {
+	RunBash(ctx context.Context, command string, timeout int) (CommandResult, error)
+}
+
+type containerBashRunner struct {
 	container *ContainerClient
-	timeout   int // default timeout in seconds
+}
+
+func (r containerBashRunner) RunBash(ctx context.Context, command string, timeout int) (CommandResult, error) {
+	if r.container == nil {
+		return CommandResult{}, fmt.Errorf("container not configured")
+	}
+	return r.container.Exec(containerExecOptions{ctx: ctx, command: command, timeout: timeout})
+}
+
+type cpslBashEvaluator interface {
+	EvalBash(ctx context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error)
+}
+
+type cpslBashRunner struct {
+	worker cpslBashEvaluator
+}
+
+func (r cpslBashRunner) RunBash(ctx context.Context, command string, timeout int) (CommandResult, error) {
+	if r.worker == nil {
+		return CommandResult{}, fmt.Errorf("CPSL worker not configured")
+	}
+	response, err := r.worker.EvalBash(ctx, command, timeout)
+	if err != nil {
+		return CommandResult{}, cpslBashError(response, err)
+	}
+	if !response.OK {
+		return CommandResult{}, cpslBashError(response, nil)
+	}
+	if response.ExitCode == nil {
+		return CommandResult{}, fmt.Errorf("CPSL response missing exit_code")
+	}
+	return CommandResult{
+		Stdout:   response.Stdout,
+		Stderr:   response.Stderr,
+		ExitCode: *response.ExitCode,
+	}, nil
+}
+
+func cpslBashError(response cpslEvalResponse, err error) error {
+	code := "runtime_error"
+	message := ""
+	if response.Error != nil {
+		if response.Error.Code != "" {
+			code = response.Error.Code
+		}
+		message = response.Error.Message
+	}
+	if message == "" && err != nil {
+		message = err.Error()
+	}
+	if message == "" {
+		message = "CPSL command could not be evaluated"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "CPSL %s: %s", code, message)
+	if output := truncateOutput(response.Stdout + response.Stderr); strings.TrimSpace(output) != "" {
+		b.WriteString("\n")
+		b.WriteString(output)
+	}
+	return fmt.Errorf("%s", b.String())
+}
+
+// BashTool executes commands through the configured bash runner.
+type BashTool struct {
+	runner              bashRunner
+	timeout             int // default timeout in seconds
+	descriptionFallback string
 }
 
 // NewBashToolOptions holds the parameters for NewBashTool.
@@ -45,13 +115,36 @@ func NewBashTool(opts NewBashToolOptions) *BashTool {
 	if timeout <= 0 {
 		timeout = 120
 	}
-	return &BashTool{container: opts.Container, timeout: timeout}
+	return &BashTool{
+		runner:              containerBashRunner{container: opts.Container},
+		timeout:             timeout,
+		descriptionFallback: "Run a shell command in the dev container. Output is truncated to 80 lines / 12KB (head+tail).",
+	}
+}
+
+// NewCPSLBashToolOptions holds the parameters for NewCPSLBashTool.
+type NewCPSLBashToolOptions struct {
+	Worker  cpslBashEvaluator
+	Timeout int
+}
+
+// NewCPSLBashTool creates a BashTool that routes commands through CPSL.
+func NewCPSLBashTool(opts NewCPSLBashToolOptions) *BashTool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 120
+	}
+	return &BashTool{
+		runner:              cpslBashRunner{worker: opts.Worker},
+		timeout:             timeout,
+		descriptionFallback: "Run a shell command in CPSL at /workdir. Output is truncated to 80 lines / 12KB (head+tail).",
+	}
 }
 
 func (t *BashTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "bash",
-		Description: getToolDescription(getToolDescriptionOptions{name: "bash", fallback: "Run a shell command in the dev container. Output is truncated to 80 lines / 12KB (head+tail)."}),
+		Description: getToolDescription(getToolDescriptionOptions{name: "bash", fallback: t.descriptionFallback}),
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -95,7 +188,10 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	// (e.g. && → &amp;&amp;). Unescape before execution.
 	command := html.UnescapeString(in.Command)
 
-	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: command, timeout: timeout})
+	if t.runner == nil {
+		return "", fmt.Errorf("bash runner not configured")
+	}
+	result, err := t.runner.RunBash(ctx, command, timeout)
 	if err != nil {
 		return "", err
 	}

@@ -248,6 +248,12 @@ func (t *SubAgentTool) writeOutputFile(opts writeOutputFileOptions) string {
 	if err := os.WriteFile(path, []byte(opts.output), 0o644); err != nil {
 		return ""
 	}
+	if t.backend == backendCPSL {
+		if rel, err := filepath.Rel(t.workDir, path); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			return cpslWorkerInitialCW + "/" + filepath.ToSlash(rel)
+		}
+		return cpslWorkerInitialCW + "/.herm/agents/" + opts.agentID + ".md"
+	}
 	return path
 }
 

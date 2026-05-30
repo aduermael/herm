@@ -224,6 +224,11 @@ func (a *App) startAgent(userMessage string) {
 	}
 
 	tools := a.runtimeTools()
+	if a.backend == backendCPSL && !a.cpslReady {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL sandbox is still starting — the agent won't have bash until it's ready."})
+		a.render()
+		return
+	}
 
 	modelID := a.config.resolveActiveModel(a.models)
 	if modelID == "" {
@@ -275,6 +280,7 @@ func (a *App) startAgent(userMessage string) {
 		workDir:         workDir,
 		exploreMaxTurns: exploreMaxTurns,
 		generalMaxTurns: generalMaxTurns,
+		backend:         a.backend,
 	})
 	maxDepth := a.config.MaxAgentDepth
 	if maxDepth <= 0 {
@@ -297,6 +303,7 @@ func (a *App) startAgent(userMessage string) {
 		WorkDir:          workDir,
 		Personality:      a.config.Personality,
 		ContainerImage:   containerImage,
+		Backend:          a.backend,
 	})
 	tools = append(tools, subAgentTool)
 
@@ -312,6 +319,7 @@ func (a *App) startAgent(userMessage string) {
 		personality:    a.config.Personality,
 		containerImage: containerImage,
 		worktreeBranch: wtBranch,
+		backend:        a.backend,
 		snap:           a.projectSnap,
 	})
 
@@ -393,7 +401,10 @@ func (a *App) startAgent(userMessage string) {
 
 func (a *App) runtimeTools() []Tool {
 	if a.backend == backendCPSL {
-		return nil
+		if !a.cpslReady || a.cpslWorker == nil {
+			return nil
+		}
+		return []Tool{NewCPSLBashTool(NewCPSLBashToolOptions{Worker: a.cpslWorker, Timeout: 120})}
 	}
 
 	var tools []Tool

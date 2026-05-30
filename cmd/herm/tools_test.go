@@ -528,6 +528,121 @@ func TestBashToolDefaultTimeout(t *testing.T) {
 	}
 }
 
+type fakeCPSLBashEvaluator struct {
+	response cpslEvalResponse
+	err      error
+	command  string
+	timeout  int
+}
+
+func (f *fakeCPSLBashEvaluator) EvalBash(_ context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error) {
+	f.command = input
+	f.timeout = timeoutSeconds
+	return f.response, f.err
+}
+
+func TestCPSLBashToolExecute_Success(t *testing.T) {
+	exitCode := 0
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stdout:   "hello from cpsl\n",
+			Stderr:   "",
+			ExitCode: &exitCode,
+			Warnings: []string{},
+			CWD:      cpslWorkerInitialCW,
+		},
+	}
+	tool := NewCPSLBashTool(NewCPSLBashToolOptions{Worker: worker, Timeout: 120})
+
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo hello"}`))
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if result != "hello from cpsl\n" {
+		t.Fatalf("result = %q, want CPSL stdout", result)
+	}
+	if worker.command != "echo hello" {
+		t.Fatalf("command = %q, want echo hello", worker.command)
+	}
+}
+
+func TestCPSLBashToolExecute_NonZeroExitCode(t *testing.T) {
+	exitCode := 7
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stdout:   "",
+			Stderr:   "not found\n",
+			ExitCode: &exitCode,
+			Warnings: []string{},
+			CWD:      cpslWorkerInitialCW,
+		},
+	}
+	tool := NewCPSLBashTool(NewCPSLBashToolOptions{Worker: worker, Timeout: 120})
+
+	result, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"missing"}`))
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if !strings.Contains(result, "exit code: 7") || !strings.Contains(result, "not found") {
+		t.Fatalf("result = %q, want exit code and stderr", result)
+	}
+}
+
+func TestCPSLBashToolExecute_EvalFailure(t *testing.T) {
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:     false,
+			Stdout: "partial\n",
+			Stderr: "",
+			Error:  &cpslEvalError{Code: "sandbox_denied", Message: "Network access is denied by policy"},
+			CWD:    cpslWorkerInitialCW,
+		},
+	}
+	tool := NewCPSLBashTool(NewCPSLBashToolOptions{Worker: worker, Timeout: 120})
+
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"curl https://example.com"}`))
+	if err == nil {
+		t.Fatal("expected CPSL eval failure")
+	}
+	if !strings.Contains(err.Error(), "sandbox_denied") || !strings.Contains(err.Error(), "partial") {
+		t.Fatalf("error = %q, want CPSL code and partial output", err.Error())
+	}
+}
+
+func TestCPSLBashToolExecute_TimeoutClampAndHTMLUnescapeWithoutDocker(t *testing.T) {
+	orig := dockerCommand
+	defer func() { dockerCommand = orig }()
+	dockerCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		t.Fatalf("CPSL bash must not call docker: %s %v", name, args)
+		return exec.CommandContext(ctx, "false")
+	}
+
+	exitCode := 0
+	worker := &fakeCPSLBashEvaluator{
+		response: cpslEvalResponse{
+			OK:       true,
+			Stdout:   "ok",
+			ExitCode: &exitCode,
+			Warnings: []string{},
+			CWD:      cpslWorkerInitialCW,
+		},
+	}
+	tool := NewCPSLBashTool(NewCPSLBashToolOptions{Worker: worker, Timeout: 120})
+
+	_, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"echo a &amp;&amp; echo b","timeout":700}`))
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if worker.command != "echo a && echo b" {
+		t.Fatalf("command = %q, want HTML-unescaped command", worker.command)
+	}
+	if worker.timeout != 600 {
+		t.Fatalf("timeout = %d, want max clamp 600", worker.timeout)
+	}
+}
+
 // --- Task 2e: GitTool.Execute and RequiresApproval ---
 
 func TestGitToolExecute_AllowedSubcommand(t *testing.T) {
