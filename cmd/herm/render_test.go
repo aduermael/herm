@@ -544,7 +544,7 @@ func TestBuildInputRows(t *testing.T) {
 	}
 }
 
-func TestBuildInputRowsCPSLStatusUsesCPSLLabel(t *testing.T) {
+func TestBuildInputRowsCPSLStatusUsesSandboxLabel(t *testing.T) {
 	app := &App{
 		width:          80,
 		backend:        backendCPSL,
@@ -553,11 +553,11 @@ func TestBuildInputRowsCPSLStatusUsesCPSLLabel(t *testing.T) {
 
 	rows := app.buildInputRows()
 	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
-	if !strings.Contains(plain, "cpsl: ready (/workdir)") {
-		t.Fatalf("CPSL status rows = %q, want cpsl status label", plain)
+	if !strings.Contains(plain, "sandbox: ready (/workdir)") {
+		t.Fatalf("CPSL status rows = %q, want sandbox status label", plain)
 	}
-	if strings.Contains(plain, "container:") {
-		t.Fatalf("CPSL status rows = %q, should not include container label", plain)
+	if strings.Contains(plain, "container:") || strings.Contains(plain, "cpsl:") {
+		t.Fatalf("CPSL status rows = %q, should not include container or cpsl label", plain)
 	}
 }
 

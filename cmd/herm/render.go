@@ -753,7 +753,7 @@ func (a *App) buildInputRows() []string {
 
 func (a *App) backendStatusDisplay() (label, text string, err error) {
 	if a.backend == backendCPSL {
-		return "cpsl", a.cpslStatusText, a.cpslErr
+		return "sandbox", a.cpslStatusText, a.cpslErr
 	}
 	return "container", a.containerStatusText, a.containerErr
 }

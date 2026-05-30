@@ -52,7 +52,7 @@ type cpslBashRunner struct {
 
 func (r cpslBashRunner) RunBash(ctx context.Context, command string, timeout int) (CommandResult, error) {
 	if r.worker == nil {
-		return CommandResult{}, fmt.Errorf("CPSL worker not configured")
+		return CommandResult{}, fmt.Errorf("sandbox worker not configured")
 	}
 	response, err := r.worker.EvalCPSL(ctx, cpslLanguageBash, command, timeout)
 	if err != nil {
@@ -62,7 +62,7 @@ func (r cpslBashRunner) RunBash(ctx context.Context, command string, timeout int
 		return CommandResult{}, formatCPSLEvalError(response, nil)
 	}
 	if response.ExitCode == nil {
-		return CommandResult{}, fmt.Errorf("CPSL response missing exit_code")
+		return CommandResult{}, fmt.Errorf("sandbox response missing exit_code")
 	}
 	return CommandResult{
 		Stdout:   response.Stdout,
@@ -84,11 +84,11 @@ func formatCPSLEvalError(response cpslEvalResponse, err error) error {
 		message = err.Error()
 	}
 	if message == "" {
-		message = "CPSL command could not be evaluated"
+		message = "sandbox command could not be evaluated"
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "CPSL %s: %s", code, message)
+	fmt.Fprintf(&b, "Sandbox %s: %s", code, message)
 	if output := truncateOutput(response.Stdout + response.Stderr); strings.TrimSpace(output) != "" {
 		b.WriteString("\n")
 		b.WriteString(output)
@@ -139,8 +139,8 @@ func NewCPSLBashTool(opts NewCPSLBashToolOptions) *BashTool {
 	return &BashTool{
 		runner:              cpslBashRunner{worker: opts.Worker},
 		timeout:             timeout,
-		descriptionFallback: "Run Bash-compatible CPSL command input at /workdir. Output is truncated to 80 lines / 12KB (head+tail).",
-		commandDescription:  "CPSL Bash-compatible input; run `help` for sandbox command/module discovery",
+		descriptionFallback: "Run Bash-compatible sandbox command input at /workdir. Output is truncated to 80 lines / 12KB (head+tail).",
+		commandDescription:  "Bash-compatible sandbox input; run `help` for sandbox command/module discovery",
 	}
 }
 
@@ -243,13 +243,13 @@ func NewCPSLLuauTool(opts NewCPSLLuauToolOptions) *CPSLLuauTool {
 func (t *CPSLLuauTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        "luau",
-		Description: getToolDescription(getToolDescriptionOptions{name: "luau", fallback: "Run native Luau source in CPSL at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
+		Description: getToolDescription(getToolDescriptionOptions{name: "luau", fallback: "Run native Luau source in the local sandbox at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"script": {
 					"type": "string",
-					"description": "Native Luau source to run in CPSL at /workdir. Prefer reusable .luau scripts for repeated automation."
+					"description": "Native Luau source to run in the local sandbox at /workdir. For repeated automation, keep reusable .luau source in the workspace and pass that source here."
 				},
 				"timeout": {
 					"type": "integer",
@@ -284,7 +284,7 @@ func (t *CPSLLuauTool) Execute(ctx context.Context, input json.RawMessage) (stri
 	}
 
 	if t.worker == nil {
-		return "", fmt.Errorf("CPSL worker not configured")
+		return "", fmt.Errorf("sandbox worker not configured")
 	}
 	script := html.UnescapeString(in.Script)
 	response, err := t.worker.EvalCPSL(ctx, cpslLanguageLuau, script, timeout)
