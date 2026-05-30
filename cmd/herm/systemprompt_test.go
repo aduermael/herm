@@ -398,7 +398,7 @@ func TestSubAgentPromptHostToolsOmittedWhenAbsent(t *testing.T) {
 }
 
 func TestBuildSystemPromptCPSLMode(t *testing.T) {
-	tools := []Tool{stubTool{"luau"}, stubTool{"bash"}, stubTool{"agent"}}
+	tools := []Tool{stubTool{"luau"}, stubTool{"agent"}}
 	prompt := buildSystemPrompt(buildSystemPromptOptions{
 		tools:       tools,
 		serverTools: nil,
@@ -409,12 +409,12 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "native runtime is Luau", "`luau` tool as the primary", "`help()`", "`<module>.help()`", "reusable `.luau` script", "`compgen`", "do not fall back"} {
+	for _, want := range []string{"/workdir", "native runtime is Luau", "`luau` tool by default", "sandbox execution", "`help()`", "`<module>.help()`", "reusable `.luau` source", "`luau -e`", "No `bash` tool is exposed", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	for _, forbidden := range []string{"Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "local_sandbox_exec"} {
+	for _, forbidden := range []string{"CPSL", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "local_sandbox_exec"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("CPSL prompt contains %q:\n%s", forbidden, prompt)
 		}
@@ -422,7 +422,7 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 }
 
 func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
-	tools := []Tool{stubTool{"luau"}, stubTool{"bash"}}
+	tools := []Tool{stubTool{"luau"}}
 	prompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{
 		tools:       tools,
 		serverTools: nil,
@@ -431,12 +431,12 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "native runtime is Luau", "`luau` tool as the primary", "`help()`", "`<module>.help()`", "reusable `.luau` script", "`compgen`", "do not fall back"} {
+	for _, want := range []string{"/workdir", "native runtime is Luau", "`luau` tool by default", "sandbox execution", "`help()`", "`<module>.help()`", "reusable `.luau` source", "`luau -e`", "No `bash` tool is exposed", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	for _, forbidden := range []string{"Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "local_sandbox_exec", "glob to discover", "read_file"} {
+	for _, forbidden := range []string{"CPSL", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "local_sandbox_exec", "glob to discover", "read_file"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("CPSL sub-agent prompt contains %q:\n%s", forbidden, prompt)
 		}
@@ -804,33 +804,33 @@ func TestCPSLToolDescriptionOverrides(t *testing.T) {
 	if !strings.Contains(luau.Full, "native Luau") || !strings.Contains(luau.Full, "/workdir") {
 		t.Fatalf("CPSL luau description = %q, want native Luau and /workdir", luau.Full)
 	}
-	for _, want := range []string{"`help()`", "`<module>.help()`", "reusable `.luau` scripts"} {
+	for _, want := range []string{"default execution tool", "`help()`", "`<module>.help()`", "reusable `.luau` source", "/workdir/.herm/luau"} {
 		if !strings.Contains(luau.Full, want) {
 			t.Fatalf("CPSL luau description missing %q: %q", want, luau.Full)
 		}
 	}
-	if strings.Contains(luau.Full, "dev container") || strings.Contains(luau.Full, "Docker") || strings.Contains(luau.Full, "devenv") {
+	if strings.Contains(luau.Full, "CPSL") || strings.Contains(luau.Full, "dev container") || strings.Contains(luau.Full, "Docker") || strings.Contains(luau.Full, "devenv") {
 		t.Fatalf("CPSL luau description contains container-only guidance: %q", luau.Full)
 	}
 
 	bash := descs["bash"]
-	if !strings.Contains(bash.Full, "CPSL") || !strings.Contains(bash.Full, "/workdir") {
-		t.Fatalf("CPSL bash description = %q, want CPSL and /workdir", bash.Full)
+	if !strings.Contains(bash.Full, "local sandbox") || !strings.Contains(bash.Full, "/workdir") {
+		t.Fatalf("CPSL bash description = %q, want local sandbox and /workdir", bash.Full)
 	}
 	for _, want := range []string{"`help`", "`<module> help`", "`which NAME`", "`type NAME`", "`compgen`"} {
 		if !strings.Contains(bash.Full, want) {
 			t.Fatalf("CPSL bash description missing %q: %q", want, bash.Full)
 		}
 	}
-	if strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "Docker") || strings.Contains(bash.Full, "devenv") {
+	if strings.Contains(bash.Full, "CPSL") || strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "Docker") || strings.Contains(bash.Full, "devenv") {
 		t.Fatalf("CPSL bash description contains container-only guidance: %q", bash.Full)
 	}
 
 	agent := descs["agent"]
-	if !strings.Contains(agent.Full, "CPSL-safe") || !strings.Contains(agent.Full, "/workdir/.herm/agents") {
-		t.Fatalf("CPSL agent description = %q, want CPSL-safe output guidance", agent.Full)
+	if !strings.Contains(agent.Full, "sandbox-safe") || !strings.Contains(agent.Full, "/workdir/.herm/agents") {
+		t.Fatalf("CPSL agent description = %q, want sandbox-safe output guidance", agent.Full)
 	}
-	if strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "Docker") || strings.Contains(agent.Full, "read_file") {
+	if strings.Contains(agent.Full, "CPSL") || strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "Docker") || strings.Contains(agent.Full, "read_file") {
 		t.Fatalf("CPSL agent description contains unavailable-tool guidance: %q", agent.Full)
 	}
 }

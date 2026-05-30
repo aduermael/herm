@@ -32,7 +32,7 @@
 │  │  /worktrees    → Manage git worktrees (menu)              │   │
 │  │  /session      → Session management (list/load/show)     │   │
 │  │  /usage        → Token/cost stats                         │   │
-│  │  /shell        → Shell mode                               │   │
+│  │  /shell        → Sandbox/shell mode                       │   │
 │  │  /update       → Check for updates                        │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                                                                   │

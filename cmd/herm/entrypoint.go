@@ -108,9 +108,9 @@ func parseCLI(opts parseCLIOptions) (cliOptions, error) {
 	fs.StringVar(&parsed.continueID, "from", "", "continue from a conversation node ID, prefix, or alias")
 	fs.StringVar(&parsed.configOverrides, "config-overrides", "", "JSON object overlaid onto the effective config")
 	fs.StringVar(&parsed.cacheDir, "cache", "", "directory for cached model responses")
-	fs.StringVar(&parsed.cpsl.LibraryPath, "cpsl", "", "path to a CPSL sandbox library")
-	fs.Var(&allowDomains, "allow-domain", "allow a domain in CPSL mode")
-	fs.Var(&denyDomains, "deny-domain", "deny a domain in CPSL mode")
+	fs.StringVar(&parsed.cpsl.LibraryPath, "cpsl", "", "path to a local sandbox library")
+	fs.Var(&allowDomains, "allow-domain", "allow a domain in sandbox mode")
+	fs.Var(&denyDomains, "deny-domain", "deny a domain in sandbox mode")
 	if err := fs.Parse(opts.args); err != nil {
 		return parsed, err
 	}
@@ -190,9 +190,9 @@ Flags:
       --from node                  Alias for --continue.
       --config-overrides json      Overlay config fields for this run only.
       --cache path                 Cache successful model responses in path.
-      --cpsl path                  Run with a CPSL sandbox library instead of Docker.
-      --allow-domain domain        Allow a domain in CPSL mode. Repeatable.
-      --deny-domain domain         Deny a domain in CPSL mode. Repeatable.
+      --cpsl path                  Run with a local sandbox library instead of Docker.
+      --allow-domain domain        Allow a domain in sandbox mode. Repeatable.
+      --deny-domain domain         Deny a domain in sandbox mode. Repeatable.
 
 Examples:
   herm -p say ok

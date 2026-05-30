@@ -612,7 +612,7 @@ func (a *App) handleEnter() {
 		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Container is still starting — the agent won't have bash or file tools until it's ready."})
 	}
 	if a.backend == backendCPSL && !a.cpslReady {
-		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL sandbox is still starting — the agent won't have CPSL tools until it's ready."})
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Local sandbox is still starting — the agent won't have Luau tools until it's ready."})
 		a.render()
 		return
 	}

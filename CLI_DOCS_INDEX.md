@@ -45,7 +45,7 @@ Complete reference documentation for Herm's entry points, commands, and architec
   - `/config` - Configuration editor
   - `/model` - Quick model selector
   - `/worktrees` - Manage git worktrees
-  - `/shell` - Shell mode
+  - `/shell` - Sandbox/shell mode
   - `/session` - Session management
   - `/usage` - Token/cost stats
   - `/update` - Check for updates
@@ -356,7 +356,7 @@ In chat:
 /branches   - Switch git branch
 /worktrees  - Manage worktrees
 /session    - Resume conversation
-/shell      - Shell mode
+/shell      - Sandbox/shell mode
 /update     - Check updates
 ```
 
@@ -370,4 +370,3 @@ In chat:
 4. **ARCHITECTURE.md** (411 lines) - System design deep dive
 
 **Total:** 1,447 lines of comprehensive documentation
-

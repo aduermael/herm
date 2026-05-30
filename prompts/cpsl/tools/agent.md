@@ -1,14 +1,14 @@
 ---
 name: agent
-description: Spawn a CPSL-safe sub-agent to handle a complex subtask
+description: Spawn a sandbox-safe sub-agent to handle a complex subtask
 runs_on: cpsl
 ---
 
-Spawn a sub-agent with its own context window. Sub-agents inherit the same CPSL-safe prompt and tool set: commands run in CPSL at `/workdir`, cannot leave the sandbox, and have no host shell or host git tool.
+Spawn a sub-agent with its own context window. Sub-agents inherit the same sandbox-safe prompt and tool set: execution runs in the local sandbox at `/workdir`, cannot leave the sandbox, and has no host shell or host git tool.
 
 **Modes - you must specify one:**
 - `"explore"` - uses a fast, cheap model. For research, search, reading files, investigating issues, gathering information.
-- `"general"` - uses the full orchestrator model. For writing files, running CPSL command cycles, and executing changes.
+- `"general"` - uses the full orchestrator model. For writing files, running sandbox execution cycles, and executing changes.
 
 **When to use:**
 - Tasks requiring deep exploration across many files (10+ tool calls) -> `explore`
@@ -30,13 +30,13 @@ When spawning multiple general-mode sub-agents, ensure they work on separate fil
 - Cannot be combined with agent_id.
 
 **Usage:**
-- Provide a clear, self-contained task description. The sub-agent has the same CPSL-safe tools you do but no shared memory.
+- Provide a clear, self-contained task description. The sub-agent has the same sandbox-safe tools you do but no shared memory.
 - Resume a previous sub-agent by passing its agent_id with a new task.
 
 **Reading results:**
 - Results have a compact header: `[agent:<id> turns:<N/M> summary:<method>]` followed by an `[output: <path>]` pointer to the full output file.
 - `summary:model` - structured summary (STATUS/FILES/FINDINGS/NEXT); usually sufficient to act on.
-- `summary:truncated` - naive truncation; inspect the full output file with bash, for example `cat /workdir/.herm/agents/<agent_id>.md`.
+- `summary:truncated` - naive truncation; inspect the full output file with Luau, for example `print(fs.read("/workdir/.herm/agents/<agent_id>.md"))`.
 - `[errors: ...]` - sub-agent hit errors; review and consider retrying with a narrower task.
 - Turns count LLM response cycles, not individual tool calls (one response with 5 tool calls = 1 turn). N=M means the sub-agent hit its turn limit and may have incomplete results.
 

@@ -57,7 +57,7 @@ func (a *App) commandUnavailableInCPSL(cmd string) bool {
 	if a.backend != backendCPSL || !cpslUnavailableCommands[cmd] {
 		return false
 	}
-	a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("%s is unavailable in CPSL mode.", cmd)})
+	a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("%s is unavailable in sandbox mode.", cmd)})
 	a.render()
 	return true
 }
@@ -553,12 +553,12 @@ func (a *App) enterCPSLShellMode(input string) {
 		return
 	}
 	if a.cpslErr != nil {
-		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("CPSL error: %v", a.cpslErr)})
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Sandbox error: %v", a.cpslErr)})
 		a.render()
 		return
 	}
 	if !a.cpslReady || a.cpslWorker == nil {
-		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL sandbox is starting... please try again in a moment."})
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Local sandbox is starting... please try again in a moment."})
 		a.render()
 		return
 	}
@@ -594,15 +594,15 @@ func (a *App) enterCPSLShellMode(input string) {
 	a.width = getWidth()
 
 	if shellErr != nil {
-		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("CPSL shell error: %v", shellErr)})
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Sandbox shell error: %v", shellErr)})
 	} else {
-		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "CPSL shell session ended."})
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Sandbox shell session ended."})
 	}
 	a.renderFull()
 }
 
 func cpslShellLanguageFromInput(input string) (string, error) {
-	language := cpslLanguageBash
+	language := cpslLanguageLuau
 	fields := strings.Fields(input)
 	for _, field := range fields[1:] {
 		switch field {
@@ -611,7 +611,7 @@ func cpslShellLanguageFromInput(input string) (string, error) {
 		case "--lua", "--luau":
 			language = cpslLanguageLuau
 		default:
-			return "", fmt.Errorf("unsupported CPSL shell option %q; use /shell, /shell --bash, or /shell --luau", field)
+			return "", fmt.Errorf("unsupported sandbox shell option %q; use /shell, /shell --bash, or /shell --luau", field)
 		}
 	}
 	return language, nil
@@ -627,7 +627,7 @@ type runCPSLShellOptions struct {
 
 func runCPSLShell(opts runCPSLShellOptions) error {
 	if opts.evaluator == nil {
-		return fmt.Errorf("CPSL worker not configured")
+		return fmt.Errorf("sandbox worker not configured")
 	}
 	input := opts.input
 	if input == nil {
@@ -643,24 +643,25 @@ func runCPSLShell(opts runCPSLShellOptions) error {
 	}
 	language := opts.language
 	if language == "" {
-		language = cpslLanguageBash
+		language = cpslLanguageLuau
 	}
 	if !isSupportedCPSLLanguage(language) {
-		return fmt.Errorf("unsupported CPSL shell language %q", language)
+		return fmt.Errorf("unsupported sandbox shell language %q", language)
 	}
 
 	cwd := cpslWorkerInitialCW
-	label := "shell"
+	label := "Luau"
 	promptMarker := "$"
-	if language == cpslLanguageLuau {
-		label = "Luau"
+	if language == cpslLanguageBash {
+		label = "Bash-compatible shell"
+	} else {
 		promptMarker = ">"
 	}
-	fmt.Fprintf(output, "CPSL %s at %s. Type exit to return to Herm.\n", label, cwd)
+	fmt.Fprintf(output, "Local sandbox %s at %s. Type exit to return to Herm.\n", label, cwd)
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 1024), 1024*1024)
 	for {
-		fmt.Fprintf(output, "cpsl:%s%s ", cwd, promptMarker)
+		fmt.Fprintf(output, "sandbox:%s%s ", cwd, promptMarker)
 		if !scanner.Scan() {
 			if err := scanner.Err(); err != nil {
 				return err

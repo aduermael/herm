@@ -12,7 +12,7 @@ Quick lookup table for all interactive slash commands available in chat mode.
 | `/config` | Open config editor | — | `/config` |
 | `/model` | Quick model selector | — | `/model` |
 | `/worktrees` | Manage git worktrees | — | `/worktrees` |
-| `/shell` | Enter shell command mode | — | `/shell` |
+| `/shell` | Enter sandbox/shell command mode | `--bash`, `--luau` | `/shell`, `/shell --bash` |
 | `/session` | Session management | `list`, `load`, `show` | `/session list` |
 | `/usage` | Show token/cost stats | — | `/usage` |
 | `/update` | Check for updates | — | `/update` |
@@ -76,11 +76,13 @@ Quick lookup table for all interactive slash commands available in chat mode.
 - Best for: Multi-branch development workflows
 
 ### `/shell`
-**Shell command mode**
+**Sandbox command mode**
 - Enter dedicated command interpreter
-- Run shell commands within agent context
+- In local sandbox mode, `/shell` starts a Luau prompt by default
+- Use `/shell --bash` for Bash-compatible sandbox input
+- In container mode, `/shell` enters the container shell
 - Exit: Return to chat mode
-- Useful for: Sequential shell operations, debugging
+- Useful for: Sequential sandbox operations, debugging
 
 ### `/session`
 **Conversation session management**
