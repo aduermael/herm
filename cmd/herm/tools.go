@@ -101,6 +101,7 @@ type BashTool struct {
 	runner              bashRunner
 	timeout             int // default timeout in seconds
 	descriptionFallback string
+	commandDescription  string
 }
 
 // NewBashToolOptions holds the parameters for NewBashTool.
@@ -119,6 +120,7 @@ func NewBashTool(opts NewBashToolOptions) *BashTool {
 		runner:              containerBashRunner{container: opts.Container},
 		timeout:             timeout,
 		descriptionFallback: "Run a shell command in the dev container. Output is truncated to 80 lines / 12KB (head+tail).",
+		commandDescription:  "The shell command to execute in the dev container",
 	}
 }
 
@@ -137,20 +139,26 @@ func NewCPSLBashTool(opts NewCPSLBashToolOptions) *BashTool {
 	return &BashTool{
 		runner:              cpslBashRunner{worker: opts.Worker},
 		timeout:             timeout,
-		descriptionFallback: "Run a shell command in CPSL at /workdir. Output is truncated to 80 lines / 12KB (head+tail).",
+		descriptionFallback: "Run Bash-compatible CPSL command input at /workdir. Output is truncated to 80 lines / 12KB (head+tail).",
+		commandDescription:  "CPSL Bash-compatible input; run `help` for sandbox command/module discovery",
 	}
 }
 
 func (t *BashTool) Definition() types.ToolDefinition {
+	commandDescription := t.commandDescription
+	if commandDescription == "" {
+		commandDescription = "The bash command to execute"
+	}
+	commandDescriptionJSON, _ := json.Marshal(commandDescription)
 	return types.ToolDefinition{
 		Name:        "bash",
 		Description: getToolDescription(getToolDescriptionOptions{name: "bash", fallback: t.descriptionFallback}),
-		InputSchema: json.RawMessage(`{
+		InputSchema: json.RawMessage(fmt.Sprintf(`{
 			"type": "object",
 			"properties": {
 				"command": {
 					"type": "string",
-					"description": "The bash command to execute"
+					"description": %s
 				},
 				"timeout": {
 					"type": "integer",
@@ -158,7 +166,7 @@ func (t *BashTool) Definition() types.ToolDefinition {
 				}
 			},
 			"required": ["command"]
-		}`),
+		}`, commandDescriptionJSON)),
 	}
 }
 

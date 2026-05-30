@@ -643,6 +643,21 @@ func TestCPSLBashToolExecute_TimeoutClampAndHTMLUnescapeWithoutDocker(t *testing
 	}
 }
 
+func TestCPSLBashToolDefinitionDescribesSandboxInput(t *testing.T) {
+	tool := NewCPSLBashTool(NewCPSLBashToolOptions{Worker: &fakeCPSLBashEvaluator{}, Timeout: 120})
+	def := tool.Definition()
+	schema := string(def.InputSchema)
+
+	for _, want := range []string{"CPSL Bash-compatible input", "run `help`", "sandbox command/module discovery"} {
+		if !strings.Contains(schema, want) {
+			t.Fatalf("CPSL bash schema missing %q: %s", want, schema)
+		}
+	}
+	if strings.Contains(schema, "The bash command to execute") {
+		t.Fatalf("CPSL bash schema still uses generic host-bash wording: %s", schema)
+	}
+}
+
 // --- Task 2e: GitTool.Execute and RequiresApproval ---
 
 func TestGitToolExecute_AllowedSubcommand(t *testing.T) {

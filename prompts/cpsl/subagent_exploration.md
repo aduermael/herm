@@ -4,6 +4,6 @@
 
 ## Exploration strategy
 
-Be token-efficient. Start from the project snapshot, then use CPSL bash commands to inspect only the files and data needed for the assigned task. Stop when you have enough to answer.
+Be token-efficient. Start from the project snapshot, then use CPSL `help`-listed commands and modules to inspect only the files and data needed for the assigned task. Stop when you have enough to answer.
 {{- end}}
 {{- end}}

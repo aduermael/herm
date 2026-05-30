@@ -409,7 +409,7 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible commands", "do not fall back"} {
+	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible command interface", "`help`", "`<module> help`", "`compgen`", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
 		}
@@ -431,7 +431,7 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible commands", "do not fall back"} {
+	for _, want := range []string{"CPSL", "/workdir", "Bash-compatible command interface", "`help`", "`<module> help`", "`compgen`", "do not fall back"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
 		}
@@ -803,6 +803,11 @@ func TestCPSLToolDescriptionOverrides(t *testing.T) {
 	bash := descs["bash"]
 	if !strings.Contains(bash.Full, "CPSL") || !strings.Contains(bash.Full, "/workdir") {
 		t.Fatalf("CPSL bash description = %q, want CPSL and /workdir", bash.Full)
+	}
+	for _, want := range []string{"`help`", "`<module> help`", "`which NAME`", "`type NAME`", "`compgen`"} {
+		if !strings.Contains(bash.Full, want) {
+			t.Fatalf("CPSL bash description missing %q: %q", want, bash.Full)
+		}
 	}
 	if strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "Docker") || strings.Contains(bash.Full, "devenv") {
 		t.Fatalf("CPSL bash description contains container-only guidance: %q", bash.Full)
