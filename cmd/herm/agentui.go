@@ -194,7 +194,7 @@ func versionDisplayMessage(backend backendKind) chatMessage {
 
 func backendVersionSuffix(backend backendKind) string {
 	if backend == backendCPSL {
-		return "(local sandbox: Luau)"
+		return "(sandbox: CPSL)"
 	}
 	return "(container: " + hermImageTag + ")"
 }
