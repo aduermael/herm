@@ -152,6 +152,7 @@ type projectSnapshot struct {
 	TopLevel      string // ls -1 of worktree root
 	RecentCommits string // git log --oneline -10
 	GitStatus     string // git status --short
+	IsGitRepo     bool   // git rev-parse --is-inside-work-tree
 }
 
 type projectSnapshotMsg struct {
@@ -690,6 +691,7 @@ func fetchProjectSnapshot(worktreePath string) projectSnapshotMsg {
 	type result struct {
 		field string
 		value string
+		ok    bool
 	}
 
 	ch := make(chan result, 3)
@@ -697,13 +699,22 @@ func fetchProjectSnapshot(worktreePath string) projectSnapshotMsg {
 	// Two-level tree view of project root.
 	go func() {
 		val := buildProjectTree(buildProjectTreeOptions{rootPath: worktreePath, maxTopLevel: 20, maxPerSubdir: 8})
-		ch <- result{"ls", val}
+		ch <- result{field: "ls", value: val}
 	}()
 
-	// git log --oneline -10
+	// git repository check and log --oneline -10
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
+		repoCmd := exec.CommandContext(ctx, "git", "rev-parse", "--is-inside-work-tree")
+		repoCmd.Dir = worktreePath
+		repoOut, repoErr := repoCmd.Output()
+		isRepo := repoErr == nil && strings.TrimSpace(string(repoOut)) == "true"
+		if !isRepo {
+			ch <- result{field: "log", ok: false}
+			return
+		}
+
 		cmd := exec.CommandContext(ctx, "git", "log", "--oneline", "-10")
 		cmd.Dir = worktreePath
 		out, err := cmd.Output()
@@ -711,7 +722,7 @@ func fetchProjectSnapshot(worktreePath string) projectSnapshotMsg {
 		if err == nil {
 			val = strings.TrimSpace(string(out))
 		}
-		ch <- result{"log", val}
+		ch <- result{field: "log", value: val, ok: true}
 	}()
 
 	// git status --short
@@ -725,7 +736,7 @@ func fetchProjectSnapshot(worktreePath string) projectSnapshotMsg {
 		if err == nil {
 			val = strings.TrimSpace(string(out))
 		}
-		ch <- result{"status", val}
+		ch <- result{field: "status", value: val}
 	}()
 
 	for i := 0; i < 3; i++ {
@@ -735,6 +746,7 @@ func fetchProjectSnapshot(worktreePath string) projectSnapshotMsg {
 			snap.TopLevel = r.value
 		case "log":
 			snap.RecentCommits = r.value
+			snap.IsGitRepo = r.ok
 		case "status":
 			snap.GitStatus = r.value
 		}

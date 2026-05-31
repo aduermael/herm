@@ -414,7 +414,6 @@ func (a *App) runtimeTools() []Tool {
 		}
 		return []Tool{
 			NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: a.cpslWorker, Timeout: 120}),
-			NewCPSLBashTool(NewCPSLBashToolOptions{Worker: a.cpslWorker, Timeout: 120}),
 		}
 	}
 

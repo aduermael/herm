@@ -429,7 +429,6 @@ func TestSubAgentToolExploreModeFiltersTools(t *testing.T) {
 	// Provide a full set of tools including write tools that should be excluded.
 	allTools := []Tool{
 		&testTool{name: toolLocalSandboxExec, result: "ok"},
-		&testTool{name: toolLocalSandboxExecBash, result: "ok"},
 		&testTool{name: toolBash, result: "ok"},
 		&testTool{name: "glob", result: "ok"},
 		&testTool{name: "grep", result: "ok"},
@@ -466,7 +465,6 @@ func TestSubAgentToolExploreModeFiltersTools(t *testing.T) {
 func TestSubAgentToolImplementModeIncludesAllTools(t *testing.T) {
 	allTools := []Tool{
 		&testTool{name: toolLocalSandboxExec, result: "ok"},
-		&testTool{name: toolLocalSandboxExecBash, result: "ok"},
 		&testTool{name: toolBash, result: "ok"},
 		&testTool{name: "glob", result: "ok"},
 		&testTool{name: "grep", result: "ok"},
@@ -499,7 +497,6 @@ func TestSubAgentToolExploreSystemPromptExcludesWriteTools(t *testing.T) {
 	// does not advertise write tools.
 	allTools := []Tool{
 		&testTool{name: toolLocalSandboxExec, result: "ok"},
-		&testTool{name: toolLocalSandboxExecBash, result: "ok"},
 		&testTool{name: toolBash, result: "ok"},
 		&testTool{name: "glob", result: "ok"},
 		&testTool{name: "grep", result: "ok"},
@@ -537,7 +534,7 @@ func TestModeToolAllowlistsStructure(t *testing.T) {
 	if exploreList == nil {
 		t.Fatal("explore mode should have a non-nil allowlist")
 	}
-	for _, name := range []string{"glob", "grep", "read_file", "outline", toolLocalSandboxExec, toolLocalSandboxExecBash, toolBash} {
+	for _, name := range []string{"glob", "grep", "read_file", "outline", toolLocalSandboxExec, toolBash} {
 		if !exploreList[name] {
 			t.Errorf("explore allowlist should include %q", name)
 		}
