@@ -1,11 +1,9 @@
-{{/* cpsl/environment: CPSL local sandbox runtime context. */}}
+{{/* cpsl/environment: CPSL sandbox runtime context. */}}
 {{define "cpsl/environment"}}
 
 ## Environment
 
 - Date: {{.Date}}
-- Runtime: local sandbox
-- Native language: Luau
-- Working directory: {{.WorkDir}}
-- Current folder mounted at: {{.WorkDir}}
+- Runtime: Unix-like sandbox
+- Workspace: {{.WorkDir}}
 {{- end}}

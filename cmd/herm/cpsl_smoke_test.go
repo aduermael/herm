@@ -414,10 +414,10 @@ func requireSmokeRequestToolContract(t *testing.T, requests []string) {
 		for _, tool := range body.Tools {
 			names = append(names, tool.Name)
 		}
-		if len(names) < 2 || names[0] != toolLocalSandboxExec || names[1] != toolLocalSandboxExecBash {
-			t.Fatalf("CPSL request tools = %v, want %s then %s first", names, toolLocalSandboxExec, toolLocalSandboxExecBash)
+		if len(names) < 1 || names[0] != toolLocalSandboxExec {
+			t.Fatalf("CPSL request tools = %v, want %s first", names, toolLocalSandboxExec)
 		}
-		for _, forbidden := range []string{toolBash, "luau"} {
+		for _, forbidden := range []string{toolLocalSandboxExecBash, toolBash, "luau"} {
 			if slices.Contains(names, forbidden) {
 				t.Fatalf("CPSL request tools = %v, should not include %q", names, forbidden)
 			}

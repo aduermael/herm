@@ -52,31 +52,6 @@ type cpslEvaluator interface {
 	EvalCPSL(ctx context.Context, language, input string, timeoutSeconds int) (cpslEvalResponse, error)
 }
 
-type cpslBashRunner struct {
-	worker cpslEvaluator
-}
-
-func (r cpslBashRunner) RunBash(ctx context.Context, command string, timeout int) (CommandResult, error) {
-	if r.worker == nil {
-		return CommandResult{}, fmt.Errorf("sandbox worker not configured")
-	}
-	response, err := r.worker.EvalCPSL(ctx, cpslLanguageBash, command, timeout)
-	if err != nil {
-		return CommandResult{}, formatCPSLEvalError(response, err)
-	}
-	if !response.OK {
-		return CommandResult{}, formatCPSLEvalError(response, nil)
-	}
-	if response.ExitCode == nil {
-		return CommandResult{}, fmt.Errorf("sandbox response missing exit_code")
-	}
-	return CommandResult{
-		Stdout:   response.Stdout,
-		Stderr:   response.Stderr,
-		ExitCode: *response.ExitCode,
-	}, nil
-}
-
 func formatCPSLEvalError(response cpslEvalResponse, err error) error {
 	code := "runtime_error"
 	message := ""
@@ -129,27 +104,6 @@ func NewBashTool(opts NewBashToolOptions) *BashTool {
 		timeout:             timeout,
 		descriptionFallback: "Run a shell command in the dev container. Output is truncated to 80 lines / 12KB (head+tail).",
 		commandDescription:  "The shell command to execute in the dev container",
-	}
-}
-
-// NewCPSLBashToolOptions holds the parameters for NewCPSLBashTool.
-type NewCPSLBashToolOptions struct {
-	Worker  cpslEvaluator
-	Timeout int
-}
-
-// NewCPSLBashTool creates a BashTool that routes commands through CPSL.
-func NewCPSLBashTool(opts NewCPSLBashToolOptions) *BashTool {
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = 120
-	}
-	return &BashTool{
-		name:                toolLocalSandboxExecBash,
-		runner:              cpslBashRunner{worker: opts.Worker},
-		timeout:             timeout,
-		descriptionFallback: "Run Bash-compatible sandbox command input at /workdir. Output is truncated to 80 lines / 12KB (head+tail).",
-		commandDescription:  "Bash-compatible sandbox input; run `help` for sandbox command/module discovery",
 	}
 }
 
@@ -256,13 +210,13 @@ func NewCPSLLuauTool(opts NewCPSLLuauToolOptions) *CPSLLuauTool {
 func (t *CPSLLuauTool) Definition() types.ToolDefinition {
 	return types.ToolDefinition{
 		Name:        toolLocalSandboxExec,
-		Description: getToolDescription(getToolDescriptionOptions{name: toolLocalSandboxExec, fallback: "Run native Luau source in the local sandbox at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
+		Description: getToolDescription(getToolDescriptionOptions{name: toolLocalSandboxExec, fallback: "Run native Luau source in the sandbox at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"script": {
 					"type": "string",
-					"description": "Native Luau source to run in the local sandbox at /workdir. Use this by default for sandbox execution. For repeated automation, keep reusable .luau source in the workspace and pass that source here."
+					"description": "Native Luau source to run in the sandbox at /workdir. Use this by default for sandbox execution. For repeated automation, keep reusable .luau source in the workspace and pass that source here."
 				},
 				"timeout": {
 					"type": "integer",

@@ -4,7 +4,7 @@ description: Spawn a sandbox-safe sub-agent to handle a complex subtask
 runs_on: cpsl
 ---
 
-Spawn a sub-agent with its own context window. Sub-agents inherit the same sandbox-safe prompt and tool set: execution runs in the local sandbox at `/workdir`, cannot leave the sandbox, and has no host shell or host git tool.
+Spawn a sub-agent with its own context window. Sub-agents inherit the same sandbox-safe prompt and tool set: execution runs in the sandbox with `/workdir` as the workspace, cannot leave the sandbox, and has no host shell or host git tool.
 
 **Modes - you must specify one:**
 - `"explore"` - uses a fast, cheap model. For research, search, reading files, investigating issues, gathering information.
