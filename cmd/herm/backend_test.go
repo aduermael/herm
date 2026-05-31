@@ -192,13 +192,13 @@ func TestContainerRuntimeToolsUnchangedWhenReady(t *testing.T) {
 	}
 }
 
-func TestVersionDisplayMessageCPSLDoesNotMentionContainer(t *testing.T) {
+func TestVersionDisplayMessageCPSLUsesSandboxLabel(t *testing.T) {
 	msg := versionDisplayMessage(backendCPSL)
-	if !strings.Contains(msg.content, "local sandbox: Luau") {
-		t.Fatalf("version message = %q, want local sandbox label", msg.content)
+	if !strings.Contains(msg.content, "sandbox: CPSL") {
+		t.Fatalf("version message = %q, want CPSL sandbox label", msg.content)
 	}
-	if strings.Contains(msg.content, "container") || strings.Contains(msg.content, "CPSL") {
-		t.Fatalf("version message = %q, should not mention container or CPSL in sandbox mode", msg.content)
+	if strings.Contains(msg.content, "container") || strings.Contains(msg.content, "local sandbox: Luau") {
+		t.Fatalf("version message = %q, should not mention container or old sandbox label", msg.content)
 	}
 }
 
