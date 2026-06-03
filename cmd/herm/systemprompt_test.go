@@ -416,7 +416,7 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "reusable `.luau` source", "`luau -e`", "general-purpose assistant"} {
+	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`", "general-purpose assistant"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
 		}
@@ -438,7 +438,7 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "reusable `.luau` source", "`luau -e`"} {
+	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
 		}
