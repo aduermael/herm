@@ -160,7 +160,7 @@ Developer → ENTRY_POINTS.md → ARCHITECTURE.md
 
 ### Scenario 2: Building Local Sandbox Mode
 1. Read: [`CPSL_BUILD.md`](CPSL_BUILD.md) - Native prerequisites and helper script
-2. Run: `scripts/build-cpsl-herm.sh` from a CPSL checkout
+2. Run: `scripts/build-cpsl-image.sh` from the Herm checkout
 3. Start: Herm with the printed `--cpsl` command
 4. Reference: [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md) for `/shell`
 
