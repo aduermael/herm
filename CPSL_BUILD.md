@@ -7,6 +7,10 @@ macOS. Herm is the entrypoint; CPSL is built as the dynamic library passed to
 The helper script invokes only native build tools, Go, and Rust. It does not
 invoke Python, Node, Docker, package managers, or the CPSL CLI.
 
+Herm owns this build flow. CPSL is fetched as a build dependency into
+`.herm-cpsl/`, which is ignored by git so dependency checkouts and generated
+artifacts do not get committed by accident.
+
 ## Requirements
 
 Common requirements:
@@ -14,6 +18,7 @@ Common requirements:
 - Go 1.24 or newer
 - Rust and Cargo
 - Native C and C++ build tools (`cc` and `c++`)
+- Git, unless `CPSL_ROOT` points at an existing CPSL checkout
 - Herm submodules initialized with `git submodule update --init --recursive`
 
 macOS needs Xcode Command Line Tools:
@@ -30,22 +35,25 @@ when Herm is started with `--cpsl`.
 
 ## Build
 
-From the CPSL repo root:
-
-```sh
-herm/scripts/build-cpsl-herm.sh
-```
-
 From the Herm repo:
 
 ```sh
-scripts/build-cpsl-herm.sh
+scripts/build-cpsl-image.sh
 ```
 
-If Herm is checked out separately, point the script at the CPSL checkout:
+By default the script fetches CPSL from:
+
+```text
+https://github.com/fundamental-research-labs/cpsl.git
+```
+
+Until the CPSL PR for this integration lands, it uses the pre-merge
+`aduermael/lib-build` branch. Override the source after the PR is merged, or
+when testing a local CPSL checkout:
 
 ```sh
-CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-herm.sh
+CPSL_REF=main scripts/build-cpsl-image.sh
+CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 ```
 
 The default build is the minimum Herm CPSL profile. It compiles `fs`, `json`,
@@ -54,7 +62,7 @@ The default build is the minimum Herm CPSL profile. It compiles `fs`, `json`,
 To compile every CPSL core module into the library:
 
 ```sh
-herm/scripts/build-cpsl-herm.sh --all
+scripts/build-cpsl-image.sh --all
 ```
 
 The `--all` profile is larger and can require extra native document/PDF
@@ -63,15 +71,18 @@ module.
 
 ## Output
 
-The script builds host-native artifacts under the CPSL root:
+The script builds CPSL's Cargo target directory and host-native output artifacts
+under Herm's ignored `.herm-cpsl` directory:
 
 ```text
-target/herm-cpsl/linux-amd64/
+.herm-cpsl/cargo-target/
+
+.herm-cpsl/artifacts/linux-amd64/
   bin/herm
   lib/libcpsl.so
   include/cpsl.h
 
-target/herm-cpsl/macos-arm64/
+.herm-cpsl/artifacts/macos-arm64/
   bin/herm
   lib/libcpsl.dylib
   include/cpsl.h
@@ -83,7 +94,7 @@ The exact output directory depends on the host OS and CPU. Override it with
 The script prints a ready-to-run command, for example:
 
 ```sh
-"/absolute/path/to/target/herm-cpsl/macos-arm64/bin/herm" --cpsl "/absolute/path/to/target/herm-cpsl/macos-arm64/lib/libcpsl.dylib"
+"/absolute/path/to/.herm-cpsl/artifacts/macos-arm64/bin/herm" --cpsl "/absolute/path/to/.herm-cpsl/artifacts/macos-arm64/lib/libcpsl.dylib"
 ```
 
 `--cpsl` must receive an absolute path with the platform library extension:
@@ -94,10 +105,14 @@ The script prints a ready-to-run command, for example:
 ## Options
 
 ```sh
-scripts/build-cpsl-herm.sh --minimum
-scripts/build-cpsl-herm.sh --all
-OUT_DIR=/tmp/herm-cpsl scripts/build-cpsl-herm.sh
-RUN_PROBE=1 scripts/build-cpsl-herm.sh
+scripts/build-cpsl-image.sh --minimum
+scripts/build-cpsl-image.sh --all
+OUT_DIR=/tmp/herm-cpsl scripts/build-cpsl-image.sh
+RUN_PROBE=1 scripts/build-cpsl-image.sh
+CPSL_REPO=https://github.com/fundamental-research-labs/cpsl.git scripts/build-cpsl-image.sh
+CPSL_REF=aduermael/lib-build scripts/build-cpsl-image.sh
+CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
+CPSL_TARGET_DIR=/tmp/cpsl-target scripts/build-cpsl-image.sh
 ```
 
 `RUN_PROBE=1` runs the ignored CPSL FFI probe test after building. The normal
@@ -126,8 +141,8 @@ Network access is policy-gated. Use repeatable `--allow-domain` and
 rules.
 
 ```sh
-target/herm-cpsl/linux-amd64/bin/herm \
-  --cpsl "$(pwd)/target/herm-cpsl/linux-amd64/lib/libcpsl.so" \
+.herm-cpsl/artifacts/linux-amd64/bin/herm \
+  --cpsl "$(pwd)/.herm-cpsl/artifacts/linux-amd64/lib/libcpsl.so" \
   --allow-domain example.com
 ```
 

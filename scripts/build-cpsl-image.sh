@@ -18,9 +18,13 @@ need_cmd() {
 usage() {
 	cat <<EOF
 Usage:
-  build-cpsl-herm.sh [--minimum|--all]
+  build-cpsl-image.sh [--minimum|--all]
 
-Builds the CPSL FFI library and Herm for the current host platform.
+Builds Herm's CPSL runtime image for the current host platform.
+
+The image contains a Herm binary plus the CPSL dynamic library passed to
+herm --cpsl. By default this script fetches CPSL into a gitignored Herm-local
+work directory, so the Herm repo remains the parent checkout.
 
 Options:
   --minimum   Build the default Herm CPSL library profile. This is the default.
@@ -28,9 +32,13 @@ Options:
   -h, --help  Show this help.
 
 Environment:
-  CPSL_ROOT   CPSL checkout root. Defaults to the parent of the Herm checkout.
-  OUT_DIR     Artifact directory. Defaults to CPSL_ROOT/target/herm-cpsl/<os>-<arch>.
-  RUN_PROBE   Set to 1 to run the ignored CPSL FFI probe test after building.
+  CPSL_REPO      CPSL git URL. Defaults to the public CPSL repository.
+  CPSL_REF       CPSL git ref to fetch. Defaults to the pre-merge integration branch.
+  CPSL_ROOT      Existing CPSL checkout to use instead of fetching.
+  CPSL_WORK_DIR  Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
+  CPSL_TARGET_DIR Cargo target directory. Defaults to CPSL_WORK_DIR/cargo-target.
+  OUT_DIR        Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/<os>-<arch>.
+  RUN_PROBE      Set to 1 to run the ignored CPSL FFI probe test after building.
 EOF
 }
 
@@ -56,12 +64,13 @@ done
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
-
-if [ -n "${CPSL_ROOT:-}" ]; then
-	cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
-else
-	cpsl_root=$(CDPATH= cd "$herm_root/.." && pwd -P)
-fi
+work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
+mkdir -p "$work_dir"
+work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
+cpsl_repo=${CPSL_REPO:-"https://github.com/fundamental-research-labs/cpsl.git"}
+cpsl_ref=${CPSL_REF:-"aduermael/lib-build"}
+managed_cpsl_root="$work_dir/cpsl"
+target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}
 
 os_raw=$(uname -s)
 case "$os_raw" in
@@ -97,6 +106,26 @@ need_cmd go "install Go 1.24 or newer"
 need_cmd cc "install the native C build tools"
 need_cmd c++ "install the native C++ build tools"
 
+if [ -n "${CPSL_ROOT:-}" ]; then
+	cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
+else
+	need_cmd git "install Git or set CPSL_ROOT to an existing CPSL checkout"
+	if [ -e "$managed_cpsl_root" ] && [ ! -d "$managed_cpsl_root/.git" ]; then
+		die "$managed_cpsl_root exists but is not a Git checkout"
+	fi
+	if [ ! -d "$managed_cpsl_root/.git" ]; then
+		printf 'Initializing CPSL checkout in %s\n' "$managed_cpsl_root"
+		git -c init.defaultBranch=main init "$managed_cpsl_root" >/dev/null
+		git -C "$managed_cpsl_root" remote add origin "$cpsl_repo"
+	else
+		git -C "$managed_cpsl_root" remote set-url origin "$cpsl_repo"
+	fi
+	printf 'Fetching CPSL %s from %s\n' "$cpsl_ref" "$cpsl_repo"
+	git -C "$managed_cpsl_root" fetch --depth 1 origin "$cpsl_ref"
+	git -C "$managed_cpsl_root" checkout --detach FETCH_HEAD
+	cpsl_root=$(CDPATH= cd "$managed_cpsl_root" && pwd -P)
+fi
+
 go_version=$(go env GOVERSION 2>/dev/null || true)
 case "$go_version" in
 go1.*)
@@ -124,7 +153,7 @@ fi
 [ -f "$herm_root/go.mod" ] || die "missing Herm go.mod at $herm_root"
 [ -f "$herm_root/external/langdag/go.mod" ] || die "missing Herm submodules; run: git submodule update --init --recursive"
 
-out_dir=${OUT_DIR:-"$cpsl_root/target/herm-cpsl/$os_name-$arch_name"}
+out_dir=${OUT_DIR:-"$work_dir/artifacts/$os_name-$arch_name"}
 bin_dir="$out_dir/bin"
 lib_dir="$out_dir/lib"
 include_dir="$out_dir/include"
@@ -137,12 +166,12 @@ include_dir="$out_dir/include"
 
 printf 'Building CPSL FFI (%s) for %s/%s\n' "$profile" "$os_name" "$arch_name"
 if [ "$profile" = all ]; then
-	cargo build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$cpsl_root/target" -p cpsl-ffi --release --features all
+	cargo build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --release --features all
 else
-	cargo build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$cpsl_root/target" -p cpsl-ffi --release
+	cargo build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --release
 fi
 
-cpsl_lib_src="$cpsl_root/target/release/$lib_name"
+cpsl_lib_src="$target_dir/release/$lib_name"
 [ -f "$cpsl_lib_src" ] || die "expected CPSL library not found: $cpsl_lib_src"
 
 cp "$cpsl_lib_src" "$lib_dir/$lib_name"
@@ -156,11 +185,11 @@ chmod +x "$bin_dir/herm"
 
 if [ "${RUN_PROBE:-0}" = 1 ]; then
 	printf 'Running CPSL FFI probe\n'
-	CPSL_FFI_LIB="$lib_dir/$lib_name" cargo test --manifest-path "$cpsl_root/Cargo.toml" -p cpsl-ffi --test probe -- --ignored
+	CPSL_FFI_LIB="$lib_dir/$lib_name" cargo test --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --test probe -- --ignored
 fi
 
-printf '\nBuilt Herm + CPSL %s for %s/%s\n' "$profile" "$os_name" "$arch_name"
+printf '\nBuilt Herm CPSL image (%s) for %s/%s\n' "$profile" "$os_name" "$arch_name"
 printf '  herm: %s\n' "$bin_dir/herm"
-printf '  cpsl: %s\n' "$lib_dir/$lib_name"
+printf '  cpsl library: %s\n' "$lib_dir/$lib_name"
 printf '  header: %s\n' "$include_dir/cpsl.h"
 printf '\nRun:\n  "%s" --cpsl "%s"\n' "$bin_dir/herm" "$lib_dir/$lib_name"

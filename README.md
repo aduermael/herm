@@ -96,6 +96,7 @@ herm/
 ├── scripts/                   Build helpers
 ├── .herm/
 │   └── skills/                Skill definitions (e.g. devenv)
+├── .herm-cpsl/                Ignored CPSL dependency checkout and artifacts
 ├── img/                       Demo assets
 ├── plans/                     Project planning docs
 ├── CPSL_BUILD.md              Native CPSL local sandbox build guide
