@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -77,55 +78,60 @@ func doctorEnvironmentChecks() []doctorCheck {
 	return checks
 }
 
-// doctorCheckApiKey verifies at least one supported LLM provider key is
+// doctorCheckApiKey verifies at least one supported LLM provider route is
 // configured. Herm can run with any one of these providers.
 func (a *App) doctorCheckApiKey() []doctorCheck {
-	var checks []doctorCheck
-	if a.config.AnthropicAPIKey == "" &&
-		a.config.OpenAIAPIKey == "" &&
-		a.config.GrokAPIKey == "" &&
-		a.config.OpenRouterAPIKey == "" &&
-		a.config.GeminiAPIKey == "" {
-		return append(checks, doctorCheck{
+	providers := a.config.configuredProviders()
+	if len(providers) == 0 {
+		return []doctorCheck{{
 			name:   "API keys",
 			status: doctorStatusFail,
-			detail: "no API key found",
-			fix:    "Set an API key with /config",
-		})
+			detail: "no configured provider found",
+			fix:    "Set provider credentials or a model endpoint with /config",
+		}}
 	}
-	return append(checks, doctorCheck{
+
+	names := make([]string, 0, len(providers))
+	for provider := range providers {
+		names = append(names, provider)
+	}
+	sort.Strings(names)
+	return []doctorCheck{{
 		name:   "API keys",
 		status: doctorStatusOK,
-		detail: "API key found",
-	})
+		detail: "configured providers: " + strings.Join(names, ", "),
+	}}
 }
 
 // doctorRuntimeChecks validates host runtime dependencies that need active
-// services, currently Docker daemon reachability.
+// services, currently Docker daemon reachability and startup state.
 func (a *App) doctorRuntimeChecks() []doctorCheck {
-	container := a.container
-	if container == nil {
-		return []doctorCheck{{
-			name:   "docker daemon",
-			status: doctorStatusFail,
-			detail: "Unreachable",
-			fix:    "Run docker daemon",
-		}}
+	checks := make([]doctorCheck, 0, 2)
+	if !a.containerReady && a.container == nil && a.containerErr == nil && a.containerStatusText != "" {
+		checks = append(checks, doctorCheck{
+			name:   "container startup",
+			status: doctorStatusWarn,
+			detail: a.containerStatusText,
+			fix:    "Wait for the background container to finish starting",
+		})
 	}
 
+	container := NewContainerClient(ContainerConfig{Image: defaultContainerImage})
 	if err := container.CheckDocker(); err != nil {
-		return []doctorCheck{{
+		checks = append(checks, doctorCheck{
 			name:   "docker daemon",
 			status: doctorStatusFail,
 			detail: err.Error(),
-		}}
+		})
+		return checks
 	}
 
-	return []doctorCheck{{
+	checks = append(checks, doctorCheck{
 		name:   "docker daemon",
 		status: doctorStatusOK,
 		detail: "reachable",
-	}}
+	})
+	return checks
 }
 
 // doctorGitChecks verifies the current working directory is inside a Git

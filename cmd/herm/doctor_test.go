@@ -71,14 +71,8 @@ func TestDoctorCheckApiKey(t *testing.T) {
 		expected doctorStatus
 	}{
 		{
-			name: "no keys",
-			config: Config{
-				AnthropicAPIKey:  "",
-				OpenAIAPIKey:     "",
-				GrokAPIKey:       "",
-				OpenRouterAPIKey: "",
-				GeminiAPIKey:     "",
-			},
+			name:     "no configured providers",
+			config:   Config{},
 			expected: doctorStatusFail,
 		},
 		{
@@ -102,6 +96,28 @@ func TestDoctorCheckApiKey(t *testing.T) {
 			},
 			expected: doctorStatusOK,
 		},
+		{
+			name: "ollama base url present",
+			config: Config{
+				Deployments: map[string]DeploymentConfig{
+					"ollama-local": {BaseURL: "http://localhost:11434"},
+				},
+			},
+			expected: doctorStatusOK,
+		},
+		{
+			name: "azure deployment config present",
+			config: Config{
+				Deployments: map[string]DeploymentConfig{
+					"openai-azure": {
+						APIKey:     "sk-test",
+						Endpoint:    "https://example.openai.azure.com",
+						APIVersion:  "2024-05-01",
+					},
+				},
+			},
+			expected: doctorStatusOK,
+		},
 	}
 
 	for _, tt := range tests {
@@ -118,30 +134,57 @@ func TestDoctorCheckApiKey(t *testing.T) {
 	}
 }
 
+func TestDoctorCheckApiKey_EnvFallback(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-env")
+
+	app := &App{config: Config{}}
+	checks := app.doctorCheckApiKey()
+	if len(checks) == 0 {
+		t.Fatal("expected at least one check")
+	}
+	if checks[0].status != doctorStatusOK {
+		t.Fatalf("doctorCheckApiKey() status = %q, want %q", checks[0].status, doctorStatusOK)
+	}
+	if !strings.Contains(checks[0].detail, ProviderOpenAI) {
+		t.Fatalf("expected detail to mention configured provider, got %q", checks[0].detail)
+	}
+}
+
 func TestDoctorRuntimeChecks(t *testing.T) {
-	t.Run("container client is uninitialized", func(t *testing.T) {
-		// Leave a.container as nil to test the new defensive path
+	t.Run("container still starting but docker daemon succeeds", func(t *testing.T) {
+		app := &App{
+			container:          nil,
+			containerReady:     false,
+			containerStatusText: "starting…",
+		}
+
+		origDockerCmd := dockerCommand
+		origLookPath := lookPath
+		defer func() {
+			dockerCommand = origDockerCmd
+			lookPath = origLookPath
+		}()
+
+		lookPath = func(path string) (string, error) { return "/usr/bin/docker", nil }
+		dockerCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "true")
+		}
+
+		checks := app.doctorRuntimeChecks()
+		if len(checks) != 2 {
+			t.Fatalf("expected startup warning plus docker check, got %v", checks)
+		}
+		if checks[0].status != doctorStatusWarn || checks[0].name != "container startup" {
+			t.Fatalf("expected startup warning first, got %+v", checks[0])
+		}
+		if checks[1].status != doctorStatusOK || checks[1].name != "docker daemon" {
+			t.Fatalf("expected docker daemon success second, got %+v", checks[1])
+		}
+	})
+
+	t.Run("docker daemon fails even without a container client", func(t *testing.T) {
 		app := &App{container: nil}
 
-		checks := app.doctorRuntimeChecks()
-
-		if len(checks) == 0 || checks[0].status != doctorStatusFail {
-			t.Errorf("expected fail status when container client is nil, got %v", checks)
-		}
-		if !strings.Contains(checks[0].detail, "Unreachable") {
-			t.Errorf("expected detail to mention Unreachable, got %q", checks[0].detail)
-		}
-	})
-
-	t.Run("container client exists and docker daemon succeeds", func(t *testing.T) {
-		// Initialize container using your existing NewContainerClient constructor,
-		// but swap or mock the underlying check mechanism if required.
-		// Assuming NewContainerClient gives us a working instance:
-		app := &App{
-			container: NewContainerClient(ContainerConfig{Image: "test-image"}),
-		}
-
-		// Mock the global command overrides specifically for the live daemon check
 		origDockerCmd := dockerCommand
 		origLookPath := lookPath
 		defer func() {
@@ -151,35 +194,12 @@ func TestDoctorRuntimeChecks(t *testing.T) {
 
 		lookPath = func(path string) (string, error) { return "/usr/bin/docker", nil }
 		dockerCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
-			return exec.CommandContext(ctx, "true") // command succeeds
+			return exec.CommandContext(ctx, "false")
 		}
 
 		checks := app.doctorRuntimeChecks()
-		if len(checks) == 0 || checks[0].status != doctorStatusOK {
-			t.Errorf("expected success status when daemon is reachable, got %v", checks)
-		}
-	})
-
-	t.Run("container client exists but docker daemon fails", func(t *testing.T) {
-		app := &App{
-			container: NewContainerClient(ContainerConfig{Image: "test-image"}),
-		}
-
-		origDockerCmd := dockerCommand
-		origLookPath := lookPath
-		defer func() {
-			dockerCommand = origDockerCmd
-			lookPath = origLookPath
-		}()
-
-		lookPath = func(path string) (string, error) { return "/usr/bin/docker", nil }
-		dockerCommand = func(ctx context.Context, name string, arg ...string) *exec.Cmd {
-			return exec.CommandContext(ctx, "false") // command fails
-		}
-
-		checks := app.doctorRuntimeChecks()
-		if len(checks) == 0 || checks[0].status != doctorStatusFail {
-			t.Errorf("expected failure status when daemon check fails, got %v", checks)
+		if len(checks) == 0 || checks[len(checks)-1].status != doctorStatusFail {
+			t.Fatalf("expected failure status when daemon check fails, got %v", checks)
 		}
 	})
 }
