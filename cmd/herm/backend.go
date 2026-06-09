@@ -25,8 +25,15 @@ type cpslConfig struct {
 }
 
 func validateCPSLLibraryPath(path string) (string, error) {
-	if path == "" || !filepath.IsAbs(path) {
+	if path == "" {
 		return "", errCPSLLibrary
+	}
+	if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", errCPSLLibrary
+		}
+		path = abs
 	}
 	if filepath.Ext(path) != cpslLibraryExtension() {
 		return "", errCPSLLibrary

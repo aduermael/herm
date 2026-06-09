@@ -24,6 +24,8 @@ type cpslWorkerOptions struct {
 	denyDomains  []string
 }
 
+const cpslLibraryDirEnv = "CPSL_LIBRARY_DIR"
+
 func runCPSLWorker(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	opts, err := parseCPSLWorkerOptions(args, stderr)
 	if err != nil {
@@ -36,6 +38,7 @@ func runCPSLWorker(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return 2
 	}
 
+	setCPSLLibraryDirEnv(opts.libraryPath)
 	lib, err := loadCPSLNativeLibrary(opts.libraryPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "cpsl worker: library: %v\n", err)
@@ -95,6 +98,13 @@ func parseCPSLWorkerOptions(args []string, stderr io.Writer) (cpslWorkerOptions,
 		return cpslWorkerOptions{}, fmt.Errorf("missing CPSL workspace")
 	}
 	return opts, nil
+}
+
+func setCPSLLibraryDirEnv(libraryPath string) {
+	if libraryPath == "" {
+		return
+	}
+	_ = os.Setenv(cpslLibraryDirEnv, filepath.Dir(libraryPath))
 }
 
 type serveCPSLWorkerOptions struct {

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -133,6 +135,15 @@ func TestParseCPSLWorkerOptionsRepeatedDomains(t *testing.T) {
 	}
 	if !slices.Equal(opts.denyDomains, []string{"blocked.example.com", "blocked-api.example.com"}) {
 		t.Fatalf("denyDomains = %#v", opts.denyDomains)
+	}
+}
+
+func TestSetCPSLLibraryDirEnv(t *testing.T) {
+	t.Setenv(cpslLibraryDirEnv, "")
+	dir := t.TempDir()
+	setCPSLLibraryDirEnv(filepath.Join(dir, "libcpsl.so"))
+	if got := os.Getenv(cpslLibraryDirEnv); got != dir {
+		t.Fatalf("%s = %q, want %q", cpslLibraryDirEnv, got, dir)
 	}
 }
 

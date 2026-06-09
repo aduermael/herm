@@ -77,10 +77,12 @@ case "$os_raw" in
 Darwin)
 	os_name=macos
 	lib_name=libcpsl.dylib
+	pdfium_lib_name=libpdfium.dylib
 	;;
 Linux)
 	os_name=linux
 	lib_name=libcpsl.so
+	pdfium_lib_name=libpdfium.so
 	;;
 *)
 	die "unsupported OS: $os_raw; only Linux and macOS are supported"
@@ -154,15 +156,37 @@ fi
 [ -f "$herm_root/external/langdag/go.mod" ] || die "missing Herm submodules; run: git submodule update --init --recursive"
 
 out_dir=${OUT_DIR:-"$work_dir/artifacts/$os_name-$arch_name"}
-bin_dir="$out_dir/bin"
-lib_dir="$out_dir/lib"
 include_dir="$out_dir/include"
 
-mkdir -p "$bin_dir" "$lib_dir" "$include_dir"
+mkdir -p "$out_dir" "$include_dir"
 out_dir=$(CDPATH= cd "$out_dir" && pwd -P)
-bin_dir="$out_dir/bin"
-lib_dir="$out_dir/lib"
 include_dir="$out_dir/include"
+if [ -z "${OUT_DIR:-}" ] && [ -z "${CPSL_WORK_DIR:-}" ]; then
+	run_dir=".herm-cpsl/artifacts/$os_name-$arch_name"
+else
+	run_dir="$out_dir"
+fi
+
+install_pdfium_artifact() {
+	pdfium_out="$out_dir/libs/pdfium"
+	pdfium_lib_dir="$pdfium_out/lib"
+	mkdir -p "$pdfium_lib_dir"
+
+	if [ -n "${PDFIUM_DYNAMIC_LIB_PATH:-}" ]; then
+		if [ -d "$PDFIUM_DYNAMIC_LIB_PATH" ]; then
+			pdfium_src="$PDFIUM_DYNAMIC_LIB_PATH/$pdfium_lib_name"
+		else
+			pdfium_src="$PDFIUM_DYNAMIC_LIB_PATH"
+		fi
+		[ -f "$pdfium_src" ] || die "PDFIUM_DYNAMIC_LIB_PATH does not point to $pdfium_lib_name: $PDFIUM_DYNAMIC_LIB_PATH"
+		cp "$pdfium_src" "$pdfium_lib_dir/$pdfium_lib_name"
+	else
+		[ -f "$cpsl_root/core/scripts/download-pdfium.sh" ] || die "missing CPSL PDFium downloader at $cpsl_root/core/scripts/download-pdfium.sh"
+		"$cpsl_root/core/scripts/download-pdfium.sh" --output "$pdfium_out"
+	fi
+
+	[ -f "$pdfium_lib_dir/$pdfium_lib_name" ] || die "expected PDFium library not found: $pdfium_lib_dir/$pdfium_lib_name"
+}
 
 printf 'Building CPSL FFI (%s) for %s/%s\n' "$profile" "$os_name" "$arch_name"
 if [ "$profile" = all ]; then
@@ -174,22 +198,71 @@ fi
 cpsl_lib_src="$target_dir/release/$lib_name"
 [ -f "$cpsl_lib_src" ] || die "expected CPSL library not found: $cpsl_lib_src"
 
-cp "$cpsl_lib_src" "$lib_dir/$lib_name"
+cp "$cpsl_lib_src" "$out_dir/$lib_name"
 cp "$cpsl_root/ffi/include/cpsl.h" "$include_dir/cpsl.h"
+if [ "$profile" = all ]; then
+	install_pdfium_artifact
+fi
 
 printf 'Building Herm\n'
-(cd "$herm_root" && go build -o "$bin_dir/herm" ./cmd/herm)
-chmod +x "$bin_dir/herm"
+(cd "$herm_root" && go build -o "$out_dir/herm" ./cmd/herm)
+chmod +x "$out_dir/herm"
 
-"$bin_dir/herm" --version --cpsl "$lib_dir/$lib_name" >/dev/null
+(cd "$out_dir" && ./herm --version --cpsl "$lib_name") >/dev/null
+probe_request='{"id":1,"op":"eval","language":"luau","input":"print(\"ok\")","timeout_ms":10000}'
+if ! probe_output=$(printf '%s\n' "$probe_request" | "$out_dir/herm" __cpsl-worker --library "$out_dir/$lib_name" --workspace "$herm_root" 2>&1); then
+	die "CPSL worker probe failed:
+$probe_output"
+fi
+case "$probe_output" in
+*'"ok":true'*'"exit_code":0'*)
+	;;
+*)
+	die "CPSL worker probe returned an unexpected response:
+$probe_output"
+	;;
+esac
+
+if [ "$profile" = all ]; then
+	pdf_fixture="$cpsl_root/core/tests/fixtures/pdf/simple_text.pdf"
+	[ -f "$pdf_fixture" ] || die "missing PDF probe fixture: $pdf_fixture"
+	pdf_probe_request='{"id":2,"op":"eval","language":"luau","input":"local path = \"/workdir/core/tests/fixtures/pdf/simple_text.pdf\"\nlocal info = doc.pdfInfo(path)\nif info.pageCount ~= 1 then error(\"unexpected page count: \" .. tostring(info.pageCount)) end\nlocal text = doc.read(path, {mode=\"structural\"})\nif not string.find(text, \"Hello\") then error(\"structural doc.read did not extract fixture text\") end\nprint(\"pdf ok\")","timeout_ms":10000}'
+	if ! pdf_probe_output=$(
+		unset PDFIUM_DYNAMIC_LIB_PATH
+		printf '%s\n' "$pdf_probe_request" | CPSL_REQUIRE_STAGED_PDFIUM=1 "$out_dir/herm" __cpsl-worker --library "$out_dir/$lib_name" --workspace "$cpsl_root" 2>&1
+	); then
+		die "CPSL PDF worker probe failed:
+$pdf_probe_output"
+	fi
+	case "$pdf_probe_output" in
+	*'"ok":true'*'"exit_code":0'*)
+		case "$pdf_probe_output" in
+		*'"stdout":"pdf ok\n"'*)
+			;;
+		*)
+			die "CPSL PDF worker probe did not print the expected stdout:
+$pdf_probe_output"
+			;;
+		esac
+		;;
+	*)
+		die "CPSL PDF worker probe returned an unexpected response:
+$pdf_probe_output"
+		;;
+	esac
+fi
 
 if [ "${RUN_PROBE:-0}" = 1 ]; then
 	printf 'Running CPSL FFI probe\n'
-	CPSL_FFI_LIB="$lib_dir/$lib_name" cargo test --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --test probe -- --ignored
+	CPSL_FFI_LIB="$out_dir/$lib_name" cargo test --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --test probe -- --ignored
 fi
 
 printf '\nBuilt Herm CPSL image (%s) for %s/%s\n' "$profile" "$os_name" "$arch_name"
-printf '  herm: %s\n' "$bin_dir/herm"
-printf '  cpsl library: %s\n' "$lib_dir/$lib_name"
+printf '  image: %s\n' "$out_dir"
+printf '  herm: %s\n' "$out_dir/herm"
+printf '  cpsl library: %s\n' "$out_dir/$lib_name"
+if [ "$profile" = all ]; then
+	printf '  pdfium: %s\n' "$out_dir/libs/pdfium/lib/$pdfium_lib_name"
+fi
 printf '  header: %s\n' "$include_dir/cpsl.h"
-printf '\nRun:\n  "%s" --cpsl "%s"\n' "$bin_dir/herm" "$lib_dir/$lib_name"
+printf '\nRun:\n  $ cd %s\n  $ ./herm --cpsl %s\n' "$run_dir" "$lib_name"
