@@ -48,18 +48,37 @@ func newLangdagClientWithCatalog(cfg Config, catalogs ...*langdag.ModelCatalog) 
 	if len(catalogs) > 0 {
 		catalog = catalogs[0]
 	}
-	provider := cfg.defaultLangdagProvider()
+	return newLangdagClientForModelsWithCatalog(newLangdagClientForModelsWithCatalogOptions{cfg: cfg, catalog: catalog})
+}
+
+type newLangdagClientForModelsWithCatalogOptions struct {
+	cfg     Config
+	models  []ModelDef
+	catalog *langdag.ModelCatalog
+}
+
+func newLangdagClientForModelsWithCatalog(opts newLangdagClientForModelsWithCatalogOptions) (*langdag.Client, error) {
+	provider := opts.cfg.defaultLangdagProviderForModels(opts.models)
 	if provider == "" {
 		return nil, nil
 	}
-	return newLangdagClientForProvider(newLangdagClientForProviderOptions{cfg: cfg, provider: provider, catalog: catalog})
+	appleModelIDs := runtimeAppleModelIDs(opts.models)
+	return newLangdagClientForProvider(newLangdagClientForProviderOptions{
+		cfg:                           opts.cfg,
+		provider:                      provider,
+		catalog:                       opts.catalog,
+		includeRuntimeAppleDeployment: len(appleModelIDs) > 0,
+		runtimeAppleModelIDs:          appleModelIDs,
+	})
 }
 
 // newLangdagClientForProviderOptions is the parameter bundle for newLangdagClientForProvider.
 type newLangdagClientForProviderOptions struct {
-	cfg      Config
-	provider string
-	catalog  *langdag.ModelCatalog
+	cfg                           Config
+	provider                      string
+	catalog                       *langdag.ModelCatalog
+	includeRuntimeAppleDeployment bool
+	runtimeAppleModelIDs          []string
 }
 
 // newLangdagClientForProvider creates a langdag client configured for a specific provider.
@@ -71,10 +90,13 @@ func newLangdagClientForProvider(opts newLangdagClientForProviderOptions) (*lang
 		return nil, fmt.Errorf("unsupported provider: %s", opts.provider)
 	}
 	langdagCfg := langdag.Config{
-		StoragePath:   langdagStoragePath(),
-		ModelCatalog:  opts.catalog,
-		Deployments:   langdagDeploymentsFromConfig(opts.cfg),
-		RoutingPolicy: langdagRoutingPolicyFromConfig(opts.cfg.Routing),
+		StoragePath:  langdagStoragePath(),
+		ModelCatalog: opts.catalog,
+		Deployments:  langdagDeploymentsFromConfig(opts.cfg),
+		RoutingPolicy: langdagRoutingPolicyFromConfig(routingPolicyWithRuntimeApplePins(routingPolicyWithRuntimeApplePinsOptions{
+			policy:        opts.cfg.Routing,
+			appleModelIDs: opts.runtimeAppleModelIDs,
+		})),
 		RetryConfig: &langdag.RetryConfig{
 			BaseDelay: 2 * time.Second,
 		},
@@ -94,6 +116,16 @@ func newLangdagClientForProvider(opts newLangdagClientForProviderOptions) (*lang
 		langdagCfg.Provider = "gemini"
 	case ProviderOllama:
 		langdagCfg.Provider = "ollama"
+	case ProviderApple:
+		langdagCfg.Provider = "apple"
+	}
+	if opts.provider == ProviderApple || opts.includeRuntimeAppleDeployment {
+		if langdagCfg.Deployments == nil {
+			langdagCfg.Deployments = map[string]langdag.DeploymentConfig{}
+		}
+		if _, ok := langdagCfg.Deployments["apple-local"]; !ok {
+			langdagCfg.Deployments["apple-local"] = langdag.DeploymentConfig{BaseURL: opts.cfg.appleFMBaseURL()}
+		}
 	}
 	applyLegacyLangdagFields(applyLegacyLangdagFieldsOptions{langdagCfg: &langdagCfg, cfg: opts.cfg})
 

@@ -122,11 +122,13 @@ type App struct {
 	lastModelDiagnostics    string
 	ollamaFetched           bool // true after the initial Ollama model fetch completes (or was skipped)
 	openRouterFetched       bool // true after initial OpenRouter fetch
+	appleFetched            bool // true after initial Apple Foundation Models health fetch
 	status                  statusInfo
 	projectSnap             *projectSnapshot
 	modelCatalog            *langdag.ModelCatalog
 	langdagClient           *langdag.Client
 	langdagProvider         string
+	langdagRuntimeApple     bool
 	agent                   *Agent
 	agentNodeID             string
 	agentRunning            bool
@@ -270,46 +272,6 @@ func (a *App) agentElapsedTime() time.Duration {
 		elapsed = 0
 	}
 	return elapsed
-}
-
-// refreshModelMenu re-sorts and re-formats the model menu after a sort change.
-// Preserves the cursor on the same model.
-func (a *App) refreshModelMenu() {
-	if len(a.menuModels) == 0 {
-		return
-	}
-	// Remember which model the cursor is on
-	var cursorID string
-	if a.menuCursor >= 0 && a.menuCursor < len(a.menuModels) {
-		cursorID = a.menuModels[a.menuCursor].ID
-	}
-	asc := a.menuSortAsc[a.menuSortCol]
-	sortModelsByCol(sortModelsByColOptions{models: a.menuModels, col: a.menuSortCol, asc: asc})
-	header, lines := formatModelMenuLines(formatModelMenuLinesOptions{models: a.menuModels, activeID: a.menuActiveID, sortCol: a.menuSortCol, sortAsc: asc})
-	a.menuHeader = header
-	a.menuLines = lines
-	// Restore cursor position
-	for i, m := range a.menuModels {
-		if m.ID == cursorID {
-			a.menuCursor = i
-			break
-		}
-	}
-	// Adjust scroll to keep cursor visible
-	maxVisible := getTerminalHeight() * 60 / 100
-	if maxVisible < 1 {
-		maxVisible = 1
-	}
-	if a.menuCursor < a.menuScrollOffset {
-		a.menuScrollOffset = a.menuCursor
-	} else if a.menuCursor >= a.menuScrollOffset+maxVisible {
-		a.menuScrollOffset = a.menuCursor - maxVisible + 1
-	}
-	// Persist sort preferences (global-only)
-	a.globalConfig.ModelSortCol = sortColNames[a.menuSortCol]
-	a.globalConfig.ModelSortDirs = sortAscToMap(a.menuSortAsc)
-	a.rebuildEffectiveConfig()
-	_ = saveConfig(a.globalConfig)
 }
 
 // ─── Main event loop ───
@@ -764,24 +726,37 @@ func (a *App) handleResult(result any) {
 			if alreadyShown {
 				a.refreshResolvedModelDisplay()
 			}
-			// Fetch Ollama + OpenRouter models async
+			// Fetch local/dynamic provider models async.
 			if a.config.ollamaBaseURL() != "" && !a.ollamaFetched {
 				go func() { a.resultCh <- fetchOllamaModelsCmd(a.config.ollamaBaseURL()) }()
 			}
 			if a.config.openRouterAPIKey() != "" && !a.openRouterFetched {
 				go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.openRouterAPIKey()) }()
 			}
+			if !a.appleFetched {
+				go func() { a.resultCh <- fetchAppleModelsCmd(a.config.appleFMBaseURL()) }()
+			}
+			cfg := a.config
+			models := a.models
+			catalog := a.modelCatalog
+			provider := cfg.defaultLangdagProviderForModels(models)
+			go func() {
+				client, err := newLangdagClientForModelsWithCatalog(newLangdagClientForModelsWithCatalogOptions{
+					cfg:     cfg,
+					models:  models,
+					catalog: catalog,
+				})
+				a.resultCh <- langdagReadyMsg{client: client, provider: provider, runtimeApple: hasRuntimeAppleModels(models), err: err}
+			}()
 		}
 	case ollamaModelsMsg:
 		a.ollamaFetched = true
 		if len(msg.models) > 0 {
 			base := modelsFromCatalog(a.modelCatalog)
-			var dynamic []ModelDef
-			for _, m := range a.models {
-				if m.Provider == ProviderOpenRouter {
-					dynamic = append(dynamic, m)
-				}
-			}
+			dynamic := dynamicModelsForProviders(dynamicModelsForProvidersOptions{
+				models:    a.models,
+				providers: map[string]bool{ProviderOpenRouter: true, ProviderApple: true},
+			})
 			dynamic = append(dynamic, msg.models...)
 			a.models = mergeDynamicModels(mergeDynamicModelsOptions{base: base, dynamic: dynamic})
 			if a.sweLoaded && a.sweScores != nil {
@@ -797,12 +772,10 @@ func (a *App) handleResult(result any) {
 		a.openRouterFetched = true
 		if len(msg.models) > 0 {
 			base := modelsFromCatalog(a.modelCatalog)
-			var dynamic []ModelDef
-			for _, m := range a.models {
-				if m.Provider == ProviderOllama {
-					dynamic = append(dynamic, m)
-				}
-			}
+			dynamic := dynamicModelsForProviders(dynamicModelsForProvidersOptions{
+				models:    a.models,
+				providers: map[string]bool{ProviderOllama: true, ProviderApple: true},
+			})
 			dynamic = append(dynamic, msg.models...)
 			a.models = mergeDynamicModels(mergeDynamicModelsOptions{base: base, dynamic: dynamic})
 			if a.sweLoaded && a.sweScores != nil {
@@ -814,18 +787,17 @@ func (a *App) handleResult(result any) {
 		if alreadyShown {
 			a.refreshResolvedModelDisplay()
 		}
+	case appleModelsMsg:
+		a.handleAppleModelsMsg(msg)
+	case draftAppleModelsMsg:
+		a.handleDraftAppleModelsMsg(msg)
 	case openPickerMsg:
 		if a.cfgActive {
 			a.doOpenConfigModelPicker(doOpenConfigModelPickerOptions{models: a.models, getCurrentID: msg.getCurrentID, onSelect: msg.onSelect})
 		}
 
 	case langdagReadyMsg:
-		if msg.err != nil {
-			log.Printf("warning: langdag init: %v", msg.err)
-		} else {
-			a.langdagClient = msg.client
-			a.langdagProvider = msg.provider
-		}
+		a.handleLangdagReadyMsg(msg)
 
 	case statusInfoMsg:
 		a.status = msg.info

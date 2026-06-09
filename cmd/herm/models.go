@@ -19,10 +19,11 @@ const (
 	ProviderOpenAI     = "openai"
 	ProviderGemini     = "gemini"
 	ProviderOllama     = "ollama"
+	ProviderApple      = "apple"
 )
 
 // supportedProviders lists providers in display order.
-var supportedProviders = []string{ProviderAnthropic, ProviderGrok, ProviderOpenRouter, ProviderOpenAI, ProviderGemini, ProviderOllama}
+var supportedProviders = []string{ProviderAnthropic, ProviderGrok, ProviderOpenRouter, ProviderOpenAI, ProviderGemini, ProviderOllama, ProviderApple}
 
 // ModelDef describes a model available for selection.
 // Models are derived from the langdag model catalog at runtime.
@@ -44,6 +45,7 @@ type ModelDef struct {
 	SWEScore               float64  // SWE-bench Verified score (0 = no data)
 	ServerTools            []string // server-side tools supported by this model (e.g. "web_search")
 	NativeModelIDs         []string
+	RuntimeDiscovered      bool
 	Deployments            []ModelDeploymentDef
 	RouteDiagnostics       []string
 }

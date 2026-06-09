@@ -71,15 +71,24 @@ func (c Config) configuredProviders() map[string]bool {
 	return providers
 }
 
-// defaultLangdagProvider returns the provider that newLangdagClient will use.
+// defaultLangdagProvider returns the provider that newLangdagClient will use
+// from persisted or environment-backed deployment configuration.
 func (c Config) defaultLangdagProvider() string {
 	providers := c.configuredProviders()
-	for _, provider := range []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama} {
+	for _, provider := range []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama, ProviderApple} {
 		if providers[provider] {
 			return provider
 		}
 	}
 	return ""
+}
+
+func (c Config) defaultLangdagProviderForModels(models []ModelDef) string {
+	if provider := c.defaultLangdagProvider(); provider != "" {
+		return provider
+	}
+	available := c.availableModels(models)
+	return c.defaultProviderForAvailableModels(available)
 }
 
 // availableModels returns canonical models with at least one locally configured
@@ -102,7 +111,9 @@ func (c Config) availableModels(models []ModelDef) []ModelDef {
 		filtered.RouteDiagnostics = nil
 		for _, deployment := range model.Deployments {
 			if !configuredDeployments[deployment.DeploymentID] {
-				continue
+				if !dynamicAppleDeploymentAvailable(dynamicAppleDeploymentAvailableOptions{model: model, deployment: deployment}) {
+					continue
+				}
 			}
 			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
 				filtered.RouteDiagnostics = append(filtered.RouteDiagnostics, fmt.Sprintf("%s missing model_mappings[%s]", deployment.DeploymentID, model.ID))
@@ -113,8 +124,10 @@ func (c Config) availableModels(models []ModelDef) []ModelDef {
 		if len(filtered.Deployments) == 0 {
 			continue
 		}
-		if c.Routing != nil && !routingPolicyIsEmpty(c.Routing) {
-			routed, diagnostics, ok := routeAwareDeploymentsForModel(routeAwareDeploymentsForModelOptions{policy: *c.Routing, model: filtered, configuredDeployments: configuredDeployments})
+		effectiveRouting := routingPolicyForModel(routingPolicyForModelOptions{policy: c.Routing, model: filtered})
+		if effectiveRouting != nil && !routingPolicyIsEmpty(effectiveRouting) {
+			modelConfiguredDeployments := configuredDeploymentsForModel(configuredDeploymentsForModelOptions{base: configuredDeployments, model: filtered})
+			routed, diagnostics, ok := routeAwareDeploymentsForModel(routeAwareDeploymentsForModelOptions{policy: *effectiveRouting, model: filtered, configuredDeployments: modelConfiguredDeployments})
 			filtered.RouteDiagnostics = append(filtered.RouteDiagnostics, diagnostics...)
 			if !ok {
 				continue
@@ -203,11 +216,20 @@ type configModelsOptions struct {
 func routingValidationIndexForConfigModels(opts configModelsOptions) RoutingValidationIndex {
 	cfg, models := opts.cfg, opts.models
 	configuredDeployments := cfg.configuredDeploymentIDs()
+	availableDeployments := configuredDeployments
 	deploymentConfigs := cfg.deploymentConfigs()
 	eligibleByModel := map[string]map[string]bool{}
 	missingMappingsByModel := map[string]map[string]bool{}
 	knownProviders := knownCanonicalProviderIDs()
 	for _, model := range models {
+		modelConfiguredDeployments := configuredDeploymentsForModel(configuredDeploymentsForModelOptions{base: configuredDeployments, model: model})
+		if modelConfiguredDeployments["apple-local"] && !availableDeployments["apple-local"] {
+			availableDeployments = cloneBoolMap(configuredDeployments)
+			if availableDeployments == nil {
+				availableDeployments = map[string]bool{}
+			}
+			availableDeployments["apple-local"] = true
+		}
 		if model.OwnerProvider != "" {
 			knownProviders[canonicalProviderID(model.OwnerProvider)] = true
 		}
@@ -221,7 +243,7 @@ func routingValidationIndexForConfigModels(opts configModelsOptions) RoutingVali
 			eligibleByModel[model.ID] = map[string]bool{}
 		}
 		for _, deployment := range model.Deployments {
-			if !configuredDeployments[deployment.DeploymentID] {
+			if !modelConfiguredDeployments[deployment.DeploymentID] {
 				continue
 			}
 			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
@@ -237,7 +259,7 @@ func routingValidationIndexForConfigModels(opts configModelsOptions) RoutingVali
 	return RoutingValidationIndex{
 		KnownProviders:             knownProviders,
 		KnownDeployments:           knownDeploymentIDs(),
-		AvailableDeployments:       configuredDeployments,
+		AvailableDeployments:       availableDeployments,
 		EligibleDeploymentsByModel: eligibleByModel,
 		MissingMappingsByModel:     missingMappingsByModel,
 	}
@@ -249,7 +271,10 @@ func routingDiagnosticsForConfigModels(opts configModelsOptions) []RoutingDiagno
 		return nil
 	}
 	index := routingValidationIndexForConfigModels(configModelsOptions{cfg: cfg, models: models})
-	diagnostics := cfg.Routing.validate(index)
+	diagnostics := routingStructuralDiagnosticsForConfigModels(routingStructuralDiagnosticsForConfigModelsOptions{
+		configModels: configModelsOptions{cfg: cfg, models: models},
+		index:        index,
+	})
 	for _, model := range models {
 		if model.ID == "" {
 			continue
@@ -258,17 +283,21 @@ func routingDiagnosticsForConfigModels(opts configModelsOptions) []RoutingDiagno
 		if providerID == "" {
 			providerID = model.Provider
 		}
-		stages, source, ok := cfg.Routing.routeFor(routeForOptions{
+		effectiveRouting := routingPolicyForModel(routingPolicyForModelOptions{policy: cfg.Routing, model: model})
+		if effectiveRouting == nil {
+			continue
+		}
+		stages, source, ok := effectiveRouting.routeFor(routeForOptions{
 			canonicalModelID: model.ID,
 			providerID:       providerID,
 		})
 		if !ok {
 			continue
 		}
-		if source == RouteSourceModel {
-			continue
-		}
 		path := fmt.Sprintf("routing.effective.%s.%s", source, model.ID)
+		if source == RouteSourceModel {
+			path = "routing.models." + model.ID
+		}
 		diagnostics = append(diagnostics, validateRoutingStages(validateRoutingStagesOptions{
 			path:             path,
 			canonicalModelID: model.ID,
@@ -363,6 +392,20 @@ func (c Config) ollamaBaseURL() string {
 	return c.deploymentConfig("ollama-local").BaseURL
 }
 
+const appleFMDefaultBaseURL = "http://127.0.0.1:1976"
+
+func (c Config) appleFMBaseURL() string {
+	deployment := c.deploymentConfig("apple-local")
+	if deployment.BaseURL != "" {
+		return deployment.BaseURL
+	}
+	return appleFMDefaultBaseURL
+}
+
+func (c Config) hasExplicitAppleFMBaseURL() bool {
+	return strings.TrimSpace(c.deploymentConfig("apple-local").BaseURL) != ""
+}
+
 func (c Config) configuredDeploymentIDs() map[string]bool {
 	configured := map[string]bool{}
 	for deploymentID, deployment := range c.deploymentConfigs() {
@@ -391,6 +434,8 @@ func deploymentHasRequiredConfig(opts deploymentConfigOptions) bool {
 	case "anthropic-vertex", "gemini-vertex":
 		return deployment.ProjectID != "" && deployment.Region != ""
 	case "ollama-local":
+		return deployment.BaseURL != ""
+	case "apple-local":
 		return deployment.BaseURL != ""
 	default:
 		return false
@@ -477,6 +522,8 @@ func hermProviderForDeployment(deploymentID string) string {
 		return ProviderOpenRouter
 	case "ollama-local":
 		return ProviderOllama
+	case "apple-local":
+		return ProviderApple
 	default:
 		return ""
 	}
@@ -518,6 +565,7 @@ var defaultActiveModels = map[string]string{
 	ProviderGrok:       "xai/grok-4-1-fast-reasoning",
 	ProviderOpenRouter: "z-ai/glm-4.5-air:free",
 	ProviderGemini:     "google/gemini-2.5-pro",
+	ProviderApple:      "apple/system",
 }
 
 // defaultExplorationModels maps provider to the preferred cheap/fast model
@@ -530,6 +578,7 @@ var defaultExplorationModels = map[string]string{
 	ProviderGrok:       "xai/grok-4-1-fast-non-reasoning",
 	ProviderOpenRouter: "z-ai/glm-4.5-air:free",
 	ProviderGemini:     "google/gemini-2.5-flash",
+	ProviderApple:      "apple/system",
 }
 
 // preferredDefaultOptions is the parameter bundle for preferredDefault.
@@ -606,10 +655,38 @@ func (c Config) defaultActiveModel(available []ModelDef) string {
 		return ""
 	}
 	// Try provider-specific default before falling back to first available
-	if id := preferredDefault(preferredDefaultOptions{models: available, provider: c.defaultLangdagProvider(), defaults: defaultActiveModels}); id != "" {
+	if id := preferredDefault(preferredDefaultOptions{models: available, provider: c.defaultProviderForAvailableModels(available), defaults: defaultActiveModels}); id != "" {
 		return id
 	}
 	return available[0].ID
+}
+
+func (c Config) defaultProviderForAvailableModels(available []ModelDef) string {
+	if provider := c.defaultLangdagProvider(); provider != "" {
+		return provider
+	}
+	seen := map[string]bool{}
+	for _, model := range available {
+		for _, deployment := range model.Deployments {
+			if provider := hermProviderForDeployment(deployment.DeploymentID); provider != "" {
+				seen[provider] = true
+			}
+		}
+		if len(model.Deployments) == 0 {
+			if model.Provider != "" {
+				seen[model.Provider] = true
+			}
+			if model.OwnerProvider != "" {
+				seen[model.OwnerProvider] = true
+			}
+		}
+	}
+	for _, provider := range []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama, ProviderApple} {
+		if seen[provider] {
+			return provider
+		}
+	}
+	return ""
 }
 
 // ollamaModelProviderOptions is the parameter bundle for ollamaModelProvider.
@@ -650,7 +727,7 @@ func (c Config) resolveExplorationModel(models []ModelDef) string {
 func (c Config) resolveExplorationModelResult(models []ModelDef) configuredModelResolution {
 	if c.ExplorationModel == "" {
 		available := c.availableModels(models)
-		if id := preferredDefault(preferredDefaultOptions{models: available, provider: c.defaultLangdagProvider(), defaults: defaultExplorationModels}); id != "" {
+		if id := preferredDefault(preferredDefaultOptions{models: available, provider: c.defaultProviderForAvailableModels(available), defaults: defaultExplorationModels}); id != "" {
 			return configuredModelResolution{ResolvedModelID: id}
 		}
 		return configuredModelResolution{ResolvedModelID: c.resolveActiveModel(models)}

@@ -234,6 +234,21 @@ func TestRoutingPolicySelectsMostSpecificAuthoritativeRoute(t *testing.T) {
 	}
 }
 
+func TestRoutingValidationAcceptsAppleProviderAndDeployment(t *testing.T) {
+	policy := RoutingPolicy{
+		Providers: map[string][]RoutingStage{
+			"apple": {{Deployments: []DeploymentChoice{{DeploymentID: "apple-local", Weight: 100}}}},
+		},
+		Models: map[string][]RoutingStage{
+			"apple/system": {{Deployments: []DeploymentChoice{{DeploymentID: "apple-local", Weight: 100}}}},
+		},
+	}
+
+	if diagnostics := policy.validate(RoutingValidationIndex{}); len(diagnostics) != 0 {
+		t.Fatalf("apple routing diagnostics = %+v, want none", diagnostics)
+	}
+}
+
 func TestRoutingPolicyReportsValidationDiagnostics(t *testing.T) {
 	policy := RoutingPolicy{
 		Default: []RoutingStage{{

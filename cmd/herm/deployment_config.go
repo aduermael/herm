@@ -130,6 +130,9 @@ var deploymentEnvFallbacks = map[string][]DeploymentEnvFallback{
 	"ollama-local": {
 		{Field: "base_url", Env: []string{"OLLAMA_BASE_URL"}},
 	},
+	"apple-local": {
+		{Field: "base_url", Env: []string{"APPLE_FM_BASE_URL"}},
+	},
 }
 
 func deploymentAwareConfigFromLegacyConfig(cfg Config) DeploymentAwareConfig {
@@ -711,6 +714,7 @@ func knownCanonicalProviderIDs() map[string]bool {
 		"z-ai":       true,
 		"openrouter": true,
 		"ollama":     true,
+		"apple":      true,
 	}
 }
 
@@ -726,6 +730,7 @@ func knownDeploymentIDs() map[string]bool {
 		"grok-direct":       true,
 		"openrouter":        true,
 		"ollama-local":      true,
+		"apple-local":       true,
 	}
 }
 

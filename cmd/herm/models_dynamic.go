@@ -11,14 +11,31 @@ type modelsFromCatalogPreservingDynamicOptions struct {
 
 func modelsFromCatalogPreservingDynamic(opts modelsFromCatalogPreservingDynamicOptions) []ModelDef {
 	models := modelsFromCatalog(opts.catalog)
+	dynamic := dynamicModelsForProviders(dynamicModelsForProvidersOptions{
+		models: opts.current,
+		providers: map[string]bool{
+			ProviderOllama:     true,
+			ProviderOpenRouter: true,
+			ProviderApple:      true,
+		},
+	})
+	return mergeDynamicModels(mergeDynamicModelsOptions{base: models, dynamic: dynamic})
+}
+
+type dynamicModelsForProvidersOptions struct {
+	models    []ModelDef
+	providers map[string]bool
+}
+
+func dynamicModelsForProviders(opts dynamicModelsForProvidersOptions) []ModelDef {
 	var dynamic []ModelDef
-	for _, model := range opts.current {
-		if model.Provider != ProviderOllama && model.Provider != ProviderOpenRouter {
+	for _, model := range opts.models {
+		if !opts.providers[model.Provider] {
 			continue
 		}
 		dynamic = append(dynamic, model)
 	}
-	return mergeDynamicModels(mergeDynamicModelsOptions{base: models, dynamic: dynamic})
+	return dynamic
 }
 
 // mergeDynamicModelsOptions is the parameter bundle for mergeDynamicModels.

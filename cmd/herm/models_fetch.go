@@ -6,12 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
 	"langdag.com/langdag/types"
 )
+
+var runtimeGOOS = func() string { return runtime.GOOS }
 
 // fetchOllamaModels fetches available models from an Ollama instance.
 // Returns nil if the Ollama server is unreachable or no baseURL is configured.
@@ -214,6 +217,104 @@ func fetchOpenRouterModelsFrom(opts fetchOpenRouterOptions) []ModelDef {
 		})
 	}
 	return models
+}
+
+type fetchAppleModelsOptions struct {
+	baseURL string
+}
+
+func fetchAppleModels(baseURL string) []ModelDef {
+	return fetchAppleModelsFrom(fetchAppleModelsOptions{baseURL: baseURL})
+}
+
+func fetchAppleModelsFrom(opts fetchAppleModelsOptions) []ModelDef {
+	if runtimeGOOS() != "darwin" {
+		return nil
+	}
+	baseURL := strings.TrimRight(opts.baseURL, "/")
+	if baseURL == "" {
+		baseURL = appleFMDefaultBaseURL
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(baseURL + "/health")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var health struct {
+		Status string `json:"status"`
+		Models []struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			Available bool   `json:"available"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return nil
+	}
+	if health.Status != "fm serve is running" {
+		return nil
+	}
+	names := map[string]string{
+		"system": "Apple system",
+		"pcc":    "Apple Private Cloud Compute",
+	}
+	var models []ModelDef
+	for _, model := range health.Models {
+		modelID := appleHealthModelID(appleHealthModelIDOptions{id: model.ID, name: model.Name})
+		name, expected := names[modelID]
+		if !expected || !model.Available {
+			continue
+		}
+		canonicalID := ProviderApple + "/" + modelID
+		models = append(models, ModelDef{
+			Provider:          ProviderApple,
+			OwnerProvider:     ProviderApple,
+			ID:                canonicalID,
+			CanonicalID:       canonicalID,
+			Label:             name,
+			RuntimeDiscovered: true,
+			PromptPrice:       0,
+			CompletionPrice:   0,
+			PricingStatus:     types.CostStatusFree,
+			PricingCurrency:   "USD",
+			PricingRatesPer1M: map[string]float64{
+				"input_tokens":  0,
+				"output_tokens": 0,
+			},
+			PriceLabel:     "free",
+			NativeModelIDs: []string{modelID},
+			Deployments: []ModelDeploymentDef{{
+				DeploymentID:  "apple-local",
+				ProviderID:    ProviderApple,
+				APIProtocolID: "openai-chat-completions",
+				OfferingID:    "apple-local:" + modelID,
+				NativeModelID: modelID,
+				PricingSnapshot: types.PricingSnapshot{
+					Status:     types.CostStatusFree,
+					Currency:   "USD",
+					Source:     types.CostSourceCatalog,
+					RatesPer1M: map[string]float64{"input_tokens": 0, "output_tokens": 0},
+				},
+			}},
+		})
+	}
+	return models
+}
+
+type appleHealthModelIDOptions struct {
+	id   string
+	name string
+}
+
+func appleHealthModelID(opts appleHealthModelIDOptions) string {
+	if opts.name != "" {
+		return opts.name
+	}
+	return opts.id
 }
 
 func ollamaCanonicalModelID(modelID string) string {

@@ -114,9 +114,10 @@ type workspaceMsg struct {
 }
 
 type langdagReadyMsg struct {
-	client   *langdag.Client
-	provider string
-	err      error
+	client       *langdag.Client
+	provider     string
+	runtimeApple bool
+	err          error
 }
 
 type catalogMsg struct {
@@ -159,6 +160,16 @@ type ollamaModelsMsg struct {
 
 type openRouterModelsMsg struct {
 	models []ModelDef
+}
+
+type appleModelsMsg struct {
+	models []ModelDef
+}
+
+type draftAppleModelsMsg struct {
+	models       []ModelDef
+	getCurrentID func() string
+	onSelect     func(string)
 }
 
 // openPickerMsg is sent after an async Ollama fetch completes to open the
@@ -703,6 +714,20 @@ func fetchOllamaModelsCmd(baseURL string) ollamaModelsMsg {
 
 func fetchOpenRouterModelsCmd(apiKey string) openRouterModelsMsg {
 	return openRouterModelsMsg{models: fetchOpenRouterModels(apiKey)}
+}
+
+func fetchAppleModelsCmd(baseURL string) appleModelsMsg {
+	return appleModelsMsg{models: fetchAppleModels(baseURL)}
+}
+
+type fetchDraftAppleModelsCmdOptions struct {
+	baseURL      string
+	getCurrentID func() string
+	onSelect     func(string)
+}
+
+func fetchDraftAppleModelsCmd(opts fetchDraftAppleModelsCmdOptions) draftAppleModelsMsg {
+	return draftAppleModelsMsg{models: fetchAppleModels(opts.baseURL), getCurrentID: opts.getCurrentID, onSelect: opts.onSelect}
 }
 
 // checkForUpdate queries the GitHub API for the latest release and compares

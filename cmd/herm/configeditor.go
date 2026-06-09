@@ -83,7 +83,7 @@ func (a *App) effectiveProviderForConfig(cfg Config) (provider string, modelID s
 			modelID: modelID,
 		}), modelID
 	}
-	return cfg.defaultLangdagProvider(), ""
+	return cfg.defaultLangdagProviderForModels(a.models), ""
 }
 
 // preferredAPIKeyCursor chooses the initial cursor row in the API Keys tab:
@@ -92,7 +92,7 @@ func (a *App) preferredAPIKeyCursor(cfg Config) int {
 	if p, _ := a.effectiveProviderForConfig(cfg); p != "" {
 		return apiKeyRowForProviderInFields(apiKeyRowForProviderInFieldsOptions{provider: p, fields: deploymentTabFields(cfg)})
 	}
-	ordered := []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama}
+	ordered := []string{ProviderAnthropic, ProviderOpenAI, ProviderGrok, ProviderOpenRouter, ProviderGemini, ProviderOllama, ProviderApple}
 	configured := cfg.configuredProviders()
 	for _, p := range ordered {
 		if configured[p] {
@@ -164,14 +164,24 @@ func (a *App) exitConfigMode(save bool) {
 			a.openRouterFetched = false // allow re-fetch with new key
 			go func() { a.resultCh <- fetchOpenRouterModelsCmd(a.config.openRouterAPIKey()) }()
 		}
+		a.appleFetched = false
+		go func() { a.resultCh <- fetchAppleModelsCmd(a.config.appleFMBaseURL()) }()
 		// Show updated model resolution and project diagnostics.
 		if a.models != nil {
 			a.refreshResolvedModelDisplay()
 		}
 		// Reinitialize langdag client with updated config
+		cfg := a.config
+		models := a.models
+		catalog := a.modelCatalog
+		provider := cfg.defaultLangdagProviderForModels(models)
 		go func() {
-			client, err := newLangdagClientWithCatalog(a.config, a.modelCatalog)
-			a.resultCh <- langdagReadyMsg{client: client, provider: a.config.defaultLangdagProvider(), err: err}
+			client, err := newLangdagClientForModelsWithCatalog(newLangdagClientForModelsWithCatalogOptions{
+				cfg:     cfg,
+				models:  models,
+				catalog: catalog,
+			})
+			a.resultCh <- langdagReadyMsg{client: client, provider: provider, runtimeApple: hasRuntimeAppleModels(models), err: err}
 		}()
 	}
 	a.cfgActive = false
@@ -215,6 +225,18 @@ func (a *App) openConfigModelPicker(opts openConfigModelPickerOptions) {
 			msg := fetchOpenRouterModelsCmd(a.cfgDraft.openRouterAPIKey())
 			a.resultCh <- msg
 			a.resultCh <- openPickerMsg{getCurrentID: getCurrentID, onSelect: onSelect}
+		}()
+		return
+	}
+	// If the draft Apple FM URL differs from the saved URL, refresh dynamic
+	// Apple models before showing available choices.
+	if a.config.appleFMBaseURL() != a.cfgDraft.appleFMBaseURL() {
+		go func() {
+			a.resultCh <- fetchDraftAppleModelsCmd(fetchDraftAppleModelsCmdOptions{
+				baseURL:      a.cfgDraft.appleFMBaseURL(),
+				getCurrentID: getCurrentID,
+				onSelect:     onSelect,
+			})
 		}()
 		return
 	}

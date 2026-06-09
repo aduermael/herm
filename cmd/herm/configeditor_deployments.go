@@ -67,6 +67,7 @@ var cfgAPIKeyFieldSpecs = []deploymentFieldSpec{
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "OpenRouter API Key", deploymentID: "openrouter", field: "api_key", secret: true})},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Gemini API Key", deploymentID: "gemini-direct", field: "api_key", secret: true})},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Ollama Base URL", deploymentID: "ollama-local", field: "base_url", normalizeURL: true})},
+	{field: deploymentTextField(deploymentTextFieldOptions{label: "Apple FM Base URL", deploymentID: "apple-local", field: "base_url", normalizeURL: true})},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI API Key", deploymentID: "openai-azure", field: "api_key", secret: true})},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI Endpoint", deploymentID: "openai-azure", field: "endpoint", normalizeURL: true, indent: 1, optional: true}), visibility: deploymentFieldAzureContext},
 	{field: deploymentTextField(deploymentTextFieldOptions{label: "Azure OpenAI API Version", deploymentID: "openai-azure", field: "api_version", indent: 1, optional: true}), visibility: deploymentFieldAzureContext},
@@ -388,6 +389,8 @@ func apiKeyLabelForProvider(provider string) string {
 		return "Gemini API Key"
 	case ProviderOllama:
 		return "Ollama Base URL"
+	case ProviderApple:
+		return "Apple FM Base URL"
 	default:
 		return ""
 	}

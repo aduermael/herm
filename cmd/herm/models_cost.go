@@ -148,7 +148,7 @@ type inferCatalogPricingStatusOptions struct {
 }
 
 func inferCatalogPricingStatus(opts inferCatalogPricingStatusOptions) types.CostStatus {
-	if strings.Contains(opts.modelID, ":free") || opts.provider == ProviderOllama {
+	if strings.Contains(opts.modelID, ":free") || opts.provider == ProviderOllama || opts.provider == ProviderApple {
 		return types.CostStatusFree
 	}
 	if opts.inputPrice == 0 && opts.outputPrice == 0 {

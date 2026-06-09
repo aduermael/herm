@@ -136,8 +136,9 @@ func eligibleDeploymentIDsForConfigModels(opts eligibleDeploymentIDsForConfigMod
 	deploymentConfigs := cfg.deploymentConfigs()
 	eligible := map[string]bool{}
 	for _, model := range models {
+		modelConfigured := configuredDeploymentsForModel(configuredDeploymentsForModelOptions{base: configured, model: model})
 		for _, deployment := range model.Deployments {
-			if !configured[deployment.DeploymentID] {
+			if !modelConfigured[deployment.DeploymentID] {
 				continue
 			}
 			if deployment.MappingRequired && deploymentConfigs[deployment.DeploymentID].ModelMappings[model.ID] == "" {
