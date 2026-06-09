@@ -69,7 +69,6 @@ func TestParseCLI_CPSLInvalidLibraryExactMessage(t *testing.T) {
 		{name: "nonexistent", args: []string{"--cpsl", missing}},
 		{name: "directory", args: []string{"--cpsl", dirWithExt}},
 		{name: "wrong extension", args: []string{"--cpsl", wrongExt}},
-		{name: "relative path", args: []string{"--cpsl", "libcpsl" + cpslLibraryExtension()}},
 	}
 
 	for _, tt := range tests {
@@ -83,6 +82,32 @@ func TestParseCLI_CPSLInvalidLibraryExactMessage(t *testing.T) {
 				t.Fatalf("stderr = %q, want exact CPSL library message", stderr.String())
 			}
 		})
+	}
+}
+
+func TestParseCLI_CPSLRelativeLibraryPath(t *testing.T) {
+	dir := t.TempDir()
+	libName := "libcpsl" + cpslLibraryExtension()
+	libPath := filepath.Join(dir, libName)
+	if err := os.WriteFile(libPath, []byte("test library placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	var stderr bytes.Buffer
+	opts, err := parseCLI(parseCLIOptions{args: []string{"--cpsl", libName}, stderr: &stderr})
+	if err != nil {
+		t.Fatalf("parseCLI: %v", err)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	wantPath, err := filepath.EvalSymlinks(libPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.cpsl.LibraryPath != wantPath {
+		t.Fatalf("LibraryPath = %q, want %q", opts.cpsl.LibraryPath, wantPath)
 	}
 }
 
