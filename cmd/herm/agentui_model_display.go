@@ -316,7 +316,7 @@ func (a *App) refreshResolvedModelDisplay() {
 }
 
 func (a *App) resolveMainAgentModelResult() configuredModelResolution {
-	if explicitActiveModelConfigured(a.projectModelConfig()) {
+	if explicitActiveModelConfigured(a.effectiveModelConfig()) {
 		return a.config.resolveActiveModelResult(a.models)
 	}
 	return a.config.resolveExplorationModelResult(a.models)
@@ -324,4 +324,11 @@ func (a *App) resolveMainAgentModelResult() configuredModelResolution {
 
 func (a *App) projectModelConfig() projectModelConfigOptions {
 	return projectModelConfigOptions{global: a.globalConfig, project: a.projectConfig}
+}
+
+func (a *App) effectiveModelConfig() projectModelConfigOptions {
+	if strings.TrimSpace(a.cliConfigOverrides) == "" {
+		return a.projectModelConfig()
+	}
+	return projectModelConfigOptions{global: a.config, project: ProjectConfig{}}
 }

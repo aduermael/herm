@@ -228,7 +228,7 @@ func TestCompactConversationPreservesStructure(t *testing.T) {
 		{ID: "n1", ParentID: "n0", RootID: "n0", NodeType: types.NodeTypeAssistant,
 			Content: "I'll start by reading auth.go.", Model: "test-model", CreatedAt: now},
 		{ID: "n2", ParentID: "n1", RootID: "n0", NodeType: types.NodeTypeUser,
-			Content: toolResultContent("call_1", "package auth\n\nfunc Login() {}"),
+			Content:   toolResultContent("call_1", "package auth\n\nfunc Login() {}"),
 			CreatedAt: now},
 		{ID: "n3", ParentID: "n2", RootID: "n0", NodeType: types.NodeTypeAssistant,
 			Content: "Now I'll update the Login function.", Model: "test-model", CreatedAt: now},
@@ -237,7 +237,7 @@ func TestCompactConversationPreservesStructure(t *testing.T) {
 		{ID: "n5", ParentID: "n4", RootID: "n0", NodeType: types.NodeTypeAssistant,
 			Content: "Let me also check middleware.go.", Model: "test-model", CreatedAt: now},
 		{ID: "n6", ParentID: "n5", RootID: "n0", NodeType: types.NodeTypeUser,
-			Content: toolResultContent("call_3", "package middleware\n\nfunc Auth() {}"),
+			Content:   toolResultContent("call_3", "package middleware\n\nfunc Auth() {}"),
 			CreatedAt: now},
 		{ID: "n7", ParentID: "n6", RootID: "n0", NodeType: types.NodeTypeAssistant,
 			Content: "I'll update the middleware too.", Model: "test-model", CreatedAt: now},
@@ -536,7 +536,7 @@ func (p *failingProvider) Stream(_ context.Context, _ *types.CompletionRequest) 
 	return nil, fmt.Errorf("LLM service unavailable")
 }
 
-func (p *failingProvider) Name() string             { return "mock" }
+func (p *failingProvider) Name() string              { return "mock" }
 func (p *failingProvider) Models() []types.ModelInfo { return nil }
 
 func TestCompactSummaryPromptCoversAllFocuses(t *testing.T) {

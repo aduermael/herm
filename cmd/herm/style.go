@@ -113,18 +113,18 @@ func buildLogo(width int) []string {
 // Chat accent styles use italic at normal luminosity — the default for info,
 // success, error, and model lines in the TUI (see styledInfo/Success/Error).
 const (
-	styleChatCyan    = "\033[36;3m"
-	styleChatMagenta = "\033[35;3m"
-	styleChatGreen   = "\033[32;3m"
-	styleChatYellow      = "\033[33;3m"
-	styleChatDimGreen    = "\033[2;32;3m"
-	styleChatDimCyan     = "\033[2;36;3m"
-	styleChatDimMagenta  = "\033[2;35;3m"
-	styleChatDimYellow   = "\033[2;33;3m"
-	styleChatDimRed      = "\033[2;31;3m"
-	styleChatBlue        = "\033[34;3m"
-	styleChatRed     = "\033[31;3m"
-	styleChatMuted   = "\033[2;3m"
+	styleChatCyan       = "\033[36;3m"
+	styleChatMagenta    = "\033[35;3m"
+	styleChatGreen      = "\033[32;3m"
+	styleChatYellow     = "\033[33;3m"
+	styleChatDimGreen   = "\033[2;32;3m"
+	styleChatDimCyan    = "\033[2;36;3m"
+	styleChatDimMagenta = "\033[2;35;3m"
+	styleChatDimYellow  = "\033[2;33;3m"
+	styleChatDimRed     = "\033[2;31;3m"
+	styleChatBlue       = "\033[34;3m"
+	styleChatRed        = "\033[31;3m"
+	styleChatMuted      = "\033[2;3m"
 )
 
 type styledConfigFieldLabelOptions struct {

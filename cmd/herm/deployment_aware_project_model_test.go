@@ -586,6 +586,46 @@ func TestProjectModelClearResetsProjectModelDiagnosticDedupe(t *testing.T) {
 	}
 }
 
+func TestProjectModelCompactRequiresExplicitModel(t *testing.T) {
+	store := newMockStorage()
+	leafID := seedCompactableConversation(t, store)
+	provider := &mockProvider{responses: []string{"compact summary"}, model: "openai/gpt-4.1-2025-04-14"}
+	client := langdag.NewWithDeps(store, provider)
+	app := &App{
+		langdagClient: client,
+		agentNodeID:   leafID,
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{
+				"openai-direct": {APIKey: "sk-openai"},
+			},
+		},
+		models: []ModelDef{{
+			Provider:      ProviderOpenAI,
+			OwnerProvider: ProviderOpenAI,
+			ID:            "openai/gpt-4.1-2025-04-14",
+			CanonicalID:   "openai/gpt-4.1-2025-04-14",
+			Deployments: []ModelDeploymentDef{{
+				DeploymentID:  "openai-direct",
+				NativeModelID: "gpt-4.1-2025-04-14",
+			}},
+		}},
+		configReady: true,
+		resultCh:    make(chan any, 16),
+		headless:    true,
+	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
+
+	app.handleCompactCommand("/compact")
+
+	if provider.lastRequest != nil {
+		t.Fatalf("compact should not call provider without explicit model, got request for %q", provider.lastRequest.Model)
+	}
+	contents := strings.Join(chatMessageContents(app.messages), "\n")
+	if !strings.Contains(contents, configMissingModelMessage) {
+		t.Fatalf("compact should show missing-model message, got:\n%s", contents)
+	}
+}
+
 func TestProjectModelCompactShowsExplorationFallbackDiagnosticAndUsesResolvedModel(t *testing.T) {
 	store := newMockStorage()
 	leafID := seedCompactableConversation(t, store)
@@ -671,9 +711,11 @@ func TestProjectModelCompactPreservesAssistantMetadataAndRecordsTrace(t *testing
 	client := langdag.NewWithDeps(store, provider)
 	tracePath := filepath.Join(t.TempDir(), "trace.json")
 	app := &App{
-		langdagClient:  client,
-		agentNodeID:    leafID,
-		config:         Config{ActiveModel: "openai/gpt-4.1-2025-04-14"},
+		langdagClient: client,
+		agentNodeID:   leafID,
+		globalConfig: Config{
+			ActiveModel: "openai/gpt-4.1-2025-04-14",
+		},
 		models:         []ModelDef{},
 		configReady:    true,
 		resultCh:       make(chan any, 16),
@@ -681,6 +723,7 @@ func TestProjectModelCompactPreservesAssistantMetadataAndRecordsTrace(t *testing
 		traceFilePath:  tracePath,
 		headless:       true,
 	}
+	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
 
 	app.handleCompactCommand("/compact")
 

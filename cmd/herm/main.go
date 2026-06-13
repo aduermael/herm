@@ -559,7 +559,7 @@ func (a *App) handleEnter() {
 	}
 
 	a.messages = append(a.messages, chatMessage{kind: msgUser, content: display, leadBlank: true})
-	if !modelsReadyForAgent(a.projectModelConfig()) {
+	if !modelsReadyForAgent(a.effectiveModelConfig()) {
 		a.messages = appendMissingModelMessageIfNeeded(a.messages)
 		a.render()
 		return

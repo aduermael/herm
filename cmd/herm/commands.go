@@ -245,6 +245,11 @@ func (a *App) handleCompactCommand(input string) {
 
 	// Use exploration model for cheap summarization.
 	a.normalizeProjectConfigWithCurrentModels()
+	if !modelsReadyForAgent(a.effectiveModelConfig()) {
+		a.messages = appendMissingModelMessageIfNeeded(a.messages)
+		a.render()
+		return
+	}
 	a.showProjectModelDiagnostics()
 	model := a.config.resolveExplorationModel(a.models)
 	if model == "" {

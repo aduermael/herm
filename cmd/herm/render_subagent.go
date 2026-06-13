@@ -12,8 +12,8 @@ import (
 
 // subAgentDisplay tracks per-agent display state for live TUI rendering.
 type subAgentDisplay struct {
-	task         string    // task label (first ~40 chars of the task description)
-	status       string    // current activity (tool name or text snippet)
+	task         string // task label (first ~40 chars of the task description)
+	status       string // current activity (tool name or text snippet)
 	done         bool
 	mode         string    // "explore" or "general"
 	toolCount    int       // number of tool calls executed

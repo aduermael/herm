@@ -826,7 +826,7 @@ func TestBuildConfigRowsProjectOverrideShown(t *testing.T) {
 		repoRoot: "/some/repo",
 		cfgDraft: Config{
 			ActiveModel: "global-model",
-			Deployments:  map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
 		},
 		cfgProjectDraft: ProjectConfig{ActiveModel: "project-model"},
 	}
@@ -1963,6 +1963,51 @@ func TestModelsReadyForAgent(t *testing.T) {
 	}
 }
 
+func TestStartAgentAllowsConfigOverrideActiveModel(t *testing.T) {
+	app := &App{
+		globalConfig: Config{
+			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}},
+		},
+		cliConfigOverrides: `{"active_model":"openrouter/test"}`,
+		configReady:        true,
+		models:             []ModelDef{{ID: "openrouter/test", Provider: ProviderOpenRouter}},
+		langdagClient:      newTestClient("ok"),
+		headless:           true,
+		width:              80,
+	}
+	app.rebuildEffectiveConfig()
+
+	if !modelsReadyForAgent(app.effectiveModelConfig()) {
+		t.Fatal("config override active model should satisfy explicit-model gate")
+	}
+	app.startAgent("hello")
+	if app.agent == nil || !app.agentRunning {
+		t.Fatal("agent should start with config override active model")
+	}
+	if app.agent.model != "openrouter/test" {
+		t.Fatalf("agent model = %q, want override active model", app.agent.model)
+	}
+}
+
+func TestEffectiveProviderForConfigUsesUncataloguedOpenRouterModel(t *testing.T) {
+	app := &App{
+		models: []ModelDef{},
+	}
+	cfg := Config{
+		Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
+		ActiveModel: "moonshotai/kimi-k2:free",
+	}
+
+	provider, modelID := app.effectiveProviderForConfig(cfg)
+
+	if provider != ProviderOpenRouter {
+		t.Fatalf("provider = %q, want %q", provider, ProviderOpenRouter)
+	}
+	if modelID != "moonshotai/kimi-k2:free" {
+		t.Fatalf("modelID = %q, want configured OpenRouter native ID", modelID)
+	}
+}
+
 func TestStartAgentAllowsExplicitExplorationModelOnly(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
@@ -2230,7 +2275,7 @@ func TestShowResolvedModelDisplayUpdatesWhenExplorationAdded(t *testing.T) {
 	app := &App{
 		globalConfig: Config{
 			Deployments: map[string]DeploymentConfig{"openrouter": {APIKey: "sk-or"}},
-			ActiveModel:  "openrouter/active",
+			ActiveModel: "openrouter/active",
 		},
 		configReady: true,
 		models:      []ModelDef{},

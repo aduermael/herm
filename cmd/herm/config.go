@@ -926,7 +926,13 @@ func configuredProviderForModelID(opts configuredProviderForModelIDOptions) stri
 	if model := findModelByID(findModelByIDOptions{models: models, id: modelID}); model != nil {
 		return configuredProviderForModel(configuredProviderForModelOptions{cfg: cfg, model: *model})
 	}
-	return ollamaModelProvider(ollamaModelProviderOptions{modelID: modelID, models: models, ollamaURL: cfg.ollamaBaseURL()})
+	if provider := ollamaModelProvider(ollamaModelProviderOptions{modelID: modelID, models: models, ollamaURL: cfg.ollamaBaseURL()}); provider != "" {
+		return provider
+	}
+	if cfg.configuredDeploymentIDs()["openrouter"] {
+		return ProviderOpenRouter
+	}
+	return ""
 }
 
 type modelIDCandidatesOptions struct {

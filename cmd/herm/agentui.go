@@ -63,7 +63,7 @@ func formatToolDefinitions(opts formatToolDefinitionsOptions) string {
 
 func (a *App) startAgent(userMessage string) {
 	a.normalizeProjectConfigWithCurrentModels()
-	if !modelsReadyForAgent(a.projectModelConfig()) {
+	if !modelsReadyForAgent(a.effectiveModelConfig()) {
 		a.messages = appendMissingModelMessageIfNeeded(a.messages)
 		a.render()
 		return
@@ -245,7 +245,7 @@ func (a *App) startAgent(userMessage string) {
 		a.traceCollector.AddUserMessage(userMessage)
 	}
 
-	if !modelResult.Fallback && modelsReadyForAgent(a.projectModelConfig()) {
+	if !modelResult.Fallback && modelsReadyForAgent(a.effectiveModelConfig()) {
 		a.showResolvedModelDisplay()
 	}
 

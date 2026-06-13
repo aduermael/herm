@@ -152,7 +152,7 @@ func TestTraceCollector_RealisticFlow(t *testing.T) {
 
 	// Tool call.
 	tc.StartToolCall(StartToolCallOptions{agentID: "agent-main", toolID: "tool-1", toolName: "bash", input: json.RawMessage(`{"command":"ls"}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "tool-1", result: "file1.txt\nfile2.txt", isError: false, duration: 500*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "tool-1", result: "file1.txt\nfile2.txt", isError: false, duration: 500 * time.Millisecond})
 
 	// Usage arrives.
 	usage := &TraceUsage{
@@ -346,8 +346,8 @@ func TestTraceCollector_MultipleToolCalls_SameTurn(t *testing.T) {
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t2", toolName: "read", input: json.RawMessage(`{"path":"foo.go"}`)})
 
 	// Results arrive in different order.
-	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "package main", isError: false, duration: 50*time.Millisecond})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "file.txt", isError: false, duration: 200*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "package main", isError: false, duration: 50 * time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "file.txt", isError: false, duration: 200 * time.Millisecond})
 
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "", usage: &TraceUsage{InputTokens: 1000, OutputTokens: 100}, costUSD: 0.02, stopReason: ""})
 	tc.FinalizeTurn("main")
@@ -414,8 +414,8 @@ func TestTraceCollector_ToolCallApproval(t *testing.T) {
 
 	tc.StartLLMResponse("main")
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t1", toolName: "bash", input: json.RawMessage(`{}`)})
-	tc.AddApproval(AddApprovalOptions{toolID: "t1", desc: "Run bash command", approved: true, waitDur: 3500*time.Millisecond})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 100*time.Millisecond})
+	tc.AddApproval(AddApprovalOptions{toolID: "t1", desc: "Run bash command", approved: true, waitDur: 3500 * time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 100 * time.Millisecond})
 
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "", usage: nil, costUSD: 0, stopReason: ""})
 	tc.FinalizeTurn("main")
@@ -453,7 +453,7 @@ func TestTraceCollector_ToolCallError(t *testing.T) {
 
 	tc.StartLLMResponse("main")
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t1", toolName: "bash", input: json.RawMessage(`{}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "permission denied", isError: true, duration: 10*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "permission denied", isError: true, duration: 10 * time.Millisecond})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "", usage: nil, costUSD: 0, stopReason: ""})
 	tc.FinalizeTurn("main")
 
@@ -817,7 +817,7 @@ func TestTraceCollector_EventTypes(t *testing.T) {
 	tc.SetMainAgentID("main")
 
 	tc.AddCompaction(AddCompactionOptions{nodeID: "node-5", summary: "Conversation was summarized."})
-	tc.AddRetry(AddRetryOptions{attempt: 1, maxAttempts: 3, delay: 2*time.Second, errMsg: "429 Too Many Requests"})
+	tc.AddRetry(AddRetryOptions{attempt: 1, maxAttempts: 3, delay: 2 * time.Second, errMsg: "429 Too Many Requests"})
 	tc.AddStreamClear()
 	tc.AddError("context canceled")
 
@@ -961,7 +961,7 @@ func TestTraceCollector_CacheTokenAggregation(t *testing.T) {
 func TestTraceCollector_EndToolCall_UnknownID(t *testing.T) {
 	tc := NewTraceCollector("sess-unknown-tool")
 	// Should not panic on unknown tool ID.
-	tc.EndToolCall(EndToolCallOptions{toolID: "nonexistent", result: "result", isError: false, duration: 100*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "nonexistent", result: "result", isError: false, duration: 100 * time.Millisecond})
 
 	tc.mu.Lock()
 	trace := tc.buildTraceLocked()
@@ -976,7 +976,7 @@ func TestTraceCollector_EndToolCall_UnknownID(t *testing.T) {
 func TestTraceCollector_AddApproval_UnknownID(t *testing.T) {
 	tc := NewTraceCollector("sess-unknown-approval")
 	// Should not panic on unknown tool ID.
-	tc.AddApproval(AddApprovalOptions{toolID: "nonexistent", desc: "desc", approved: true, waitDur: 100*time.Millisecond})
+	tc.AddApproval(AddApprovalOptions{toolID: "nonexistent", desc: "desc", approved: true, waitDur: 100 * time.Millisecond})
 }
 
 func TestTraceUsageFromTypes(t *testing.T) {
@@ -1078,7 +1078,7 @@ func TestTraceCollector_ThreeLLMCalls_ProducesThreeEvents(t *testing.T) {
 	tc.AddTextDelta(AddTextDeltaOptions{agentID: "main", text: "Let me run a command."})
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t1", toolName: "bash", input: json.RawMessage(`{"command":"ls"}`)})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "n1", usage: &TraceUsage{InputTokens: 1000, OutputTokens: 100}, costUSD: 0.01, stopReason: "tool_use"})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "file.txt", isError: false, duration: 200*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "file.txt", isError: false, duration: 200 * time.Millisecond})
 
 	// Turn boundary: simulate what handleAgentEvent does when it sees
 	// TextDelta after usage was recorded.
@@ -1088,7 +1088,7 @@ func TestTraceCollector_ThreeLLMCalls_ProducesThreeEvents(t *testing.T) {
 	tc.AddTextDelta(AddTextDeltaOptions{agentID: "main", text: "Now reading the file."})
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t2", toolName: "read", input: json.RawMessage(`{"path":"file.txt"}`)})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "n2", usage: &TraceUsage{InputTokens: 2000, OutputTokens: 150}, costUSD: 0.02, stopReason: "tool_use"})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "contents", isError: false, duration: 100*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "contents", isError: false, duration: 100 * time.Millisecond})
 
 	// Turn boundary.
 	tc.FinalizeTurn("main")
@@ -1344,8 +1344,8 @@ func TestTraceCollector_ParallelGroup_SameTurnSharesGroup(t *testing.T) {
 	tc.StartLLMResponse("main")
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t1", toolName: "bash", input: json.RawMessage(`{"command":"ls"}`)})
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t2", toolName: "read", input: json.RawMessage(`{"path":"f.go"}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 10*time.Millisecond})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "ok", isError: false, duration: 10*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 10 * time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "ok", isError: false, duration: 10 * time.Millisecond})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "", usage: &TraceUsage{InputTokens: 100, OutputTokens: 50}, costUSD: 0, stopReason: ""})
 	tc.FinalizeTurn("main")
 
@@ -1374,14 +1374,14 @@ func TestTraceCollector_ParallelGroup_DifferentTurnsDiffer(t *testing.T) {
 	// Turn 1: one tool call.
 	tc.StartLLMResponse("main")
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t1", toolName: "bash", input: json.RawMessage(`{}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 10*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 10 * time.Millisecond})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "", usage: &TraceUsage{InputTokens: 100, OutputTokens: 50}, costUSD: 0, stopReason: ""})
 	tc.FinalizeTurn("main")
 
 	// Turn 2: another tool call.
 	tc.StartLLMResponse("main")
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t2", toolName: "read", input: json.RawMessage(`{}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "ok", isError: false, duration: 10*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "ok", isError: false, duration: 10 * time.Millisecond})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "", usage: &TraceUsage{InputTokens: 100, OutputTokens: 50}, costUSD: 0, stopReason: ""})
 	tc.FinalizeTurn("main")
 
@@ -1410,7 +1410,7 @@ func TestTraceCollector_ParallelGroup_JSONSerialization(t *testing.T) {
 
 	tc.StartLLMResponse("main")
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t1", toolName: "bash", input: json.RawMessage(`{}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 10*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "ok", isError: false, duration: 10 * time.Millisecond})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "", usage: nil, costUSD: 0, stopReason: ""})
 	tc.FinalizeTurn("main")
 
@@ -1517,7 +1517,7 @@ func TestTraceCollector_TurnAttribution_NoPhantomEvent(t *testing.T) {
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "n1", usage: &TraceUsage{InputTokens: 1000, OutputTokens: 100}, costUSD: 0.01, stopReason: "tool_use"})
 	// Tool call starts AFTER usage (this is the order that caused the bug).
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t1", toolName: "write_file", input: json.RawMessage(`{"path":"hello.py","content":"print('hi')"}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "File written.", isError: false, duration: 50*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t1", result: "File written.", isError: false, duration: 50 * time.Millisecond})
 
 	// ── Turn boundary ──
 	// In handleAgentEvent, this happens when the next call's TextDelta or Usage
@@ -1528,7 +1528,7 @@ func TestTraceCollector_TurnAttribution_NoPhantomEvent(t *testing.T) {
 	tc.AddTextDelta(AddTextDeltaOptions{agentID: "main", text: "Now running it."})
 	tc.SetUsage(SetUsageOptions{agentID: "main", model: "model", nodeID: "n2", usage: &TraceUsage{InputTokens: 2000, OutputTokens: 150}, costUSD: 0.02, stopReason: "tool_use"})
 	tc.StartToolCall(StartToolCallOptions{agentID: "main", toolID: "t2", toolName: "bash", input: json.RawMessage(`{"command":"python hello.py"}`)})
-	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "hi", isError: false, duration: 100*time.Millisecond})
+	tc.EndToolCall(EndToolCallOptions{toolID: "t2", result: "hi", isError: false, duration: 100 * time.Millisecond})
 
 	tc.FinalizeTurn("main")
 	tc.Finalize()

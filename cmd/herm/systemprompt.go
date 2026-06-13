@@ -27,7 +27,7 @@ type PromptData struct {
 	HasOutline     bool
 	HasEditFile    bool
 	HasWriteFile   bool
-	IsSubAgent     bool   // true for sub-agent prompts: skips communication, personality, skills
+	IsSubAgent     bool // true for sub-agent prompts: skips communication, personality, skills
 	ContainerImage string
 	WorkDir        string
 	WorktreeBranch string // current branch in the git worktree, if known
@@ -83,17 +83,17 @@ func buildSystemPrompt(opts buildSystemPromptOptions) string {
 	}
 
 	data := PromptData{
-		HasBash:        toolNames["bash"],
-		HostTools:      hostTools,
-		HasDevenv:      toolNames["devenv"],
-		HasAgent:       toolNames["agent"],
-		HasWebSearch:   toolNames[types.ServerToolWebSearch],
-		HasGlob:        toolNames["glob"],
-		HasGrep:        toolNames["grep"],
-		HasReadFile:    toolNames["read_file"],
-		HasOutline:     toolNames["outline"],
-		HasEditFile:    toolNames["edit_file"],
-		HasWriteFile:   toolNames["write_file"],
+		HasBash:                 toolNames["bash"],
+		HostTools:               hostTools,
+		HasDevenv:               toolNames["devenv"],
+		HasAgent:                toolNames["agent"],
+		HasWebSearch:            toolNames[types.ServerToolWebSearch],
+		HasGlob:                 toolNames["glob"],
+		HasGrep:                 toolNames["grep"],
+		HasReadFile:             toolNames["read_file"],
+		HasOutline:              toolNames["outline"],
+		HasEditFile:             toolNames["edit_file"],
+		HasWriteFile:            toolNames["write_file"],
 		ContainerImage:          opts.containerImage,
 		WorkDir:                 opts.workDir,
 		WorktreeBranch:          opts.worktreeBranch,
@@ -165,17 +165,17 @@ func buildSubAgentSystemPrompt(opts buildSubAgentSystemPromptOptions) string {
 	}
 
 	data := PromptData{
-		HasBash:        toolNames["bash"],
-		HostTools:      hostTools,
-		HasDevenv:      toolNames["devenv"],
-		HasAgent:       toolNames["agent"],
-		HasWebSearch:   toolNames[types.ServerToolWebSearch],
-		HasGlob:        toolNames["glob"],
-		HasGrep:        toolNames["grep"],
-		HasReadFile:    toolNames["read_file"],
-		HasOutline:     toolNames["outline"],
-		HasEditFile:    toolNames["edit_file"],
-		HasWriteFile:   toolNames["write_file"],
+		HasBash:                 toolNames["bash"],
+		HostTools:               hostTools,
+		HasDevenv:               toolNames["devenv"],
+		HasAgent:                toolNames["agent"],
+		HasWebSearch:            toolNames[types.ServerToolWebSearch],
+		HasGlob:                 toolNames["glob"],
+		HasGrep:                 toolNames["grep"],
+		HasReadFile:             toolNames["read_file"],
+		HasOutline:              toolNames["outline"],
+		HasEditFile:             toolNames["edit_file"],
+		HasWriteFile:            toolNames["write_file"],
 		IsSubAgent:              true,
 		ContainerImage:          opts.containerImage,
 		ContainerEnv:            readContainerEnv(opts.workDir),

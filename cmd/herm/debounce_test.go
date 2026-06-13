@@ -48,7 +48,7 @@ func TestDebouncerResetsTimer(t *testing.T) {
 
 	d.Trigger()
 	time.Sleep(30 * time.Millisecond) // not yet fired
-	d.Trigger()                        // reset
+	d.Trigger()                       // reset
 	time.Sleep(30 * time.Millisecond) // still not fired (only 30ms since reset)
 
 	if got := count.Load(); got != 0 {

@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/term"
 	"github.com/rivo/uniseg"
+	"golang.org/x/term"
 )
 
 // ansiEscRe matches ANSI escape sequences (CSI and OSC).

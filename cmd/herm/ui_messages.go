@@ -48,8 +48,8 @@ const (
 
 // Gating and error messages.
 const (
-	configMissingAPIKeyMessage = "No API keys configured. Use /config to add a key first."
-	configMissingModelMessage  = "No model configured. Use /model to select one first."
+	configMissingAPIKeyMessage   = "No API keys configured. Use /config to add a key first."
+	configMissingModelMessage    = "No model configured. Use /model to select one first."
 	configSelectModelHintMessage = "Select Active Model (/model)."
 )
 

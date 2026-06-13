@@ -13,9 +13,9 @@ import (
 
 // ToolDesc holds a parsed tool description from a markdown file.
 type ToolDesc struct {
-	Name        string // from frontmatter "name:" field
-	Brief       string // from frontmatter "description:" field (1-line)
-	Full        string // brief + "\n\n" + body (the complete description for the tool)
+	Name  string // from frontmatter "name:" field
+	Brief string // from frontmatter "description:" field (1-line)
+	Full  string // brief + "\n\n" + body (the complete description for the tool)
 }
 
 // toolDescriptions is the package-level cache of loaded tool descriptions.
