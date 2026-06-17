@@ -59,7 +59,7 @@ func runCPSLWorker(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	}
 	defer lib.sessionFree(session)
 
-	if err := serveCPSLWorker(serveCPSLWorkerOptions{
+	if err := serveCPSLWorkerPlatform(serveCPSLWorkerOptions{
 		evaluator:   lib,
 		session:     session,
 		stdin:       stdin,
