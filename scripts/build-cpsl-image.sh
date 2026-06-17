@@ -33,7 +33,7 @@ Options:
 
 Environment:
   CPSL_REPO      CPSL git URL. Defaults to the public CPSL repository.
-  CPSL_REF       CPSL git ref to fetch. Defaults to the pre-merge integration branch.
+  CPSL_REF       CPSL git ref to fetch. Defaults to the pinned merged CPSL commit.
   CPSL_ROOT      Existing CPSL checkout to use instead of fetching.
   CPSL_WORK_DIR  Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
   CPSL_TARGET_DIR Cargo target directory. Defaults to CPSL_WORK_DIR/cargo-target.
@@ -68,7 +68,8 @@ work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
 cpsl_repo=${CPSL_REPO:-"https://github.com/fundamental-research-labs/cpsl.git"}
-cpsl_ref=${CPSL_REF:-"aduermael/lib-build"}
+default_cpsl_ref=84bf58fad9983c3772fab8c6055ec5fed73e8989
+cpsl_ref=${CPSL_REF:-"$default_cpsl_ref"}
 managed_cpsl_root="$work_dir/cpsl"
 target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}
 

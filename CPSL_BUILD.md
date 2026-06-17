@@ -51,9 +51,10 @@ By default the script fetches CPSL from:
 https://github.com/fundamental-research-labs/cpsl.git
 ```
 
-Until the CPSL PR for this integration lands, it uses the pre-merge
-`aduermael/lib-build` branch. Override the source after the PR is merged, or
-when testing a local CPSL checkout:
+By default it fetches pinned CPSL commit
+`84bf58fad9983c3772fab8c6055ec5fed73e8989`, the merge commit for the dynamic
+sandbox library integration. Override the source when testing another CPSL ref
+or a local CPSL checkout:
 
 ```sh
 CPSL_REF=main scripts/build-cpsl-image.sh
@@ -124,7 +125,7 @@ scripts/build-cpsl-image.sh --all
 OUT_DIR=/tmp/herm-cpsl scripts/build-cpsl-image.sh
 RUN_PROBE=1 scripts/build-cpsl-image.sh
 CPSL_REPO=https://github.com/fundamental-research-labs/cpsl.git scripts/build-cpsl-image.sh
-CPSL_REF=aduermael/lib-build scripts/build-cpsl-image.sh
+CPSL_REF=84bf58fad9983c3772fab8c6055ec5fed73e8989 scripts/build-cpsl-image.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 CPSL_TARGET_DIR=/tmp/cpsl-target scripts/build-cpsl-image.sh
 ```
