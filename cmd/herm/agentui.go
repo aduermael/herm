@@ -61,6 +61,36 @@ func formatToolDefinitions(opts formatToolDefinitionsOptions) string {
 	return b.String()
 }
 
+type serverToolsForRuntimeOptions struct {
+	backend  backendKind
+	cpsl     cpslConfig
+	provider string
+	modelID  string
+	models   []ModelDef
+}
+
+func serverToolsForRuntime(opts serverToolsForRuntimeOptions) []types.ToolDefinition {
+	if !supportsServerTools(supportsServerToolsOptions{provider: opts.provider, modelID: opts.modelID, models: opts.models}) {
+		return nil
+	}
+	if opts.backend == backendCPSL && !cpslAllowsProviderServerTools(opts.cpsl) {
+		return nil
+	}
+	return []types.ToolDefinition{WebSearchToolDef()}
+}
+
+func cpslAllowsProviderServerTools(config cpslConfig) bool {
+	if len(config.DenyDomains) > 0 {
+		return false
+	}
+	for _, domain := range config.AllowDomains {
+		if domain == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 // showModelChange displays an info message when the active model changes.
 func (a *App) showModelChange(modelID string) {
 	if modelID == "" {
@@ -251,12 +281,13 @@ func (a *App) startAgent(userMessage string) {
 		modelProvider = configuredProviderForModel(configuredProviderForModelOptions{cfg: a.config, model: *modelDef})
 	}
 
-	// Server-side tools (e.g. web search) are handled by the LLM provider.
-	// Some models don't support them, so we check before including them.
-	var serverTools []types.ToolDefinition
-	if supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: modelID, models: availableModels}) {
-		serverTools = []types.ToolDefinition{WebSearchToolDef()}
-	}
+	serverTools := serverToolsForRuntime(serverToolsForRuntimeOptions{
+		backend:  a.backend,
+		cpsl:     a.cpsl,
+		provider: modelProvider,
+		modelID:  modelID,
+		models:   availableModels,
+	})
 
 	// Load project-local skills from .herm/skills/
 	var skills []Skill
@@ -295,10 +326,17 @@ func (a *App) startAgent(userMessage string) {
 		maxDepth = defaultMaxAgentDepth
 	}
 	explorationModelID := a.config.resolveExplorationModel(a.models)
-	subAgentServerTools := serverTools
-	if !supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: explorationModelID, models: availableModels}) {
-		subAgentServerTools = nil
+	explorationModelProvider := modelProvider
+	if modelDef := findModelByID(findModelByIDOptions{models: availableModels, id: explorationModelID}); modelDef != nil {
+		explorationModelProvider = configuredProviderForModel(configuredProviderForModelOptions{cfg: a.config, model: *modelDef})
 	}
+	subAgentServerTools := serverToolsForRuntime(serverToolsForRuntimeOptions{
+		backend:  a.backend,
+		cpsl:     a.cpsl,
+		provider: explorationModelProvider,
+		modelID:  explorationModelID,
+		models:   availableModels,
+	})
 	subAgentTool := NewSubAgentTool(SubAgentConfig{
 		Client:           a.langdagClient,
 		Tools:            tools,

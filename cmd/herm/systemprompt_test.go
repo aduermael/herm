@@ -416,12 +416,12 @@ func TestBuildSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`", "general-purpose assistant"} {
+	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`http.policy()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`", "general-purpose assistant"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	for _, forbidden := range []string{"CPSL", "Native language", "Current folder mounted", "mounted at", "local sandbox", "`local_sandbox_exec_bash`", "`luau` tool", "`bash` tool", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "Keep one-off", "Network access is controlled", "bypass", "do not fall back"} {
+	for _, forbidden := range []string{"CPSL", "Native language", "Current folder mounted", "mounted at", "local sandbox", "`local_sandbox_exec_bash`", "`luau` tool", "`bash` tool", "`web_search`", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "Keep one-off", "Network access is controlled", "bypass", "do not fall back"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("CPSL prompt contains %q:\n%s", forbidden, prompt)
 		}
@@ -438,15 +438,39 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 		snap:        nil,
 	})
 
-	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`"} {
+	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`http.policy()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
 		}
 	}
-	for _, forbidden := range []string{"CPSL", "Native language", "Current folder mounted", "mounted at", "local sandbox", "`local_sandbox_exec_bash`", "`luau` tool", "`bash` tool", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "glob to discover", "read_file", "Keep one-off", "Network access is controlled", "bypass", "do not fall back"} {
+	for _, forbidden := range []string{"CPSL", "Native language", "Current folder mounted", "mounted at", "local sandbox", "`local_sandbox_exec_bash`", "`luau` tool", "`bash` tool", "`web_search`", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "glob to discover", "read_file", "Keep one-off", "Network access is controlled", "bypass", "do not fall back"} {
 		if strings.Contains(prompt, forbidden) {
 			t.Fatalf("CPSL sub-agent prompt contains %q:\n%s", forbidden, prompt)
 		}
+	}
+}
+
+func TestBuildSystemPromptCPSLModeMentionsWebSearchOnlyWhenAvailable(t *testing.T) {
+	tools := []Tool{stubTool{toolLocalSandboxExec}}
+
+	withoutSearch := buildSystemPrompt(buildSystemPromptOptions{
+		tools:       tools,
+		serverTools: nil,
+		workDir:     t.TempDir(),
+		backend:     backendCPSL,
+	})
+	if strings.Contains(withoutSearch, "`web_search`") {
+		t.Fatalf("CPSL prompt without web_search server tool should not mention web_search:\n%s", withoutSearch)
+	}
+
+	withSearch := buildSystemPrompt(buildSystemPromptOptions{
+		tools:       tools,
+		serverTools: []types.ToolDefinition{WebSearchToolDef()},
+		workDir:     t.TempDir(),
+		backend:     backendCPSL,
+	})
+	if !strings.Contains(withSearch, "`web_search`") {
+		t.Fatalf("CPSL prompt with web_search server tool should mention web_search:\n%s", withSearch)
 	}
 }
 
