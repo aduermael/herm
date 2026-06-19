@@ -10,8 +10,14 @@ import (
 // ─── Markdown rendering ───
 //
 // Converts markdown syntax to ANSI terminal escape sequences.
-// Uses only standard terminal attributes (bold, dim, italic, underline,
-// reverse, strikethrough) and OSC 8 hyperlinks — no hardcoded colors.
+// Uses standard terminal attributes, OSC 8 hyperlinks, and a shared code style.
+
+const (
+	codeBackgroundStyle = "\033[48;5;236m"
+	codeForegroundStyle = "\033[38;5;229m"
+	codeStyle           = codeBackgroundStyle + codeForegroundStyle
+	inlineCodeReset     = "\033[39;49m"
+)
 
 // processMarkdownLineOptions is the parameter bundle for processMarkdownLine.
 type processMarkdownLineOptions struct {
@@ -32,8 +38,7 @@ func processMarkdownLine(opts processMarkdownLineOptions) (result string, newSta
 	}
 
 	if inCodeBlock {
-		// Inside a fenced code block: reverse video (same as inline code).
-		return "\033[48;5;236m\033[38;5;248m" + line + "\033[0m", true, false
+		return styleCodeBlockLine(line), true, false
 	}
 
 	// Heading lines: # H1 (bold+underline), ## H2 (bold), ### H3 (bold)
@@ -56,6 +61,21 @@ func processMarkdownLine(opts processMarkdownLineOptions) (result string, newSta
 // renderInlineMarkdown converts inline markdown to ANSI sequences.
 // Handles: `code`, **bold**, *italic*, ~~strikethrough~~, [text](url).
 func renderInlineMarkdown(s string) string {
+	return renderInlineMarkdownWithOptions(renderInlineMarkdownOptions{s: s})
+}
+
+type renderInlineMarkdownOptions struct {
+	s         string
+	codeReset string
+}
+
+func renderInlineMarkdownWithOptions(opts renderInlineMarkdownOptions) string {
+	s := opts.s
+	codeReset := opts.codeReset
+	if codeReset == "" {
+		codeReset = inlineCodeReset
+	}
+
 	var buf strings.Builder
 	b := []byte(s)
 	n := len(b)
@@ -95,9 +115,7 @@ func renderInlineMarkdown(s string) string {
 			end := indexByte(indexByteOptions{b: b, target: '`', start: i + 1})
 			if end > i+1 {
 				code := string(b[i+1 : end])
-				buf.WriteString("\033[7m")
-				buf.WriteString(code)
-				buf.WriteString("\033[27m")
+				buf.WriteString(styleInlineCode(styleInlineCodeOptions{text: code, reset: codeReset}))
 				i = end + 1
 				continue
 			}
@@ -107,7 +125,7 @@ func renderInlineMarkdown(s string) string {
 		if i+1 < n && b[i] == '*' && b[i+1] == '*' {
 			end := indexDouble(indexDoubleOptions{b: b, target: '*', start: i + 2})
 			if end > i+2 {
-				content := renderInlineMarkdown(string(b[i+2 : end]))
+				content := renderInlineMarkdownWithOptions(renderInlineMarkdownOptions{s: string(b[i+2 : end]), codeReset: codeReset})
 				buf.WriteString("\033[1m")
 				buf.WriteString(content)
 				buf.WriteString("\033[22m")
@@ -120,7 +138,7 @@ func renderInlineMarkdown(s string) string {
 		if b[i] == '*' && (i == 0 || b[i-1] != '*') && i+1 < n && b[i+1] != '*' && b[i+1] != ' ' {
 			end := indexSingleStar(indexSingleStarOptions{b: b, start: i + 1})
 			if end > i+1 {
-				content := renderInlineMarkdown(string(b[i+1 : end]))
+				content := renderInlineMarkdownWithOptions(renderInlineMarkdownOptions{s: string(b[i+1 : end]), codeReset: codeReset})
 				buf.WriteString("\033[3m")
 				buf.WriteString(content)
 				buf.WriteString("\033[23m")
@@ -133,7 +151,7 @@ func renderInlineMarkdown(s string) string {
 		if i+1 < n && b[i] == '~' && b[i+1] == '~' {
 			end := indexDouble(indexDoubleOptions{b: b, target: '~', start: i + 2})
 			if end > i+2 {
-				content := renderInlineMarkdown(string(b[i+2 : end]))
+				content := renderInlineMarkdownWithOptions(renderInlineMarkdownOptions{s: string(b[i+2 : end]), codeReset: codeReset})
 				buf.WriteString("\033[9m")
 				buf.WriteString(content)
 				buf.WriteString("\033[29m")
@@ -171,6 +189,24 @@ func renderInlineMarkdown(s string) string {
 	}
 
 	return buf.String()
+}
+
+type styleInlineCodeOptions struct {
+	text  string
+	reset string
+}
+
+func styleInlineCode(opts styleInlineCodeOptions) string {
+	reset := opts.reset
+	if reset == "" {
+		reset = inlineCodeReset
+	}
+	return codeStyle + opts.text + reset
+}
+
+func styleCodeBlockLine(line string) string {
+	line = strings.ReplaceAll(line, "\t", "        ")
+	return codeStyle + line + ansiReset
 }
 
 // ─── helpers ───

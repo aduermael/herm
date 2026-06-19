@@ -919,6 +919,40 @@ func TestRebuildChatMessages_UserOnly(t *testing.T) {
 	}
 }
 
+func TestRebuildChatMessages_StripsSystemReminderFromUserMessage(t *testing.T) {
+	a := &App{}
+	content := "<system-reminder>\n" + currentTaskReminder + "\n</system-reminder>\n\nCan you show a sample?"
+
+	msgs := a.rebuildChatMessages([]*types.Node{
+		{ID: "1", NodeType: types.NodeTypeUser, Content: content},
+	})
+
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+	if msgs[0].content != "Can you show a sample?" {
+		t.Fatalf("content = %q, want user text only", msgs[0].content)
+	}
+	if strings.Contains(msgs[0].content, "system-reminder") {
+		t.Fatalf("system reminder leaked into display content: %q", msgs[0].content)
+	}
+}
+
+func TestRebuildChatMessages_SkipsSystemReminderOnlyUserMessage(t *testing.T) {
+	a := &App{}
+	blocks, _ := json.Marshal([]types.ContentBlock{
+		{Type: "text", Text: "<system-reminder>\n" + currentTaskReminder + "\n</system-reminder>"},
+	})
+
+	msgs := a.rebuildChatMessages([]*types.Node{
+		{ID: "1", NodeType: types.NodeTypeUser, Content: string(blocks)},
+	})
+
+	if len(msgs) != 0 {
+		t.Fatalf("got %d messages, want 0: %#v", len(msgs), msgs)
+	}
+}
+
 func TestRebuildChatMessages_MultipleToolResults(t *testing.T) {
 	a := &App{}
 

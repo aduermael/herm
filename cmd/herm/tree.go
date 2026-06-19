@@ -435,13 +435,78 @@ func (a *App) rebuildChatMessages(nodes []*types.Node) []chatMessage {
 			msgs = append(msgs, chatMessage{kind: msgToolResult, content: collapseToolResult(n.Content), isError: isErr, duration: dur})
 
 		case n.NodeType == types.NodeTypeUser:
-			msgs = append(msgs, chatMessage{kind: msgUser, content: n.Content, leadBlank: true})
+			if content := userDisplayContent(n.Content); content != "" {
+				msgs = append(msgs, chatMessage{kind: msgUser, content: content, leadBlank: true})
+			}
 		}
 	}
 	if groupInserted {
 		a.subAgentGroupInserted = true
 	}
 	return msgs
+}
+
+func userDisplayContent(content string) string {
+	if content == "" {
+		return ""
+	}
+	if stripped, changed := stripSystemReminderSections(content); changed {
+		return stripped
+	}
+
+	trimmed := strings.TrimSpace(content)
+	if !strings.HasPrefix(trimmed, "[") {
+		return content
+	}
+
+	var blocks []types.ContentBlock
+	if err := json.Unmarshal([]byte(trimmed), &blocks); err != nil {
+		return content
+	}
+
+	var text []string
+	changed := false
+	for _, block := range blocks {
+		if block.Type != "text" {
+			continue
+		}
+		blockText, blockChanged := stripSystemReminderSections(block.Text)
+		changed = changed || blockChanged
+		if blockText != "" {
+			text = append(text, blockText)
+		}
+	}
+	if !changed {
+		return content
+	}
+	return strings.Join(text, "\n\n")
+}
+
+func stripSystemReminderSections(content string) (string, bool) {
+	const (
+		openTag  = "<system-reminder>"
+		closeTag = "</system-reminder>"
+	)
+
+	out := content
+	changed := false
+	for {
+		start := strings.Index(out, openTag)
+		if start < 0 {
+			break
+		}
+		end := strings.Index(out[start+len(openTag):], closeTag)
+		if end < 0 {
+			break
+		}
+		end += start + len(openTag) + len(closeTag)
+		out = out[:start] + "\n" + out[end:]
+		changed = true
+	}
+	if changed {
+		out = strings.TrimSpace(out)
+	}
+	return out, changed
 }
 
 // formatRelativeTime returns a human-readable relative time string.
@@ -600,7 +665,11 @@ type toolResultInfo struct {
 func (a *App) formatTreeNode(n *types.Node) (lines []string, toolLike bool) {
 	switch n.NodeType {
 	case types.NodeTypeUser:
-		return []string{"\033[1mYou:\033[0m " + truncate(truncateOptions{s: firstLine(n.Content), max: 80})}, false
+		content := userDisplayContent(n.Content)
+		if content == "" {
+			return nil, false
+		}
+		return []string{"\033[1mYou:\033[0m " + truncate(truncateOptions{s: firstLine(content), max: 80})}, false
 	default:
 		return nil, false
 	}

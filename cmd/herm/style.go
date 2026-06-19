@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+const (
+	userMessageBgStyle   = "\033[48;5;235m"
+	userMessageTextStyle = userMessageBgStyle + "\033[1m"
+	inputBgStyle         = userMessageBgStyle
+)
+
 // ─── Progress bar (from simple-chat) ───
 
 type progressBarOptions struct {
@@ -154,10 +160,11 @@ func styledConfigCursor(cursor string) string {
 
 func styledUserMsg(content string) string {
 	// Style each line individually so \n splits in buildBlockRows preserve it.
-	lines := strings.Split(renderInlineMarkdown(content), "\n")
-	lines[0] = "\033[1m▸ " + lines[0] + "\033[0m"
+	codeReset := "\033[39m" + userMessageTextStyle
+	lines := strings.Split(renderInlineMarkdownWithOptions(renderInlineMarkdownOptions{s: content, codeReset: codeReset}), "\n")
+	lines[0] = userMessageTextStyle + lines[0] + ansiReset
 	for i := 1; i < len(lines); i++ {
-		lines[i] = "\033[1m" + lines[i] + "\033[0m"
+		lines[i] = userMessageTextStyle + lines[i] + ansiReset
 	}
 	return strings.Join(lines, "\n")
 }

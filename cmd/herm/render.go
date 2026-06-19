@@ -105,21 +105,59 @@ type padCodeBlockRowOptions struct {
 	width int
 }
 
-// padCodeBlockRow pads a code block row with spaces so the background fills
-// the full terminal width. It ensures \033[0m comes after the padding.
+const ansiEraseLineRight = "\033[K"
+
+type fillStyledRowOptions struct {
+	row       string
+	fillStyle string
+}
+
+// fillStyledRow fills the rest of the terminal row using the active fill style.
+func fillStyledRow(opts fillStyledRowOptions) string {
+	row := strings.TrimSuffix(opts.row, ansiReset)
+	if opts.fillStyle == "" {
+		return row + ansiReset
+	}
+	return row + opts.fillStyle + ansiEraseLineRight + ansiReset
+}
+
+// padCodeBlockRow keeps code-block background active through end-of-line.
 func padCodeBlockRow(opts padCodeBlockRowOptions) string {
-	row, width := opts.row, opts.width
-	const reset = "\033[0m"
-	stripped := row
-	hasReset := strings.HasSuffix(row, reset)
-	if hasReset {
-		stripped = row[:len(row)-len(reset)]
+	return fillStyledRow(fillStyledRowOptions{row: opts.row, fillStyle: codeBackgroundStyle})
+}
+
+type renderUserMessageRowsOptions struct {
+	content string
+	width   int
+}
+
+func renderUserMessageRows(opts renderUserMessageRowsOptions) []string {
+	codeReset := "\033[39m" + userMessageTextStyle
+	rendered := renderInlineMarkdownWithOptions(renderInlineMarkdownOptions{s: opts.content, codeReset: codeReset})
+	lines := strings.Split(rendered, "\n")
+	rows := []string{userMessageBackgroundRow()}
+	for _, line := range lines {
+		line = userMessageTextStyle + line + ansiReset
+		wrapped := wrapString(wrapStringOptions{s: line, w: opts.width})
+		for j := range wrapped {
+			wrapped[j] = fillStyledRow(fillStyledRowOptions{row: wrapped[j], fillStyle: userMessageBgStyle})
+		}
+		rows = append(rows, wrapped...)
 	}
-	vw := visibleWidth(stripped)
-	if pad := width - vw; pad > 0 {
-		stripped += strings.Repeat(" ", pad)
-	}
-	return stripped + reset
+	rows = append(rows, userMessageBackgroundRow())
+	return rows
+}
+
+func userMessageBackgroundRow() string {
+	return fillStyledRow(fillStyledRowOptions{row: userMessageBgStyle, fillStyle: userMessageBgStyle})
+}
+
+func inputBackgroundRow() string {
+	return fillStyledRow(fillStyledRowOptions{row: inputBgStyle, fillStyle: inputBgStyle})
+}
+
+func inputTextRow(content string) string {
+	return fillStyledRow(fillStyledRowOptions{row: inputBgStyle + content, fillStyle: inputBgStyle})
 }
 
 type wrapStringOptions struct {
@@ -415,11 +453,17 @@ func (a *App) buildBlockRows() []string {
 		}
 
 		{
+			content := strings.ReplaceAll(msg.content, "\r", "")
 			if len(msg.inlineBlocks) > 0 {
 				if msg.leadBlank {
 					rows = append(rows, "")
 				}
 				rows = append(rows, layoutInlineBlocks(layoutInlineBlocksOptions{blocks: msg.inlineBlocks, width: a.width})...)
+			} else if msg.kind == msgUser {
+				if msg.leadBlank {
+					rows = append(rows, "")
+				}
+				rows = append(rows, renderUserMessageRows(renderUserMessageRowsOptions{content: content, width: a.width})...)
 			} else {
 				rendered := renderMessage(msg)
 				for _, logLine := range strings.Split(rendered, "\n") {
@@ -543,6 +587,9 @@ func collapseBlankRows(rows []string) []string {
 
 // isBlankRow reports whether a row is visually empty (empty string or only ANSI escapes).
 func isBlankRow(s string) bool {
+	if strings.Contains(s, ansiEraseLineRight) && strings.Contains(s, "\033[48;") {
+		return false
+	}
 	return strings.TrimSpace(ansiEscRe.ReplaceAllString(s, "")) == ""
 }
 
@@ -589,10 +636,9 @@ func (a *App) buildInputRows() []string {
 		return approvalRows
 	}
 
-	rows := []string{sep}
-
 	// Config editor mode replaces input area
 	if a.cfgActive {
+		rows := []string{sep}
 		rows = append(rows, a.buildConfigRows()...)
 		rows = append(rows, sep)
 		return rows
@@ -600,6 +646,7 @@ func (a *App) buildInputRows() []string {
 
 	// Menu mode replaces input area
 	if a.menuActive && len(a.menuLines) > 0 {
+		rows := []string{sep}
 		w := a.width
 		if a.menuHeader != "" {
 			rows = append(rows, fmt.Sprintf("\033[1m%s\033[0m", truncateWithEllipsis(truncateWithEllipsisOptions{s: a.menuHeader, maxLen: w})))
@@ -632,8 +679,9 @@ func (a *App) buildInputRows() []string {
 		return rows
 	}
 
+	rows := []string{inputBackgroundRow()}
 	if a.promptLabel != "" {
-		rows = append(rows, fmt.Sprintf("\033[33;1m%s\033[0m", a.promptLabel))
+		rows = append(rows, inputTextRow(fmt.Sprintf("\033[33;1m%s\033[0m", a.promptLabel)))
 	}
 
 	vlines := getVisualLines(getVisualLinesOptions{input: a.input, cursor: a.cursor, width: a.width})
@@ -642,10 +690,10 @@ func (a *App) buildInputRows() []string {
 		if i == 0 {
 			line = promptPrefix + line
 		}
-		rows = append(rows, line)
+		rows = append(rows, inputTextRow(line))
 	}
 
-	rows = append(rows, sep)
+	rows = append(rows, inputBackgroundRow())
 
 	// Ctrl+C / ESC hint (below separator, above status)
 	if a.ctrlCHint {

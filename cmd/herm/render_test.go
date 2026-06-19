@@ -530,17 +530,20 @@ func TestBuildInputRows(t *testing.T) {
 
 	rows := app.buildInputRows()
 	if len(rows) < 3 {
-		t.Fatalf("buildInputRows() returned %d rows, want at least 3 (sep + input + sep + progress)", len(rows))
+		t.Fatalf("buildInputRows() returned %d rows, want at least 3 (panel + input + panel + progress)", len(rows))
 	}
 
-	// First row should be a separator
-	if !strings.HasPrefix(rows[0], "─") {
-		t.Errorf("first row should be separator, got %q", rows[0])
+	// First row should be the input panel background.
+	if !strings.Contains(rows[0], inputBgStyle) || !strings.Contains(rows[0], ansiEraseLineRight) {
+		t.Errorf("first row should fill input background, got %q", rows[0])
 	}
 
-	// Second row should contain the prompt and input
+	// Second row should contain the prompt and input on the same background.
 	if !strings.Contains(rows[1], promptPrefix+"hello") {
 		t.Errorf("second row should contain prompt + input, got %q", rows[1])
+	}
+	if !strings.Contains(rows[1], inputBgStyle) || !strings.Contains(rows[1], ansiEraseLineRight) {
+		t.Errorf("second row should fill input background, got %q", rows[1])
 	}
 }
 
@@ -855,22 +858,22 @@ func TestPadCodeBlockRow(t *testing.T) {
 		want  string
 	}{
 		{
-			"pads short line",
-			"\033[48;5;236m\033[38;5;248mhi\033[0m",
+			"fills short line",
+			codeStyle + "hi" + ansiReset,
 			10,
-			"\033[48;5;236m\033[38;5;248mhi        \033[0m",
+			codeStyle + "hi" + codeBackgroundStyle + ansiEraseLineRight + ansiReset,
 		},
 		{
-			"exact width no padding",
-			"\033[48;5;236m\033[38;5;248m1234567890\033[0m",
+			"exact width still terminates fill",
+			codeStyle + "1234567890" + ansiReset,
 			10,
-			"\033[48;5;236m\033[38;5;248m1234567890\033[0m",
+			codeStyle + "1234567890" + codeBackgroundStyle + ansiEraseLineRight + ansiReset,
 		},
 		{
 			"no trailing reset adds one",
-			"\033[48;5;236m\033[38;5;248mab",
+			codeStyle + "ab",
 			5,
-			"\033[48;5;236m\033[38;5;248mab   \033[0m",
+			codeStyle + "ab" + codeBackgroundStyle + ansiEraseLineRight + ansiReset,
 		},
 	}
 	for _, tt := range tests {
@@ -880,6 +883,99 @@ func TestPadCodeBlockRow(t *testing.T) {
 				t.Errorf("padCodeBlockRow(%q, %d)\n  got  %q\n  want %q", tt.row, tt.width, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildBlockRowsUserBackgroundFill(t *testing.T) {
+	app := &App{
+		width: 24,
+		messages: []chatMessage{{
+			kind:    msgUser,
+			content: "Hello!",
+		}},
+	}
+
+	rows := app.buildBlockRows()
+	for i, row := range rows {
+		plain := ansiEscRe.ReplaceAllString(row, "")
+		if !strings.Contains(plain, "Hello!") {
+			continue
+		}
+		if i == 0 || i+1 >= len(rows) {
+			t.Fatalf("user row should have background spacer rows around it: %#v", rows)
+		}
+		if strings.Contains(plain, "▸") {
+			t.Fatalf("historical user row should not include prompt marker: %q", row)
+		}
+		if !strings.Contains(row, userMessageBgStyle) {
+			t.Fatalf("user row should include background style: %q", row)
+		}
+		if !strings.Contains(row, ansiEraseLineRight) {
+			t.Fatalf("user row should fill through end-of-line: %q", row)
+		}
+		if !strings.HasSuffix(row, ansiReset) {
+			t.Fatalf("user row should end with reset: %q", row)
+		}
+		for _, spacer := range []string{rows[i-1], rows[i+1]} {
+			if ansiEscRe.ReplaceAllString(spacer, "") != "" {
+				t.Fatalf("user spacer row should be visually empty: %q", spacer)
+			}
+			if !strings.Contains(spacer, userMessageBgStyle) || !strings.Contains(spacer, ansiEraseLineRight) {
+				t.Fatalf("user spacer row should fill background: %q", spacer)
+			}
+		}
+		return
+	}
+	t.Fatalf("user row not found in rows: %#v", rows)
+}
+
+func TestBuildBlockRowsCodeBackgroundFillAndReset(t *testing.T) {
+	strip := func(s string) string {
+		return ansiEscRe.ReplaceAllString(s, "")
+	}
+
+	app := &App{
+		width: 40,
+		messages: []chatMessage{{
+			kind:    msgAssistant,
+			content: "Here:\n```go\n\n\tfmt.Println(\"hi\")\n```\nDone.",
+		}},
+	}
+
+	rows := app.buildBlockRows()
+	var hasBlankCodeRow, hasIndentedCodeRow, hasDoneRow bool
+	for _, row := range rows {
+		plain := strip(row)
+		if plain == "" && strings.Contains(row, codeStyle) {
+			hasBlankCodeRow = true
+			if !strings.Contains(row, ansiEraseLineRight) {
+				t.Fatalf("blank code row should fill through end-of-line: %q", row)
+			}
+		}
+		if strings.Contains(plain, "fmt.Println") {
+			hasIndentedCodeRow = true
+			if !strings.Contains(plain, "        fmt.Println") {
+				t.Fatalf("tab-indented code row should render spaces under the background: %q", row)
+			}
+			if !strings.Contains(row, codeStyle) || !strings.Contains(row, ansiEraseLineRight) {
+				t.Fatalf("indented code row should keep code background fill: %q", row)
+			}
+		}
+		if plain == "Done." {
+			hasDoneRow = true
+			if strings.Contains(row, "\033[48;") || strings.Contains(row, ansiEraseLineRight) {
+				t.Fatalf("post-code text should not inherit code background: %q", row)
+			}
+		}
+	}
+	if !hasBlankCodeRow {
+		t.Fatal("blank code row not found")
+	}
+	if !hasIndentedCodeRow {
+		t.Fatal("indented code row not found")
+	}
+	if !hasDoneRow {
+		t.Fatal("post-code row not found")
 	}
 }
 
@@ -2512,9 +2608,12 @@ func TestFullRenderPipelineEndToEnd(t *testing.T) {
 	allText := strings.Join(rows, "\n")
 	stripped := strip(allText)
 
-	// User message present with ▸ prefix.
-	if !strings.Contains(stripped, "▸ Fix the bug in main.go") {
-		t.Error("expected user message with ▸ prefix")
+	// Historical user message is present without the live prompt marker.
+	if !strings.Contains(stripped, "Fix the bug in main.go") {
+		t.Error("expected user message")
+	}
+	if strings.Contains(stripped, "▸ Fix the bug in main.go") {
+		t.Error("historical user message should not include prompt marker")
 	}
 
 	// First tool group: single ┌ for grouped reads.

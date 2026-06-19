@@ -2,6 +2,14 @@ package main
 
 import "testing"
 
+func wantInlineCode(text string) string {
+	return codeStyle + text + inlineCodeReset
+}
+
+func wantCodeLine(text string) string {
+	return codeStyle + text + ansiReset
+}
+
 func TestRenderInlineMarkdown(t *testing.T) {
 	tests := []struct {
 		name string
@@ -9,7 +17,7 @@ func TestRenderInlineMarkdown(t *testing.T) {
 		want string
 	}{
 		{"plain text", "hello world", "hello world"},
-		{"inline code", "run `echo hi`", "run \033[7mecho hi\033[27m"},
+		{"inline code", "run `echo hi`", "run " + wantInlineCode("echo hi")},
 		{"bold", "this is **bold** text", "this is \033[1mbold\033[22m text"},
 		{"italic", "this is *italic* text", "this is \033[3mitalic\033[23m text"},
 		{"strikethrough", "this is ~~gone~~ text", "this is \033[9mgone\033[29m text"},
@@ -19,10 +27,10 @@ func TestRenderInlineMarkdown(t *testing.T) {
 		{"no match single backtick", "it's fine", "it's fine"},
 		{"no match single star", "a * b", "a * b"},
 		{"preserves ansi", "\033[2mhello\033[0m", "\033[2mhello\033[0m"},
-		{"code protects content", "`**not bold**`", "\033[7m**not bold**\033[27m"},
+		{"code protects content", "`**not bold**`", wantInlineCode("**not bold**")},
 		{"bullet list no italic", "* list item", "* list item"},
 		{"list with italic", "- check *this* out", "- check \033[3mthis\033[23m out"},
-		{"multiple inline code", "`a` and `b`", "\033[7ma\033[27m and \033[7mb\033[27m"},
+		{"multiple inline code", "`a` and `b`", wantInlineCode("a") + " and " + wantInlineCode("b")},
 		{"empty bold", "****", "****"},
 	}
 
@@ -47,13 +55,14 @@ func TestProcessMarkdownLine(t *testing.T) {
 	}{
 		{"plain text", "hello", false, "hello", false, false},
 		{"opening fence", "```go", false, "", true, true},
-		{"code block line", "fmt.Println()", true, "\033[48;5;236m\033[38;5;248mfmt.Println()\033[0m", true, false},
+		{"code block line", "fmt.Println()", true, wantCodeLine("fmt.Println()"), true, false},
+		{"tab in code block", "\tfmt.Println()", true, wantCodeLine("        fmt.Println()"), true, false},
 		{"closing fence", "```", true, "", false, true},
 		{"h1", "# Title", false, "\033[1;4mTitle\033[0m", false, false},
 		{"h2", "## Subtitle", false, "\033[1mSubtitle\033[0m", false, false},
 		{"h3", "### Section", false, "\033[1mSection\033[0m", false, false},
-		{"inline md outside code", "use `foo` here", false, "use \033[7mfoo\033[27m here", false, false},
-		{"no inline md in code block", "use `foo` here", true, "\033[48;5;236m\033[38;5;248muse `foo` here\033[0m", true, false},
+		{"inline md outside code", "use `foo` here", false, "use " + wantInlineCode("foo") + " here", false, false},
+		{"no inline md in code block", "use `foo` here", true, wantCodeLine("use `foo` here"), true, false},
 	}
 
 	for _, tt := range tests {
@@ -102,10 +111,10 @@ func TestCodeBlockAcrossMessages(t *testing.T) {
 		t.Errorf("line 0: got %q", results[0])
 	}
 	// Code lines should be dim
-	if results[1] != "\033[48;5;236m\033[38;5;248mdef hello():\033[0m" {
+	if results[1] != wantCodeLine("def hello():") {
 		t.Errorf("line 1: got %q", results[1])
 	}
-	if results[2] != "\033[48;5;236m\033[38;5;248m    print('hi')\033[0m" {
+	if results[2] != wantCodeLine("    print('hi')") {
 		t.Errorf("line 2: got %q", results[2])
 	}
 	// After closing fence, normal rendering resumes
@@ -219,7 +228,7 @@ func TestProcessMarkdownLineEdgeCases(t *testing.T) {
 			"empty line in code block",
 			"",
 			true,
-			"\033[48;5;236m\033[38;5;248m\033[0m",
+			wantCodeLine(""),
 			true,
 			false,
 		},
@@ -228,7 +237,7 @@ func TestProcessMarkdownLineEdgeCases(t *testing.T) {
 			"heading inside code block",
 			"# Not a heading",
 			true,
-			"\033[48;5;236m\033[38;5;248m# Not a heading\033[0m",
+			wantCodeLine("# Not a heading"),
 			true,
 			false,
 		},
@@ -312,9 +321,6 @@ func TestMultiCodeBlockSequence(t *testing.T) {
 	}
 
 	// code content lines: indices 2 and 6
-	wantCodeLine := func(raw string) string {
-		return "\033[48;5;236m\033[38;5;248m" + raw + "\033[0m"
-	}
 	if got[2].result != wantCodeLine("x := 1") {
 		t.Errorf("line 2: got %q, want %q", got[2].result, wantCodeLine("x := 1"))
 	}
