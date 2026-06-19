@@ -68,7 +68,7 @@ work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
 cpsl_repo=${CPSL_REPO:-"https://github.com/fundamental-research-labs/cpsl.git"}
-default_cpsl_ref=1b221ea179339de30164c70019130b350b86c7d3
+default_cpsl_ref=47ea301e1b32223cc0bc46001cca59fb7516f047
 cpsl_ref=${CPSL_REF:-"$default_cpsl_ref"}
 managed_cpsl_root="$work_dir/cpsl"
 target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}

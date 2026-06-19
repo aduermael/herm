@@ -52,9 +52,9 @@ https://github.com/fundamental-research-labs/cpsl.git
 ```
 
 By default it fetches pinned CPSL commit
-`84bf58fad9983c3772fab8c6055ec5fed73e8989`, the merge commit for the dynamic
-sandbox library integration. Override the source when testing another CPSL ref
-or a local CPSL checkout:
+`47ea301e1b32223cc0bc46001cca59fb7516f047`, the merge commit for the CPSL HTTP
+policy integration. Override the source when testing another CPSL ref or a local
+CPSL checkout:
 
 ```sh
 CPSL_REF=main scripts/build-cpsl-image.sh
@@ -125,7 +125,7 @@ scripts/build-cpsl-image.sh --all
 OUT_DIR=/tmp/herm-cpsl scripts/build-cpsl-image.sh
 RUN_PROBE=1 scripts/build-cpsl-image.sh
 CPSL_REPO=https://github.com/fundamental-research-labs/cpsl.git scripts/build-cpsl-image.sh
-CPSL_REF=84bf58fad9983c3772fab8c6055ec5fed73e8989 scripts/build-cpsl-image.sh
+CPSL_REF=47ea301e1b32223cc0bc46001cca59fb7516f047 scripts/build-cpsl-image.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 CPSL_TARGET_DIR=/tmp/cpsl-target scripts/build-cpsl-image.sh
 ```
