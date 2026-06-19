@@ -13,11 +13,11 @@ import (
 )
 
 type fakeCPSLEvaluator struct {
-	evalFunc func(session cpslSession, requestJSON string) (string, error)
+	evalFunc func(opts cpslSessionEvalOptions) (string, error)
 }
 
-func (f fakeCPSLEvaluator) eval(session cpslSession, requestJSON string) (string, error) {
-	return f.evalFunc(session, requestJSON)
+func (f fakeCPSLEvaluator) eval(opts cpslSessionEvalOptions) (string, error) {
+	return f.evalFunc(opts)
 }
 
 func TestServeCPSLWorkerEvalPreservesID(t *testing.T) {
@@ -25,13 +25,13 @@ func TestServeCPSLWorkerEvalPreservesID(t *testing.T) {
 	var stdout bytes.Buffer
 
 	err := serveCPSLWorker(serveCPSLWorkerOptions{
-		evaluator: fakeCPSLEvaluator{evalFunc: func(_ cpslSession, requestJSON string) (string, error) {
+		evaluator: fakeCPSLEvaluator{evalFunc: func(opts cpslSessionEvalOptions) (string, error) {
 			var req struct {
 				Language  string `json:"language"`
 				Input     string `json:"input"`
 				TimeoutMS int    `json:"timeout_ms"`
 			}
-			if err := json.Unmarshal([]byte(requestJSON), &req); err != nil {
+			if err := json.Unmarshal([]byte(opts.requestJSON), &req); err != nil {
 				t.Fatalf("eval request JSON: %v", err)
 			}
 			if req.Language != "luau" || req.Input != "print('ok')" || req.TimeoutMS != 1000 {
@@ -67,7 +67,7 @@ func TestServeCPSLWorkerMalformedAndUnsupportedRequests(t *testing.T) {
 	var stdout bytes.Buffer
 
 	err := serveCPSLWorker(serveCPSLWorkerOptions{
-		evaluator: fakeCPSLEvaluator{evalFunc: func(cpslSession, string) (string, error) {
+		evaluator: fakeCPSLEvaluator{evalFunc: func(cpslSessionEvalOptions) (string, error) {
 			t.Fatal("eval should not be called")
 			return "", nil
 		}},
@@ -99,7 +99,7 @@ func TestServeCPSLWorkerTimeoutRespondsAndTerminates(t *testing.T) {
 	var stdout bytes.Buffer
 
 	err := serveCPSLWorker(serveCPSLWorkerOptions{
-		evaluator: fakeCPSLEvaluator{evalFunc: func(cpslSession, string) (string, error) {
+		evaluator: fakeCPSLEvaluator{evalFunc: func(cpslSessionEvalOptions) (string, error) {
 			time.Sleep(100 * time.Millisecond)
 			return `{"ok":true,"stdout":"","stderr":"","exit_code":0,"error":null,"warnings":[],"cwd":"/workdir"}`, nil
 		}},
@@ -119,14 +119,17 @@ func TestServeCPSLWorkerTimeoutRespondsAndTerminates(t *testing.T) {
 
 func TestParseCPSLWorkerOptionsRepeatedDomains(t *testing.T) {
 	var stderr bytes.Buffer
-	opts, err := parseCPSLWorkerOptions([]string{
-		"--library", "/tmp/libcpsl.so",
-		"--workspace", "/tmp/work",
-		"--allow-domain", "example.com",
-		"--allow-domain", "api.example.com",
-		"--deny-domain", "blocked.example.com",
-		"--deny-domain", "blocked-api.example.com",
-	}, &stderr)
+	opts, err := parseCPSLWorkerOptions(parseCPSLWorkerArgsOptions{
+		args: []string{
+			"--library", "/tmp/libcpsl.so",
+			"--workspace", "/tmp/work",
+			"--allow-domain", "example.com",
+			"--allow-domain", "api.example.com",
+			"--deny-domain", "blocked.example.com",
+			"--deny-domain", "blocked-api.example.com",
+		},
+		stderr: &stderr,
+	})
 	if err != nil {
 		t.Fatalf("parseCPSLWorkerOptions: %v", err)
 	}
@@ -148,11 +151,11 @@ func TestSetCPSLLibraryDirEnv(t *testing.T) {
 }
 
 func TestCPSLSessionConfigJSON(t *testing.T) {
-	configJSON, err := cpslSessionConfigJSON(
-		"/tmp/work",
-		[]string{"example.com", "api.example.com"},
-		[]string{"deny.example.com", "deny-api.example.com"},
-	)
+	configJSON, err := cpslSessionConfigJSON(cpslSessionConfigJSONOptions{
+		workspace:    "/tmp/work",
+		allowDomains: []string{"example.com", "api.example.com"},
+		denyDomains:  []string{"deny.example.com", "deny-api.example.com"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +183,7 @@ func TestCPSLSessionConfigJSON(t *testing.T) {
 }
 
 func TestCPSLSessionConfigJSONUsesEmptyDomainArrays(t *testing.T) {
-	configJSON, err := cpslSessionConfigJSON("/tmp/work", nil, nil)
+	configJSON, err := cpslSessionConfigJSON(cpslSessionConfigJSONOptions{workspace: "/tmp/work"})
 	if err != nil {
 		t.Fatal(err)
 	}

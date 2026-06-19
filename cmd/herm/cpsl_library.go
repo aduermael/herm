@@ -1,8 +1,11 @@
+// cpsl_library.go validates CPSL native metadata and builds session
+// configuration JSON for Herm's mounted sandbox workspace.
 package main
 
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"unsafe"
 )
 
@@ -65,25 +68,16 @@ func validateCPSLBackendMetadataJSON(metadataJSON string) error {
 	if metadata.ABIVersion != cpslABIVersion {
 		return fmt.Errorf("invalid CPSL metadata ABI version %d", metadata.ABIVersion)
 	}
-	if !containsString(metadata.Languages, cpslLanguageLuau) {
+	if !slices.Contains(metadata.Languages, cpslLanguageLuau) {
 		return fmt.Errorf("CPSL metadata does not advertise native Luau support")
 	}
-	if !containsString(metadata.Languages, cpslLanguageBash) {
+	if !slices.Contains(metadata.Languages, cpslLanguageBash) {
 		return fmt.Errorf("CPSL metadata does not advertise bash compatibility support")
 	}
 	if !metadata.Capabilities.Mounts || !metadata.Capabilities.NetworkPolicy {
 		return fmt.Errorf("CPSL metadata does not advertise required capabilities")
 	}
 	return nil
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func stringFromC(value unsafe.Pointer) string {
@@ -119,10 +113,16 @@ type cpslHTTPConfig struct {
 	DenyDomains  []string `json:"deny_domains"`
 }
 
-func cpslSessionConfigJSON(workspace string, allowDomains, denyDomains []string) (string, error) {
+type cpslSessionConfigJSONOptions struct {
+	workspace    string
+	allowDomains []string
+	denyDomains  []string
+}
+
+func cpslSessionConfigJSON(opts cpslSessionConfigJSONOptions) (string, error) {
 	config := cpslSessionConfig{
 		Mounts: []cpslMountConfig{{
-			Host:        workspace,
+			Host:        opts.workspace,
 			VirtualPath: cpslWorkerInitialCW,
 			Mode:        "rw",
 		}},
@@ -130,8 +130,8 @@ func cpslSessionConfigJSON(workspace string, allowDomains, denyDomains []string)
 		Language:   cpslLanguageLuau,
 		HTTP: cpslHTTPConfig{
 			Mode:         "policy",
-			AllowDomains: cloneCPSLStringList(allowDomains),
-			DenyDomains:  cloneCPSLStringList(denyDomains),
+			AllowDomains: cloneCPSLStringList(opts.allowDomains),
+			DenyDomains:  cloneCPSLStringList(opts.denyDomains),
 		},
 	}
 	data, err := json.Marshal(config)

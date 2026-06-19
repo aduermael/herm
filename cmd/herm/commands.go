@@ -27,16 +27,21 @@ var cpslUnavailableCommands = map[string]bool{
 }
 
 func filterCommands(prefix string) []string {
-	return filterCommandsForBackend(prefix, backendContainer)
+	return filterCommandsForBackend(filterCommandsOptions{prefix: prefix, backend: backendContainer})
 }
 
-func filterCommandsForBackend(prefix string, backend backendKind) []string {
+type filterCommandsOptions struct {
+	prefix  string
+	backend backendKind
+}
+
+func filterCommandsForBackend(opts filterCommandsOptions) []string {
 	var matches []string
 	for _, cmd := range commands {
-		if backend == backendCPSL && cpslUnavailableCommands[cmd] {
+		if opts.backend == backendCPSL && cpslUnavailableCommands[cmd] {
 			continue
 		}
-		if strings.HasPrefix(cmd, prefix) {
+		if strings.HasPrefix(cmd, opts.prefix) {
 			matches = append(matches, cmd)
 		}
 	}
@@ -45,7 +50,7 @@ func filterCommandsForBackend(prefix string, backend backendKind) []string {
 		matches = matches[:0]
 		all := append([]string{"/session"}, sessionSubcommands...)
 		for _, cmd := range all {
-			if strings.HasPrefix(cmd, prefix) {
+			if strings.HasPrefix(cmd, opts.prefix) {
 				matches = append(matches, cmd)
 			}
 		}
@@ -678,13 +683,13 @@ func runCPSLShell(opts runCPSLShellOptions) error {
 			return nil
 		}
 
-		response, err := opts.evaluator.EvalCPSL(context.Background(), language, command, timeout)
+		response, err := opts.evaluator.EvalCPSL(context.Background(), cpslEvalOptions{language: language, input: command, timeoutSeconds: timeout})
 		if err != nil {
-			fmt.Fprintln(output, formatCPSLEvalError(response, err))
+			fmt.Fprintln(output, formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response, err: err}))
 			return nil
 		}
 		if !response.OK {
-			fmt.Fprintln(output, formatCPSLEvalError(response, nil))
+			fmt.Fprintln(output, formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response}))
 			return nil
 		}
 		if response.Stdout != "" {

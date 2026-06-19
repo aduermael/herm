@@ -218,7 +218,7 @@ func (a *App) autocompleteMatches() []string {
 	if !strings.HasPrefix(val, "/") {
 		return nil
 	}
-	return filterCommandsForBackend(val, a.backend)
+	return filterCommandsForBackend(filterCommandsOptions{prefix: val, backend: a.backend})
 }
 
 // ─── Stdin reader goroutine ───

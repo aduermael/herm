@@ -29,6 +29,7 @@ type loadToolDescriptionsOptions struct {
 	exploreMaxTurns int
 	generalMaxTurns int
 	backend         backendKind
+	dir             string
 }
 
 // loadToolDescriptions reads markdown files from the selected backend profile
@@ -46,15 +47,17 @@ func loadToolDescriptions(opts loadToolDescriptionsOptions) map[string]ToolDesc 
 	profile := promptProfileForBackend(opts.backend)
 	descs := make(map[string]ToolDesc)
 	for _, dir := range profile.toolDescriptionDirs {
-		for name, td := range loadToolDescriptionsFromDir(dir, opts) {
+		dirOpts := opts
+		dirOpts.dir = dir
+		for name, td := range loadToolDescriptionsFromDir(dirOpts) {
 			descs[name] = td
 		}
 	}
 	return descs
 }
 
-func loadToolDescriptionsFromDir(dir string, opts loadToolDescriptionsOptions) map[string]ToolDesc {
-	entries, err := prompts.ToolDescFS.ReadDir(dir)
+func loadToolDescriptionsFromDir(opts loadToolDescriptionsOptions) map[string]ToolDesc {
+	entries, err := prompts.ToolDescFS.ReadDir(opts.dir)
 	if err != nil {
 		return nil
 	}
@@ -65,7 +68,7 @@ func loadToolDescriptionsFromDir(dir string, opts loadToolDescriptionsOptions) m
 			continue
 		}
 
-		data, err := prompts.ToolDescFS.ReadFile(dir + "/" + e.Name())
+		data, err := prompts.ToolDescFS.ReadFile(opts.dir + "/" + e.Name())
 		if err != nil {
 			continue
 		}

@@ -1,3 +1,5 @@
+// cpsl_client.go manages the subprocess client used to evaluate CPSL requests
+// without blocking Herm's main process or terminal event loop.
 package main
 
 import (
@@ -139,26 +141,37 @@ func cpslWorkerProcessArgs(opts cpslWorkerProcessOptions) []string {
 	return args
 }
 
-func (c *CPSLWorkerClient) EvalBash(ctx context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error) {
-	return c.EvalCPSL(ctx, cpslLanguageBash, input, timeoutSeconds)
+type cpslLanguageEvalOptions struct {
+	input          string
+	timeoutSeconds int
 }
 
-func (c *CPSLWorkerClient) EvalLuau(ctx context.Context, input string, timeoutSeconds int) (cpslEvalResponse, error) {
-	return c.EvalCPSL(ctx, cpslLanguageLuau, input, timeoutSeconds)
+type cpslEvalOptions struct {
+	language       string
+	input          string
+	timeoutSeconds int
 }
 
-func (c *CPSLWorkerClient) EvalCPSL(ctx context.Context, language, input string, timeoutSeconds int) (cpslEvalResponse, error) {
-	if timeoutSeconds <= 0 {
-		timeoutSeconds = 120
+func (c *CPSLWorkerClient) EvalBash(ctx context.Context, opts cpslLanguageEvalOptions) (cpslEvalResponse, error) {
+	return c.EvalCPSL(ctx, cpslEvalOptions{language: cpslLanguageBash, input: opts.input, timeoutSeconds: opts.timeoutSeconds})
+}
+
+func (c *CPSLWorkerClient) EvalLuau(ctx context.Context, opts cpslLanguageEvalOptions) (cpslEvalResponse, error) {
+	return c.EvalCPSL(ctx, cpslEvalOptions{language: cpslLanguageLuau, input: opts.input, timeoutSeconds: opts.timeoutSeconds})
+}
+
+func (c *CPSLWorkerClient) EvalCPSL(ctx context.Context, opts cpslEvalOptions) (cpslEvalResponse, error) {
+	if opts.timeoutSeconds <= 0 {
+		opts.timeoutSeconds = 120
 	}
-	if timeoutSeconds > 600 {
-		timeoutSeconds = 600
+	if opts.timeoutSeconds > 600 {
+		opts.timeoutSeconds = 600
 	}
 	return c.eval(ctx, cpslWorkerRequest{
 		Op:        cpslWorkerOpEval,
-		Language:  language,
-		Input:     input,
-		TimeoutMS: timeoutSeconds * 1000,
+		Language:  opts.language,
+		Input:     opts.input,
+		TimeoutMS: opts.timeoutSeconds * 1000,
 	})
 }
 
@@ -174,7 +187,8 @@ func (c *CPSLWorkerClient) eval(ctx context.Context, request cpslWorkerRequest) 
 	defer c.mu.Unlock()
 
 	if c.dead {
-		return cpslErrorResponse(request.ID, "runtime_error", "CPSL worker is not running"), newCPSLWorkerError("runtime_error", "CPSL worker is not running")
+		response := cpslErrorResponse(cpslErrorResponseOptions{id: request.ID, code: "runtime_error", message: "CPSL worker is not running"})
+		return response, newCPSLWorkerError(cpslWorkerErrorOptions{code: "runtime_error", message: "CPSL worker is not running"})
 	}
 
 	c.nextID++
@@ -189,7 +203,7 @@ func (c *CPSLWorkerClient) eval(ctx context.Context, request cpslWorkerRequest) 
 
 	if _, err := fmt.Fprintln(c.stdin, string(data)); err != nil {
 		c.markDeadLocked()
-		return cpslErrorResponse(request.ID, "runtime_error", err.Error()), err
+		return cpslErrorResponse(cpslErrorResponseOptions{id: request.ID, code: "runtime_error", message: err.Error()}), err
 	}
 
 	type readResult struct {
@@ -205,21 +219,21 @@ func (c *CPSLWorkerClient) eval(ctx context.Context, request cpslWorkerRequest) 
 	select {
 	case <-callCtx.Done():
 		c.markDeadLocked()
-		response := cpslTimeoutResponse(request.ID, request.TimeoutMS)
-		return response, newCPSLWorkerError(response.Error.Code, response.Error.Message)
+		response := cpslTimeoutResponse(cpslTimeoutResponseOptions{id: request.ID, timeoutMS: request.TimeoutMS})
+		return response, newCPSLWorkerError(cpslWorkerErrorOptions{code: response.Error.Code, message: response.Error.Message})
 	case result := <-readCh:
 		if result.err != nil {
 			c.markDeadLocked()
-			return cpslErrorResponse(request.ID, "runtime_error", result.err.Error()), result.err
+			return cpslErrorResponse(cpslErrorResponseOptions{id: request.ID, code: "runtime_error", message: result.err.Error()}), result.err
 		}
-		response, err := decodeCPSLEvalResponse(result.line, request.ID)
+		response, err := decodeCPSLEvalResponse(decodeCPSLEvalResponseOptions{data: result.line, requestID: request.ID})
 		if err != nil {
 			c.markDeadLocked()
-			return cpslErrorResponse(request.ID, "runtime_error", err.Error()), err
+			return cpslErrorResponse(cpslErrorResponseOptions{id: request.ID, code: "runtime_error", message: err.Error()}), err
 		}
 		if response.Error != nil && response.Error.Code == "timeout" {
 			c.markDeadLocked()
-			return response, newCPSLWorkerError(response.Error.Code, response.Error.Message)
+			return response, newCPSLWorkerError(cpslWorkerErrorOptions{code: response.Error.Code, message: response.Error.Message})
 		}
 		return response, nil
 	}

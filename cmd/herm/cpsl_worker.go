@@ -1,3 +1,5 @@
+// cpsl_worker.go implements the hidden Herm subprocess that owns the CPSL
+// native session and speaks a newline-delimited JSON protocol.
 package main
 
 import (
@@ -14,7 +16,12 @@ import (
 )
 
 type cpslSessionEvaluator interface {
-	eval(session cpslSession, requestJSON string) (string, error)
+	eval(opts cpslSessionEvalOptions) (string, error)
+}
+
+type cpslSessionEvalOptions struct {
+	session     cpslSession
+	requestJSON string
 }
 
 type cpslWorkerOptions struct {
@@ -26,35 +33,46 @@ type cpslWorkerOptions struct {
 
 const cpslLibraryDirEnv = "CPSL_LIBRARY_DIR"
 
-func runCPSLWorker(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	opts, err := parseCPSLWorkerOptions(args, stderr)
+type runCPSLWorkerOptions struct {
+	args   []string
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
+}
+
+func runCPSLWorker(opts runCPSLWorkerOptions) int {
+	workerOpts, err := parseCPSLWorkerOptions(parseCPSLWorkerArgsOptions{args: opts.args, stderr: opts.stderr})
 	if err != nil {
 		return 2
 	}
 
-	workspace, err := canonicalWorkspace(opts.workspace)
+	workspace, err := canonicalWorkspace(workerOpts.workspace)
 	if err != nil {
-		fmt.Fprintf(stderr, "cpsl worker: workspace: %v\n", err)
+		fmt.Fprintf(opts.stderr, "cpsl worker: workspace: %v\n", err)
 		return 2
 	}
 
-	setCPSLLibraryDirEnv(opts.libraryPath)
-	lib, err := loadCPSLNativeLibrary(opts.libraryPath)
+	setCPSLLibraryDirEnv(workerOpts.libraryPath)
+	lib, err := loadCPSLNativeLibrary(workerOpts.libraryPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "cpsl worker: library: %v\n", err)
+		fmt.Fprintf(opts.stderr, "cpsl worker: library: %v\n", err)
 		return 2
 	}
 	defer func() { _ = lib.close() }()
 
-	configJSON, err := cpslSessionConfigJSON(workspace, opts.allowDomains, opts.denyDomains)
+	configJSON, err := cpslSessionConfigJSON(cpslSessionConfigJSONOptions{
+		workspace:    workspace,
+		allowDomains: workerOpts.allowDomains,
+		denyDomains:  workerOpts.denyDomains,
+	})
 	if err != nil {
-		fmt.Fprintf(stderr, "cpsl worker: session config: %v\n", err)
+		fmt.Fprintf(opts.stderr, "cpsl worker: session config: %v\n", err)
 		return 2
 	}
 
 	session, err := lib.sessionNew(configJSON)
 	if err != nil {
-		fmt.Fprintf(stderr, "cpsl worker: session: %v\n", err)
+		fmt.Fprintf(opts.stderr, "cpsl worker: session: %v\n", err)
 		return 2
 	}
 	defer lib.sessionFree(session)
@@ -62,42 +80,47 @@ func runCPSLWorker(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if err := serveCPSLWorkerPlatform(serveCPSLWorkerOptions{
 		evaluator:   lib,
 		session:     session,
-		stdin:       stdin,
-		stdout:      stdout,
-		stderr:      stderr,
+		stdin:       opts.stdin,
+		stdout:      opts.stdout,
+		stderr:      opts.stderr,
 		exitProcess: os.Exit,
 	}); err != nil {
 		if errors.Is(err, errCPSLWorkerTerminated) {
 			return 0
 		}
-		fmt.Fprintf(stderr, "cpsl worker: protocol: %v\n", err)
+		fmt.Fprintf(opts.stderr, "cpsl worker: protocol: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-func parseCPSLWorkerOptions(args []string, stderr io.Writer) (cpslWorkerOptions, error) {
+type parseCPSLWorkerArgsOptions struct {
+	args   []string
+	stderr io.Writer
+}
+
+func parseCPSLWorkerOptions(opts parseCPSLWorkerArgsOptions) (cpslWorkerOptions, error) {
 	fs := flag.NewFlagSet("cpsl-worker", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	var opts cpslWorkerOptions
+	fs.SetOutput(opts.stderr)
+	var workerOpts cpslWorkerOptions
 	var allowDomains stringListFlag
 	var denyDomains stringListFlag
-	fs.StringVar(&opts.libraryPath, "library", "", "path to CPSL dynamic library")
-	fs.StringVar(&opts.workspace, "workspace", "", "host workspace mounted at /workdir")
+	fs.StringVar(&workerOpts.libraryPath, "library", "", "path to CPSL dynamic library")
+	fs.StringVar(&workerOpts.workspace, "workspace", "", "host workspace mounted at /workdir")
 	fs.Var(&allowDomains, "allow-domain", "allowed domain")
 	fs.Var(&denyDomains, "deny-domain", "denied domain")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(opts.args); err != nil {
 		return cpslWorkerOptions{}, err
 	}
-	opts.allowDomains = append([]string(nil), allowDomains...)
-	opts.denyDomains = append([]string(nil), denyDomains...)
-	if opts.libraryPath == "" {
+	workerOpts.allowDomains = append([]string(nil), allowDomains...)
+	workerOpts.denyDomains = append([]string(nil), denyDomains...)
+	if workerOpts.libraryPath == "" {
 		return cpslWorkerOptions{}, fmt.Errorf("missing CPSL library path")
 	}
-	if opts.workspace == "" {
+	if workerOpts.workspace == "" {
 		return cpslWorkerOptions{}, fmt.Errorf("missing CPSL workspace")
 	}
-	return opts, nil
+	return workerOpts, nil
 }
 
 func setCPSLLibraryDirEnv(libraryPath string) {
@@ -135,13 +158,18 @@ func serveCPSLWorker(opts serveCPSLWorkerOptions) error {
 
 		var request cpslWorkerRequest
 		if err := json.Unmarshal(line, &request); err != nil {
-			if encodeErr := encoder.Encode(cpslErrorResponse(0, "invalid_request", "Malformed worker request")); encodeErr != nil {
+			response := cpslErrorResponse(cpslErrorResponseOptions{id: 0, code: "invalid_request", message: "Malformed worker request"})
+			if encodeErr := encoder.Encode(response); encodeErr != nil {
 				return encodeErr
 			}
 			continue
 		}
 
-		action := handleCPSLWorkerRequest(opts.evaluator, opts.session, request)
+		action := handleCPSLWorkerRequest(handleCPSLWorkerRequestOptions{
+			evaluator: opts.evaluator,
+			session:   opts.session,
+			request:   request,
+		})
 		if err := encoder.Encode(action.response); err != nil {
 			return err
 		}
@@ -159,58 +187,74 @@ type cpslWorkerAction struct {
 	terminate bool
 }
 
-func handleCPSLWorkerRequest(evaluator cpslSessionEvaluator, session cpslSession, request cpslWorkerRequest) cpslWorkerAction {
-	if request.Op != cpslWorkerOpEval {
-		return cpslWorkerAction{response: cpslErrorResponse(request.ID, "invalid_request", "Unsupported CPSL worker operation")}
+type handleCPSLWorkerRequestOptions struct {
+	evaluator cpslSessionEvaluator
+	session   cpslSession
+	request   cpslWorkerRequest
+}
+
+func handleCPSLWorkerRequest(opts handleCPSLWorkerRequestOptions) cpslWorkerAction {
+	if opts.request.Op != cpslWorkerOpEval {
+		return cpslWorkerAction{response: cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "invalid_request", message: "Unsupported CPSL worker operation"})}
 	}
-	if !isSupportedCPSLLanguage(request.Language) {
-		return cpslWorkerAction{response: cpslErrorResponse(request.ID, "unsupported_language", "Supported CPSL worker languages are luau and bash")}
+	if !isSupportedCPSLLanguage(opts.request.Language) {
+		return cpslWorkerAction{response: cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "unsupported_language", message: "Supported CPSL worker languages are luau and bash"})}
 	}
-	if request.TimeoutMS <= 0 {
-		return cpslWorkerAction{response: cpslErrorResponse(request.ID, "invalid_request", "timeout_ms must be positive")}
+	if opts.request.TimeoutMS <= 0 {
+		return cpslWorkerAction{response: cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "invalid_request", message: "timeout_ms must be positive"})}
 	}
 
 	done := make(chan cpslEvalResponse, 1)
 	go func() {
-		done <- evalCPSLWorkerRequest(evaluator, session, request)
+		done <- evalCPSLWorkerRequest(evalCPSLWorkerRequestOptions{
+			evaluator: opts.evaluator,
+			session:   opts.session,
+			request:   opts.request,
+		})
 	}()
 
-	timer := time.NewTimer(time.Duration(request.TimeoutMS) * time.Millisecond)
+	timer := time.NewTimer(time.Duration(opts.request.TimeoutMS) * time.Millisecond)
 	defer timer.Stop()
 
 	select {
 	case response := <-done:
 		return cpslWorkerAction{response: response}
 	case <-timer.C:
-		return cpslWorkerAction{response: cpslTimeoutResponse(request.ID, request.TimeoutMS), terminate: true}
+		return cpslWorkerAction{response: cpslTimeoutResponse(cpslTimeoutResponseOptions{id: opts.request.ID, timeoutMS: opts.request.TimeoutMS}), terminate: true}
 	}
 }
 
-func evalCPSLWorkerRequest(evaluator cpslSessionEvaluator, session cpslSession, request cpslWorkerRequest) cpslEvalResponse {
+type evalCPSLWorkerRequestOptions struct {
+	evaluator cpslSessionEvaluator
+	session   cpslSession
+	request   cpslWorkerRequest
+}
+
+func evalCPSLWorkerRequest(opts evalCPSLWorkerRequestOptions) cpslEvalResponse {
 	evalRequest := struct {
 		Language  string `json:"language"`
 		Input     string `json:"input"`
 		TimeoutMS int    `json:"timeout_ms"`
 	}{
-		Language:  request.Language,
-		Input:     request.Input,
-		TimeoutMS: request.TimeoutMS,
+		Language:  opts.request.Language,
+		Input:     opts.request.Input,
+		TimeoutMS: opts.request.TimeoutMS,
 	}
 	requestJSON, err := json.Marshal(evalRequest)
 	if err != nil {
-		return cpslErrorResponse(request.ID, "invalid_request", err.Error())
+		return cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "invalid_request", message: err.Error()})
 	}
 
-	responseJSON, err := evaluator.eval(session, string(requestJSON))
+	responseJSON, err := opts.evaluator.eval(cpslSessionEvalOptions{session: opts.session, requestJSON: string(requestJSON)})
 	if err != nil {
-		return cpslErrorResponse(request.ID, "runtime_error", err.Error())
+		return cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "runtime_error", message: err.Error()})
 	}
 
 	var response cpslEvalResponse
 	if err := json.Unmarshal([]byte(responseJSON), &response); err != nil {
-		return cpslErrorResponse(request.ID, "runtime_error", fmt.Sprintf("CPSL returned malformed response: %v", err))
+		return cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "runtime_error", message: fmt.Sprintf("CPSL returned malformed response: %v", err)})
 	}
-	response.ID = request.ID
+	response.ID = opts.request.ID
 	if response.Warnings == nil {
 		response.Warnings = []string{}
 	}

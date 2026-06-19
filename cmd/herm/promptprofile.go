@@ -1,3 +1,5 @@
+// promptprofile.go selects system prompt templates and context labels for each
+// execution backend supported by Herm.
 package main
 
 type backendPromptProfile struct {

@@ -1,5 +1,7 @@
 //go:build !(darwin || linux || windows)
 
+// cpsl_loader_unsupported.go provides the native-library stub for platforms
+// where Herm cannot load CPSL dynamic libraries.
 package main
 
 import "fmt"
@@ -24,7 +26,7 @@ func (l *cpslNativeLibrary) sessionNew(configJSON string) (cpslSession, error) {
 
 func (l *cpslNativeLibrary) sessionFree(session cpslSession) {}
 
-func (l *cpslNativeLibrary) eval(session cpslSession, requestJSON string) (string, error) {
+func (l *cpslNativeLibrary) eval(opts cpslSessionEvalOptions) (string, error) {
 	return "", fmt.Errorf("CPSL dynamic libraries are unsupported on this platform")
 }
 

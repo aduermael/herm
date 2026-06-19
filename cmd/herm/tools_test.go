@@ -536,10 +536,10 @@ type fakeCPSLBashEvaluator struct {
 	timeout  int
 }
 
-func (f *fakeCPSLBashEvaluator) EvalCPSL(_ context.Context, language, input string, timeoutSeconds int) (cpslEvalResponse, error) {
-	f.language = language
-	f.command = input
-	f.timeout = timeoutSeconds
+func (f *fakeCPSLBashEvaluator) EvalCPSL(_ context.Context, opts cpslEvalOptions) (cpslEvalResponse, error) {
+	f.language = opts.language
+	f.command = opts.input
+	f.timeout = opts.timeoutSeconds
 	return f.response, f.err
 }
 

@@ -1,5 +1,7 @@
 //go:build darwin
 
+// cpsl_worker_platform_darwin.go routes CPSL worker evaluations through the
+// locked process main thread required by Darwin native libraries.
 package main
 
 import (
@@ -47,11 +49,11 @@ func serveCPSLWorkerPlatform(opts serveCPSLWorkerOptions) error {
 	return evaluator.run(done)
 }
 
-func (e *cpslMainThreadEvaluator) eval(session cpslSession, requestJSON string) (string, error) {
+func (e *cpslMainThreadEvaluator) eval(opts cpslSessionEvalOptions) (string, error) {
 	response := make(chan cpslMainThreadEvalResult, 1)
 	job := cpslMainThreadEvalJob{
-		session:     session,
-		requestJSON: requestJSON,
+		session:     opts.session,
+		requestJSON: opts.requestJSON,
 		response:    response,
 	}
 
@@ -74,7 +76,7 @@ func (e *cpslMainThreadEvaluator) run(done <-chan error) error {
 	for {
 		select {
 		case job := <-e.jobs:
-			responseJSON, err := e.base.eval(job.session, job.requestJSON)
+			responseJSON, err := e.base.eval(cpslSessionEvalOptions{session: job.session, requestJSON: job.requestJSON})
 			job.response <- cpslMainThreadEvalResult{responseJSON: responseJSON, err: err}
 		case err := <-done:
 			return err

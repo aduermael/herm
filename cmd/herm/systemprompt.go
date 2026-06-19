@@ -96,7 +96,7 @@ func buildSystemPrompt(opts buildSystemPromptOptions) string {
 		data.GitStatus = opts.snap.GitStatus
 		data.IsGitRepo = opts.snap.IsGitRepo
 	}
-	return renderPromptTemplate(profile.mainTemplate, data)
+	return renderPromptTemplate(renderPromptTemplateOptions{name: profile.mainTemplate, data: data})
 }
 
 // readContainerEnv reads .herm/environment.md if it exists, falling back to
@@ -148,7 +148,7 @@ func buildSubAgentSystemPrompt(opts buildSubAgentSystemPromptOptions) string {
 		data.GitStatus = opts.snap.GitStatus
 		data.IsGitRepo = opts.snap.IsGitRepo
 	}
-	return renderPromptTemplate(profile.subAgentTemplate, data)
+	return renderPromptTemplate(renderPromptTemplateOptions{name: profile.subAgentTemplate, data: data})
 }
 
 type newPromptDataOptions struct {
@@ -203,9 +203,14 @@ func newPromptData(opts newPromptDataOptions) PromptData {
 	}
 }
 
-func renderPromptTemplate(name string, data PromptData) string {
+type renderPromptTemplateOptions struct {
+	name string
+	data PromptData
+}
+
+func renderPromptTemplate(opts renderPromptTemplateOptions) string {
 	var buf bytes.Buffer
-	if err := prompts.Templates.ExecuteTemplate(&buf, name, data); err != nil {
+	if err := prompts.Templates.ExecuteTemplate(&buf, opts.name, opts.data); err != nil {
 		// Templates are embedded and tested; a failure here is a bug.
 		panic("systemprompt: " + err.Error())
 	}

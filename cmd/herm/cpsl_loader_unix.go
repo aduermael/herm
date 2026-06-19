@@ -1,5 +1,7 @@
 //go:build darwin || linux
 
+// cpsl_loader_unix.go loads CPSL shared libraries on Darwin and Linux through
+// purego and exposes the common native-library interface.
 package main
 
 import (
@@ -35,25 +37,25 @@ func openCPSLNativeLibrary(path string) (*cpslNativeLibrary, error) {
 		}
 	}()
 
-	if err := lib.registerFunc(&lib.abiVersionFn, "cpsl_abi_version"); err != nil {
+	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.abiVersionFn, name: "cpsl_abi_version"}); err != nil {
 		return nil, err
 	}
-	if err := lib.registerFunc(&lib.metadataJSONFn, "cpsl_backend_metadata_json"); err != nil {
+	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.metadataJSONFn, name: "cpsl_backend_metadata_json"}); err != nil {
 		return nil, err
 	}
-	if err := lib.registerFunc(&lib.sessionNewFn, "cpsl_session_new"); err != nil {
+	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.sessionNewFn, name: "cpsl_session_new"}); err != nil {
 		return nil, err
 	}
-	if err := lib.registerFunc(&lib.sessionFreeFn, "cpsl_session_free"); err != nil {
+	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.sessionFreeFn, name: "cpsl_session_free"}); err != nil {
 		return nil, err
 	}
-	if err := lib.registerFunc(&lib.evalFn, "cpsl_eval"); err != nil {
+	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.evalFn, name: "cpsl_eval"}); err != nil {
 		return nil, err
 	}
-	if err := lib.registerFunc(&lib.stringFreeFn, "cpsl_string_free"); err != nil {
+	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.stringFreeFn, name: "cpsl_string_free"}); err != nil {
 		return nil, err
 	}
-	if err := lib.registerFunc(&lib.lastErrorFn, "cpsl_last_error"); err != nil {
+	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.lastErrorFn, name: "cpsl_last_error"}); err != nil {
 		return nil, err
 	}
 
@@ -61,15 +63,20 @@ func openCPSLNativeLibrary(path string) (*cpslNativeLibrary, error) {
 	return lib, nil
 }
 
-func (l *cpslNativeLibrary) registerFunc(target any, name string) error {
-	symbol, err := purego.Dlsym(l.handle, name)
+type cpslRegisterFuncOptions struct {
+	target any
+	name   string
+}
+
+func (l *cpslNativeLibrary) registerFunc(opts cpslRegisterFuncOptions) error {
+	symbol, err := purego.Dlsym(l.handle, opts.name)
 	if err != nil {
-		return fmt.Errorf("resolve CPSL symbol %s: %w", name, err)
+		return fmt.Errorf("resolve CPSL symbol %s: %w", opts.name, err)
 	}
 	if symbol == 0 {
-		return fmt.Errorf("resolve CPSL symbol %s: missing symbol", name)
+		return fmt.Errorf("resolve CPSL symbol %s: missing symbol", opts.name)
 	}
-	purego.RegisterFunc(target, symbol)
+	purego.RegisterFunc(opts.target, symbol)
 	return nil
 }
 
@@ -101,11 +108,11 @@ func (l *cpslNativeLibrary) sessionFree(session cpslSession) {
 	l.sessionFreeFn(unsafe.Pointer(uintptr(session)))
 }
 
-func (l *cpslNativeLibrary) eval(session cpslSession, requestJSON string) (string, error) {
-	if err := validateFFIString(requestJSON); err != nil {
+func (l *cpslNativeLibrary) eval(opts cpslSessionEvalOptions) (string, error) {
+	if err := validateFFIString(opts.requestJSON); err != nil {
 		return "", err
 	}
-	value := l.evalFn(unsafe.Pointer(uintptr(session)), requestJSON)
+	value := l.evalFn(unsafe.Pointer(uintptr(opts.session)), opts.requestJSON)
 	if value == nil {
 		return "", fmt.Errorf("CPSL eval failed: %s", l.lastError())
 	}

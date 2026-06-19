@@ -1,3 +1,5 @@
+// backend.go selects and validates Herm execution backends, including CPSL
+// library configuration and platform-specific library extensions.
 package main
 
 import (

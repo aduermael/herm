@@ -34,35 +34,45 @@ const (
 )
 
 type bashRunner interface {
-	RunBash(ctx context.Context, command string, timeout int) (CommandResult, error)
+	RunBash(ctx context.Context, opts bashRunOptions) (CommandResult, error)
 }
 
 type containerBashRunner struct {
 	container *ContainerClient
 }
 
-func (r containerBashRunner) RunBash(ctx context.Context, command string, timeout int) (CommandResult, error) {
+type bashRunOptions struct {
+	command string
+	timeout int
+}
+
+func (r containerBashRunner) RunBash(ctx context.Context, opts bashRunOptions) (CommandResult, error) {
 	if r.container == nil {
 		return CommandResult{}, fmt.Errorf("container not configured")
 	}
-	return r.container.Exec(containerExecOptions{ctx: ctx, command: command, timeout: timeout})
+	return r.container.Exec(containerExecOptions{ctx: ctx, command: opts.command, timeout: opts.timeout})
 }
 
 type cpslEvaluator interface {
-	EvalCPSL(ctx context.Context, language, input string, timeoutSeconds int) (cpslEvalResponse, error)
+	EvalCPSL(ctx context.Context, opts cpslEvalOptions) (cpslEvalResponse, error)
 }
 
-func formatCPSLEvalError(response cpslEvalResponse, err error) error {
+type cpslEvalErrorFormatOptions struct {
+	response cpslEvalResponse
+	err      error
+}
+
+func formatCPSLEvalError(opts cpslEvalErrorFormatOptions) error {
 	code := "runtime_error"
 	message := ""
-	if response.Error != nil {
-		if response.Error.Code != "" {
-			code = response.Error.Code
+	if opts.response.Error != nil {
+		if opts.response.Error.Code != "" {
+			code = opts.response.Error.Code
 		}
-		message = response.Error.Message
+		message = opts.response.Error.Message
 	}
-	if message == "" && err != nil {
-		message = err.Error()
+	if message == "" && opts.err != nil {
+		message = opts.err.Error()
 	}
 	if message == "" {
 		message = "sandbox command could not be evaluated"
@@ -70,7 +80,7 @@ func formatCPSLEvalError(response cpslEvalResponse, err error) error {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Sandbox %s: %s", code, message)
-	if output := truncateOutput(response.Stdout + response.Stderr); strings.TrimSpace(output) != "" {
+	if output := truncateOutput(opts.response.Stdout + opts.response.Stderr); strings.TrimSpace(output) != "" {
 		b.WriteString("\n")
 		b.WriteString(output)
 	}
@@ -166,7 +176,7 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if t.runner == nil {
 		return "", fmt.Errorf("bash runner not configured")
 	}
-	result, err := t.runner.RunBash(ctx, command, timeout)
+	result, err := t.runner.RunBash(ctx, bashRunOptions{command: command, timeout: timeout})
 	if err != nil {
 		return "", err
 	}
@@ -254,12 +264,12 @@ func (t *CPSLLuauTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		return "", fmt.Errorf("sandbox worker not configured")
 	}
 	script := html.UnescapeString(in.Script)
-	response, err := t.worker.EvalCPSL(ctx, cpslLanguageLuau, script, timeout)
+	response, err := t.worker.EvalCPSL(ctx, cpslEvalOptions{language: cpslLanguageLuau, input: script, timeoutSeconds: timeout})
 	if err != nil {
-		return "", formatCPSLEvalError(response, err)
+		return "", formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response, err: err})
 	}
 	if !response.OK {
-		return "", formatCPSLEvalError(response, nil)
+		return "", formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response})
 	}
 
 	output := truncateOutput(response.Stdout + response.Stderr)

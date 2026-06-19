@@ -1,3 +1,5 @@
+// cpsl_protocol.go defines the JSON request and response protocol shared by
+// the Herm process and the isolated CPSL worker process.
 package main
 
 import (
@@ -46,42 +48,63 @@ func (e *cpslWorkerError) Error() string {
 	return e.Message
 }
 
-func newCPSLWorkerError(code, message string) *cpslWorkerError {
-	return &cpslWorkerError{Code: code, Message: message}
+type cpslWorkerErrorOptions struct {
+	code    string
+	message string
 }
 
-func cpslErrorResponse(id int64, code, message string) cpslEvalResponse {
+func newCPSLWorkerError(opts cpslWorkerErrorOptions) *cpslWorkerError {
+	return &cpslWorkerError{Code: opts.code, Message: opts.message}
+}
+
+type cpslErrorResponseOptions struct {
+	id      int64
+	code    string
+	message string
+}
+
+func cpslErrorResponse(opts cpslErrorResponseOptions) cpslEvalResponse {
 	return cpslEvalResponse{
-		ID:       id,
+		ID:       opts.id,
 		OK:       false,
 		Stdout:   "",
 		Stderr:   "",
 		ExitCode: nil,
-		Error:    &cpslEvalError{Code: code, Message: message},
+		Error:    &cpslEvalError{Code: opts.code, Message: opts.message},
 		Warnings: []string{},
 		CWD:      cpslWorkerInitialCW,
 	}
 }
 
-func cpslTimeoutResponse(id int64, timeoutMS int) cpslEvalResponse {
-	return cpslErrorResponse(
-		id,
-		"timeout",
-		fmt.Sprintf("Command timed out after %d ms", timeoutMS),
-	)
+type cpslTimeoutResponseOptions struct {
+	id        int64
+	timeoutMS int
+}
+
+func cpslTimeoutResponse(opts cpslTimeoutResponseOptions) cpslEvalResponse {
+	return cpslErrorResponse(cpslErrorResponseOptions{
+		id:      opts.id,
+		code:    "timeout",
+		message: fmt.Sprintf("Command timed out after %d ms", opts.timeoutMS),
+	})
 }
 
 func isSupportedCPSLLanguage(language string) bool {
 	return language == cpslLanguageLuau || language == cpslLanguageBash
 }
 
-func decodeCPSLEvalResponse(data []byte, requestID int64) (cpslEvalResponse, error) {
+type decodeCPSLEvalResponseOptions struct {
+	data      []byte
+	requestID int64
+}
+
+func decodeCPSLEvalResponse(opts decodeCPSLEvalResponseOptions) (cpslEvalResponse, error) {
 	var response cpslEvalResponse
-	if err := json.Unmarshal(data, &response); err != nil {
+	if err := json.Unmarshal(opts.data, &response); err != nil {
 		return cpslEvalResponse{}, fmt.Errorf("decode CPSL response: %w", err)
 	}
-	if response.ID != requestID {
-		return cpslEvalResponse{}, fmt.Errorf("CPSL response id %d did not match request id %d", response.ID, requestID)
+	if response.ID != opts.requestID {
+		return cpslEvalResponse{}, fmt.Errorf("CPSL response id %d did not match request id %d", response.ID, opts.requestID)
 	}
 	if response.Warnings == nil {
 		response.Warnings = []string{}

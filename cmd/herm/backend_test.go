@@ -203,7 +203,7 @@ func TestVersionDisplayMessageCPSLUsesSandboxLabel(t *testing.T) {
 }
 
 func TestCPSLCommandAutocompleteExcludesUnavailableCommands(t *testing.T) {
-	matches := filterCommandsForBackend("/", backendCPSL)
+	matches := filterCommandsForBackend(filterCommandsOptions{prefix: "/", backend: backendCPSL})
 	seen := make(map[string]bool, len(matches))
 	for _, match := range matches {
 		seen[match] = true

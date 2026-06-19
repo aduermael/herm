@@ -1,5 +1,7 @@
 //go:build windows
 
+// cpsl_loader_windows.go loads CPSL dynamic libraries on Windows through
+// syscall and exposes the common native-library interface.
 package main
 
 import (
@@ -89,12 +91,12 @@ func (l *cpslNativeLibrary) sessionFree(session cpslSession) {
 	l.sessionFreeProc.Call(uintptr(session))
 }
 
-func (l *cpslNativeLibrary) eval(session cpslSession, requestJSON string) (string, error) {
-	request, err := bytePtrFromString(requestJSON)
+func (l *cpslNativeLibrary) eval(opts cpslSessionEvalOptions) (string, error) {
+	request, err := bytePtrFromString(opts.requestJSON)
 	if err != nil {
 		return "", err
 	}
-	value, _, _ := l.evalProc.Call(uintptr(session), uintptr(unsafe.Pointer(request)))
+	value, _, _ := l.evalProc.Call(uintptr(opts.session), uintptr(unsafe.Pointer(request)))
 	if value == 0 {
 		return "", fmt.Errorf("CPSL eval failed: %s", l.lastError())
 	}

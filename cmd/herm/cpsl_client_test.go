@@ -173,14 +173,14 @@ func TestCPSLWorkerClientEvalSuccess(t *testing.T) {
 	}
 	defer client.Close()
 
-	response, err := client.EvalBash(context.Background(), "echo ok", 1)
+	response, err := client.EvalBash(context.Background(), cpslLanguageEvalOptions{input: "echo ok", timeoutSeconds: 1})
 	if err != nil {
 		t.Fatalf("EvalBash: %v", err)
 	}
 	if !response.OK || response.Stdout != "echo ok\n" {
 		t.Fatalf("response = %#v", response)
 	}
-	response, err = client.EvalLuau(context.Background(), "print('native')", 1)
+	response, err = client.EvalLuau(context.Background(), cpslLanguageEvalOptions{input: "print('native')", timeoutSeconds: 1})
 	if err != nil {
 		t.Fatalf("EvalLuau: %v", err)
 	}
