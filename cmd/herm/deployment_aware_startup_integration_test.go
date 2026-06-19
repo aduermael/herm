@@ -17,7 +17,7 @@ import (
 
 func hermDeploymentCatalog(canonicalID, directNativeID, openRouterNativeID string) *langdag.ModelCatalog {
 	catalog := langdag.ReferenceCatalogV1()
-	generatedAt := time.Date(2026, 5, 20, 0, 0, 0, 0, time.UTC)
+	generatedAt := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Second)
 	catalog.GeneratedAt = generatedAt
 	catalog.StaleAfter = generatedAt.Add(30 * 24 * time.Hour)
 	addHermDeploymentCatalogModel(catalog, generatedAt, canonicalID, directNativeID, openRouterNativeID)
