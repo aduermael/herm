@@ -157,7 +157,7 @@ func inputBackgroundRow() string {
 }
 
 func inputTextRow(content string) string {
-	return fillStyledRow(fillStyledRowOptions{row: inputBgStyle + content, fillStyle: inputBgStyle})
+	return fillStyledRow(fillStyledRowOptions{row: inputTextStyle + content, fillStyle: inputBgStyle})
 }
 
 type wrapStringOptions struct {

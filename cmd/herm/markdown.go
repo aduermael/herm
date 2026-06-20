@@ -14,7 +14,7 @@ import (
 
 const (
 	codeBackgroundStyle = "\033[48;5;236m"
-	codeForegroundStyle = "\033[38;5;229m"
+	codeForegroundStyle = "\033[38;5;248m"
 	codeStyle           = codeBackgroundStyle + codeForegroundStyle
 	inlineCodeReset     = "\033[39;49m"
 )

@@ -12,8 +12,11 @@ import (
 
 const (
 	userMessageBgStyle   = "\033[48;5;235m"
-	userMessageTextStyle = userMessageBgStyle + "\033[1m"
-	inputBgStyle         = userMessageBgStyle
+	userMessageFgStyle   = "\033[38;5;252m"
+	userMessageTextStyle = userMessageBgStyle + userMessageFgStyle + "\033[1m"
+	inputBgStyle         = "\033[48;5;234m"
+	inputFgStyle         = "\033[38;5;252m"
+	inputTextStyle       = inputBgStyle + inputFgStyle
 )
 
 // ─── Progress bar (from simple-chat) ───
