@@ -117,6 +117,46 @@ extension:
 - Linux: `libcpsl.so`
 - macOS: `libcpsl.dylib`
 
+## iOS XCFramework
+
+To build CPSL for an Apple app target, run the iOS helper from macOS with Xcode
+installed:
+
+```sh
+scripts/build-cpsl-ios-xcframework.sh
+```
+
+This follows the same source dependency model as the host-native helper: Herm
+fetches the pinned CPSL commit into `.herm-cpsl/` unless `CPSL_ROOT` points at an
+existing checkout.
+
+The script builds CPSL's FFI crate for iOS device and simulator targets and
+packages the dynamic library plus `cpsl.h` into:
+
+```text
+.herm-cpsl/artifacts/ios/
+  CPSL.xcframework
+  include/cpsl.h
+```
+
+Install the Rust iOS targets before building:
+
+```sh
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+```
+
+Override the source or output path the same way as the host-native helper:
+
+```sh
+CPSL_REF=main scripts/build-cpsl-ios-xcframework.sh
+CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-ios-xcframework.sh
+OUT_DIR=/tmp/cpsl-ios scripts/build-cpsl-ios-xcframework.sh
+```
+
+The iOS helper currently builds the minimum Herm CPSL profile. The `--all`
+profile is intentionally not enabled until the iOS PDFium/runtime artifact path
+is defined.
+
 ## Options
 
 ```sh
@@ -128,6 +168,7 @@ CPSL_REPO=https://github.com/fundamental-research-labs/cpsl.git scripts/build-cp
 CPSL_REF=47ea301e1b32223cc0bc46001cca59fb7516f047 scripts/build-cpsl-image.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 CPSL_TARGET_DIR=/tmp/cpsl-target scripts/build-cpsl-image.sh
+scripts/build-cpsl-ios-xcframework.sh
 ```
 
 `RUN_PROBE=1` runs the ignored CPSL FFI probe test after building. The normal
