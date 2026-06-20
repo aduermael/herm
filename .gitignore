@@ -23,5 +23,8 @@ tools/edit-file/edit-file
 .DS_Store
 .claude/worktrees/
 
-# IDEs
+# IDE - Idea
 .idea
+
+# IDE - Xcode
+xcuserdata/
