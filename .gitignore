@@ -1,5 +1,6 @@
 # Binaries
 /herm
+/bin/
 /main
 /debug
 /simple-chat
@@ -15,6 +16,7 @@ tools/edit-file/edit-file
 # App data
 .herm/
 .herm-lock
+.herm-cpsl/
 .agents/
 
 # OS

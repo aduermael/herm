@@ -9,7 +9,8 @@ go build -o herm ./cmd/herm
 ./herm
 ```
 
-**Requirements:** Go 1.24+, Docker
+**Requirements:** Go 1.24+, Docker for the default container backend. For local
+sandbox mode without Docker, see [`CPSL_BUILD.md`](CPSL_BUILD.md).
 
 If you already cloned without submodules, run `git submodule update --init --recursive` before building.
 
@@ -444,7 +445,8 @@ If stuck, press Ctrl+C and try again.
 
 - **OS:** macOS (tested), Linux, Windows (WSL2)
 - **Go:** 1.24+
-- **Docker:** Latest stable
+- **Docker:** Latest stable for the default container backend
+- **CPSL mode:** Native build tools and Rust; see [`CPSL_BUILD.md`](CPSL_BUILD.md)
 - **Internet:** For API calls
 - **Terminal:** ANSI support
 - **Disk:** ~1GB for container images

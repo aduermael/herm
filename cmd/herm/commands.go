@@ -3,8 +3,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,11 +21,27 @@ import (
 
 var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", "/session", "/shell", "/update", "/usage", "/worktrees"}
 var sessionSubcommands = []string{"/session list", "/session load", "/session show"}
+var cpslUnavailableCommands = map[string]bool{
+	"/branches":  true,
+	"/worktrees": true,
+}
 
 func filterCommands(prefix string) []string {
+	return filterCommandsForBackend(filterCommandsOptions{prefix: prefix, backend: backendContainer})
+}
+
+type filterCommandsOptions struct {
+	prefix  string
+	backend backendKind
+}
+
+func filterCommandsForBackend(opts filterCommandsOptions) []string {
 	var matches []string
 	for _, cmd := range commands {
-		if strings.HasPrefix(cmd, prefix) {
+		if opts.backend == backendCPSL && cpslUnavailableCommands[cmd] {
+			continue
+		}
+		if strings.HasPrefix(cmd, opts.prefix) {
 			matches = append(matches, cmd)
 		}
 	}
@@ -32,12 +50,21 @@ func filterCommands(prefix string) []string {
 		matches = matches[:0]
 		all := append([]string{"/session"}, sessionSubcommands...)
 		for _, cmd := range all {
-			if strings.HasPrefix(cmd, prefix) {
+			if strings.HasPrefix(cmd, opts.prefix) {
 				matches = append(matches, cmd)
 			}
 		}
 	}
 	return matches
+}
+
+func (a *App) commandUnavailableInCPSL(cmd string) bool {
+	if a.backend != backendCPSL || !cpslUnavailableCommands[cmd] {
+		return false
+	}
+	a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("%s is unavailable in sandbox mode.", cmd)})
+	a.render()
+	return true
 }
 
 func (a *App) handleCommand(input string) {
@@ -106,6 +133,9 @@ func (a *App) handleCommand(input string) {
 		a.renderInput()
 
 	case "/branches":
+		if a.commandUnavailableInCPSL(cmd) {
+			return
+		}
 		if a.worktreePath == "" {
 			a.messages = append(a.messages, chatMessage{kind: msgError, content: "No workspace path available."})
 			a.render()
@@ -150,6 +180,9 @@ func (a *App) handleCommand(input string) {
 		a.renderInput()
 
 	case "/worktrees":
+		if a.commandUnavailableInCPSL(cmd) {
+			return
+		}
 		repoRoot := gitRepoRoot()
 		if repoRoot == "" {
 			a.messages = append(a.messages, chatMessage{kind: msgError, content: "Not in a git repository."})
@@ -206,7 +239,10 @@ func (a *App) handleCommand(input string) {
 		a.renderInput()
 
 	case "/shell":
-		a.enterShellMode()
+		if a.commandUnavailableInCPSL(cmd) {
+			return
+		}
+		a.enterShellMode(input)
 
 	case "/session":
 		a.handleSessionCommand(input)
@@ -408,7 +444,7 @@ func (a *App) switchToWorktree(opts switchToWorktreeOptions) {
 	a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: fmt.Sprintf("Switched to worktree '%s' (%s)", name, branch)})
 
 	// Reboot container with new workspace if container is ready.
-	if a.containerReady && a.container != nil {
+	if a.backend == backendContainer && a.containerReady && a.container != nil {
 		a.containerReady = false
 		a.containerStatusText = "restarting…"
 		go func() {
@@ -442,7 +478,15 @@ func (a *App) isInWorktree() bool {
 
 // ─── Shell mode ───
 
-func (a *App) enterShellMode() {
+func (a *App) enterShellMode(input string) {
+	if a.backend == backendCPSL {
+		a.enterCPSLShellMode(input)
+		return
+	}
+	a.enterContainerShellMode()
+}
+
+func (a *App) enterContainerShellMode() {
 	if a.containerErr != nil {
 		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Container error: %v", a.containerErr)})
 		a.render()
@@ -509,4 +553,161 @@ func (a *App) enterShellMode() {
 	}
 
 	a.renderFull()
+}
+
+func (a *App) enterCPSLShellMode(input string) {
+	language, err := cpslShellLanguageFromInput(input)
+	if err != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: err.Error()})
+		a.render()
+		return
+	}
+	if a.cpslErr != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Sandbox error: %v", a.cpslErr)})
+		a.render()
+		return
+	}
+	if !a.cpslReady || a.cpslWorker == nil {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Local sandbox is starting... please try again in a moment."})
+		a.render()
+		return
+	}
+
+	a.stopStdinReader()
+	fmt.Print("\033[?25h")
+	fmt.Print("\033[>4;0m")
+	fmt.Print("\033[?2004l")
+	if a.oldState != nil {
+		_ = term.Restore(a.fd, a.oldState)
+	}
+
+	shellErr := runCPSLShell(runCPSLShellOptions{
+		evaluator:      a.cpslWorker,
+		language:       language,
+		input:          os.Stdin,
+		output:         os.Stdout,
+		timeoutSeconds: 120,
+	})
+
+	if a.oldState != nil {
+		if _, err := term.MakeRaw(a.fd); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to re-enter raw mode: %v\n", err)
+			a.quit = true
+			return
+		}
+	}
+	flushStdin(a.fd)
+	fmt.Print("\033[?2004h")
+	fmt.Print("\033[>4;2m")
+	setHermTerminalTitle(os.Stdout)
+	a.startStdinReader()
+	a.width = getWidth()
+
+	if shellErr != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Sandbox shell error: %v", shellErr)})
+	} else {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Sandbox shell session ended."})
+	}
+	a.renderFull()
+}
+
+func cpslShellLanguageFromInput(input string) (string, error) {
+	language := cpslLanguageLuau
+	fields := strings.Fields(input)
+	for _, field := range fields[1:] {
+		switch field {
+		case "--bash":
+			language = cpslLanguageBash
+		case "--lua", "--luau":
+			language = cpslLanguageLuau
+		default:
+			return "", fmt.Errorf("unsupported sandbox shell option %q; use /shell, /shell --bash, or /shell --luau", field)
+		}
+	}
+	return language, nil
+}
+
+type runCPSLShellOptions struct {
+	evaluator      cpslEvaluator
+	language       string
+	input          io.Reader
+	output         io.Writer
+	timeoutSeconds int
+}
+
+func runCPSLShell(opts runCPSLShellOptions) error {
+	if opts.evaluator == nil {
+		return fmt.Errorf("sandbox worker not configured")
+	}
+	input := opts.input
+	if input == nil {
+		input = os.Stdin
+	}
+	output := opts.output
+	if output == nil {
+		output = os.Stdout
+	}
+	timeout := opts.timeoutSeconds
+	if timeout <= 0 {
+		timeout = 120
+	}
+	language := opts.language
+	if language == "" {
+		language = cpslLanguageLuau
+	}
+	if !isSupportedCPSLLanguage(language) {
+		return fmt.Errorf("unsupported sandbox shell language %q", language)
+	}
+
+	cwd := cpslWorkerInitialCW
+	label := "Luau"
+	promptMarker := "$"
+	if language == cpslLanguageBash {
+		label = "Bash-compatible shell"
+	} else {
+		promptMarker = ">"
+	}
+	fmt.Fprintf(output, "Local sandbox %s at %s. Type exit to return to Herm.\n", label, cwd)
+	scanner := bufio.NewScanner(input)
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	for {
+		fmt.Fprintf(output, "sandbox:%s%s ", cwd, promptMarker)
+		if !scanner.Scan() {
+			if err := scanner.Err(); err != nil {
+				return err
+			}
+			fmt.Fprintln(output)
+			return nil
+		}
+
+		command := scanner.Text()
+		switch strings.TrimSpace(command) {
+		case "":
+			continue
+		case "exit", "/exit":
+			return nil
+		}
+
+		response, err := opts.evaluator.EvalCPSL(context.Background(), cpslEvalOptions{language: language, input: command, timeoutSeconds: timeout})
+		if err != nil {
+			fmt.Fprintln(output, formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response, err: err}))
+			return nil
+		}
+		if !response.OK {
+			fmt.Fprintln(output, formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response}))
+			return nil
+		}
+		if response.Stdout != "" {
+			fmt.Fprint(output, response.Stdout)
+		}
+		if response.Stderr != "" {
+			fmt.Fprint(output, response.Stderr)
+		}
+		if response.ExitCode != nil && *response.ExitCode != 0 {
+			fmt.Fprintf(output, "exit code: %d\n", *response.ExitCode)
+		}
+		if response.CWD != "" {
+			cwd = response.CWD
+		}
+	}
 }

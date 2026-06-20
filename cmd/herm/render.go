@@ -726,14 +726,15 @@ func (a *App) buildInputRows() []string {
 			})...)
 		}
 
-		// Line 2: container status (always shown when we have status text)
-		if a.containerStatusText != "" {
+		// Line 2: backend status (shown when the active backend has status text)
+		statusLabel, statusText, statusErr := a.backendStatusDisplay()
+		if statusText != "" {
 			style := "\033[2m" // dim
-			if a.containerErr != nil {
+			if statusErr != nil {
 				style = "\033[31m" // red
 			}
 			rows = append(rows, wrapStatusSegments(wrapStatusSegmentsOptions{
-				segments: []statusSegment{newStatusSegment(style + "container: " + a.containerStatusText + "\033[0m")},
+				segments: []statusSegment{newStatusSegment(style + statusLabel + ": " + statusText + "\033[0m")},
 				width:    a.width,
 			})...)
 		}
@@ -748,6 +749,13 @@ func (a *App) buildInputRows() []string {
 	}
 
 	return rows
+}
+
+func (a *App) backendStatusDisplay() (label, text string, err error) {
+	if a.backend == backendCPSL {
+		return "sandbox", a.cpslStatusText, a.cpslErr
+	}
+	return "container", a.containerStatusText, a.containerErr
 }
 
 func (a *App) positionCursor(buf *strings.Builder) {

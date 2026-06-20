@@ -10,6 +10,8 @@ Complete reference documentation for Herm's entry points, commands, and architec
 
 **Need to know a specific command?** → [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md) (5 min read)
 
+**Building local sandbox mode?** → [`CPSL_BUILD.md`](CPSL_BUILD.md)
+
 **Want to understand how it works?** → [`ENTRY_POINTS.md`](ENTRY_POINTS.md) + [`ARCHITECTURE.md`](ARCHITECTURE.md) (20 min read)
 
 ---
@@ -33,7 +35,21 @@ Complete reference documentation for Herm's entry points, commands, and architec
 
 ---
 
-### 2. [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md) - Command Cheat Sheet
+### 2. [`CPSL_BUILD.md`](CPSL_BUILD.md) - Build Herm With CPSL
+**Target audience:** Users building Herm's local sandbox backend from source
+
+**Coverage:**
+- Linux and macOS native prerequisites
+- Host-native build helper script
+- Minimum and all-features CPSL library profiles
+- Artifact paths and `herm --cpsl` run commands
+- CPSL mode runtime limits
+
+**Best for:** Running Herm without Docker through a native CPSL sandbox library
+
+---
+
+### 3. [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md) - Command Cheat Sheet
 **Target audience:** Users learning or remembering slash commands
 
 **Coverage:**
@@ -45,7 +61,7 @@ Complete reference documentation for Herm's entry points, commands, and architec
   - `/config` - Configuration editor
   - `/model` - Quick model selector
   - `/worktrees` - Manage git worktrees
-  - `/shell` - Shell mode
+  - `/shell` - Sandbox/shell mode
   - `/session` - Session management
   - `/usage` - Token/cost stats
   - `/update` - Check for updates
@@ -59,7 +75,7 @@ Complete reference documentation for Herm's entry points, commands, and architec
 
 ---
 
-### 3. [`ENTRY_POINTS.md`](ENTRY_POINTS.md) - Technical Reference
+### 4. [`ENTRY_POINTS.md`](ENTRY_POINTS.md) - Technical Reference
 **Target audience:** Developers, contributors, tool integrators
 
 **Coverage:**
@@ -85,7 +101,7 @@ Complete reference documentation for Herm's entry points, commands, and architec
 
 ---
 
-### 4. [`ARCHITECTURE.md`](ARCHITECTURE.md) - Deep Dive into System Design
+### 5. [`ARCHITECTURE.md`](ARCHITECTURE.md) - Deep Dive into System Design
 **Target audience:** Contributors, maintainers, architecture learners
 
 **Coverage:**
@@ -115,6 +131,7 @@ Complete reference documentation for Herm's entry points, commands, and architec
 
 ```
 New User → CLI_QUICK_START.md
+  ├─ Building local sandbox mode? → CPSL_BUILD.md
   ├─ Need to know a command? → COMMANDS_REFERENCE.md
   └─ Want deeper understanding? → ENTRY_POINTS.md
        ├─ CLI flags and modes
@@ -141,31 +158,37 @@ Developer → ENTRY_POINTS.md → ARCHITECTURE.md
 3. Try: Common Workflows section
 4. Reference: [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md) as needed
 
-### Scenario 2: Learning a Specific Command
+### Scenario 2: Building Local Sandbox Mode
+1. Read: [`CPSL_BUILD.md`](CPSL_BUILD.md) - Native prerequisites and helper script
+2. Run: `scripts/build-cpsl-image.sh` from the Herm checkout
+3. Start: Herm with the printed `--cpsl` command
+4. Reference: [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md) for `/shell`
+
+### Scenario 3: Learning a Specific Command
 1. Open: [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md)
 2. Search: Command name (e.g., `/compact`, `/usage`)
 3. Read: Detailed command section
 4. See: Examples and tips
 
-### Scenario 3: Integrating Herm into Automation
+### Scenario 4: Integrating Herm into Automation
 1. Read: [`ENTRY_POINTS.md`](ENTRY_POINTS.md) - Headless Mode section
 2. Review: CLI flags documentation
 3. Understand: Configuration system
 4. Reference: [`CLI_QUICK_START.md`](CLI_QUICK_START.md) - Headless Mode in Scripts
 
-### Scenario 4: Contributing to Herm Codebase
+### Scenario 5: Contributing to Herm Codebase
 1. Start: [`ENTRY_POINTS.md`](ENTRY_POINTS.md) - Binary & Architecture sections
 2. Study: [`ARCHITECTURE.md`](ARCHITECTURE.md) - Full system design
 3. Reference: File organization and data flow sections
 4. Navigate: Source code using documented structure
 
-### Scenario 5: Debugging an Issue
+### Scenario 6: Debugging an Issue
 1. Check: [`CLI_QUICK_START.md`](CLI_QUICK_START.md) - Troubleshooting section
 2. Try: Commands from [`COMMANDS_REFERENCE.md`](COMMANDS_REFERENCE.md)
 3. Investigate: [`ENTRY_POINTS.md`](ENTRY_POINTS.md) - Component descriptions
 4. Deep dive: [`ARCHITECTURE.md`](ARCHITECTURE.md) - Event loop and state management
 
-### Scenario 6: Understanding the Event Loop
+### Scenario 7: Understanding the Event Loop
 1. Review: [`ENTRY_POINTS.md`](ENTRY_POINTS.md) - Interactive Mode Architecture
 2. Study: [`ARCHITECTURE.md`](ARCHITECTURE.md) - Event Loop Architecture
 3. Trace: Data flow sections (Chat Message lifecycle)
@@ -203,17 +226,23 @@ Developer → ENTRY_POINTS.md → ARCHITECTURE.md
 - **Technical:** Container integration details (ENTRY_POINTS.md)
 - **Architecture:** ContainerClient integration (ARCHITECTURE.md)
 
+### CPSL Local Sandbox
+- **Build:** Linux/macOS native build flow (CPSL_BUILD.md)
+- **Quick Start:** Docker-free local sandbox pointer (CLI_QUICK_START.md)
+- **Commands:** `/shell` behavior in sandbox mode (COMMANDS_REFERENCE.md)
+
 ---
 
 ## File Statistics
 
 | Document | Lines | Focus | Audience |
 |----------|-------|-------|----------|
-| CLI_QUICK_START.md | 459 | Usage & setup | End users |
-| COMMANDS_REFERENCE.md | 248 | Command reference | End users |
-| ENTRY_POINTS.md | 329 | Technical overview | Developers |
+| CLI_QUICK_START.md | 463 | Usage & setup | End users |
+| CPSL_BUILD.md | 136 | Local sandbox build | End users |
+| COMMANDS_REFERENCE.md | 250 | Command reference | End users |
+| ENTRY_POINTS.md | 330 | Technical overview | Developers |
 | ARCHITECTURE.md | 411 | System design | Contributors |
-| **Total** | **1,447** | **Complete reference** | **Everyone** |
+| **Total** | **1,590** | **Complete reference** | **Everyone** |
 
 ---
 
@@ -249,6 +278,13 @@ Developer → ENTRY_POINTS.md → ARCHITECTURE.md
 ### Path 1: User
 1. CLI_QUICK_START.md (read all)
 2. COMMANDS_REFERENCE.md (skim, use as reference)
+
+**Time:** 30-45 minutes
+
+### Path 1b: Local Sandbox User
+1. CPSL_BUILD.md
+2. CLI_QUICK_START.md (First Time Setup)
+3. COMMANDS_REFERENCE.md (`/shell` section)
 
 **Time:** 30-45 minutes
 
@@ -342,6 +378,9 @@ Last updated: April 3, 2026
 # Show version
 ./herm --version
 
+# Run with a CPSL local sandbox library
+./herm --cpsl "$CPSL_LIB"
+
 # Enable debug mode
 ./herm --debug
 ```
@@ -356,7 +395,7 @@ In chat:
 /branches   - Switch git branch
 /worktrees  - Manage worktrees
 /session    - Resume conversation
-/shell      - Shell mode
+/shell      - Sandbox/shell mode
 /update     - Check updates
 ```
 
@@ -370,4 +409,3 @@ In chat:
 4. **ARCHITECTURE.md** (411 lines) - System design deep dive
 
 **Total:** 1,447 lines of comprehensive documentation
-

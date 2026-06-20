@@ -80,7 +80,7 @@ func TestSystemPromptSeparatesProjectContextFromRole(t *testing.T) {
 	if strings.Contains(prompt, "cmd/herm/terminal_title_test.goYou") {
 		t.Fatal("system prompt should not concatenate project context with role text")
 	}
-	if !strings.Contains(prompt, "cmd/herm/terminal_title_test.go\n## Role\n\nYou are an expert coding agent") {
+	if fileIdx, roleIdx := strings.Index(prompt, "cmd/herm/terminal_title_test.go"), strings.Index(prompt, "## Role\n\nYou are an expert coding agent"); fileIdx < 0 || roleIdx <= fileIdx {
 		t.Fatal("system prompt should separate project context from role text with an explicit role boundary")
 	}
 }
@@ -91,7 +91,7 @@ func TestSubAgentSystemPromptSeparatesProjectContextFromRole(t *testing.T) {
 	if strings.Contains(prompt, "cmd/herm/subagent.goYou") {
 		t.Fatal("sub-agent prompt should not concatenate project context with role text")
 	}
-	if !strings.Contains(prompt, "cmd/herm/subagent.go\n## Role\n\nYou are a sub-agent") {
+	if fileIdx, roleIdx := strings.Index(prompt, "cmd/herm/subagent.go"), strings.Index(prompt, "## Role\n\nYou are a sub-agent"); fileIdx < 0 || roleIdx <= fileIdx {
 		t.Fatal("sub-agent prompt should separate project context from role text with an explicit role boundary")
 	}
 	if !strings.Contains(prompt, "Treat the snapshot as background for the assigned task, not as a separate task list") {
@@ -283,7 +283,33 @@ func TestBuildSystemPromptNoPersonality(t *testing.T) {
 
 func TestPromptTemplateParsing(t *testing.T) {
 	// Verify all expected templates are defined in the embedded FS.
-	expected := []string{"system", "system_subagent", "role", "role_subagent", "tools", "practices", "communication", "personality", "skills", "environment"}
+	expected := []string{
+		"common/communication",
+		"common/main_workflow",
+		"common/personality",
+		"common/practices",
+		"common/project_context",
+		"common/skills",
+		"common/subagent_budget",
+		"common/subagent_intro",
+		"container/environment",
+		"container/main",
+		"container/practices",
+		"container/role",
+		"container/role_subagent",
+		"container/subagent",
+		"container/subagent_exploration",
+		"container/tools",
+		"cpsl/environment",
+		"cpsl/main",
+		"cpsl/practices",
+		"cpsl/role",
+		"cpsl/role_subagent",
+		"cpsl/runtime_guidance",
+		"cpsl/subagent",
+		"cpsl/subagent_exploration",
+		"cpsl/tools",
+	}
 	for _, name := range expected {
 		tmpl := prompts.Templates.Lookup(name)
 		if tmpl == nil {
@@ -375,6 +401,76 @@ func TestSubAgentPromptHostToolsOmittedWhenAbsent(t *testing.T) {
 
 	if strings.Contains(prompt, "Host exceptions") {
 		t.Error("sub-agent prompt without host tools should not contain Host exceptions")
+	}
+}
+
+func TestBuildSystemPromptCPSLMode(t *testing.T) {
+	tools := []Tool{stubTool{toolLocalSandboxExec}, stubTool{"agent"}}
+	prompt := buildSystemPrompt(buildSystemPromptOptions{
+		tools:       tools,
+		serverTools: nil,
+		skills:      nil,
+		workDir:     t.TempDir(),
+		personality: "",
+		backend:     backendCPSL,
+		snap:        nil,
+	})
+
+	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`http.policy()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`", "general-purpose assistant"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("CPSL prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"CPSL", "Native language", "Current folder mounted", "mounted at", "local sandbox", "`local_sandbox_exec_bash`", "`luau` tool", "`bash` tool", "`web_search`", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "Keep one-off", "Network access is controlled", "bypass", "do not fall back"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("CPSL prompt contains %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
+	tools := []Tool{stubTool{toolLocalSandboxExec}}
+	prompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{
+		tools:       tools,
+		serverTools: nil,
+		workDir:     t.TempDir(),
+		backend:     backendCPSL,
+		snap:        nil,
+	})
+
+	for _, want := range []string{"/workdir", "native Luau runtime", "`local_sandbox_exec` tool", "Luau source", "`help()`", "`<module>.help()`", "`http.policy()`", "`fs.grep`", "max_count", "files_only", "reusable `.luau` source", "`luau -e`"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("CPSL sub-agent prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"CPSL", "Native language", "Current folder mounted", "mounted at", "local sandbox", "`local_sandbox_exec_bash`", "`luau` tool", "`bash` tool", "`web_search`", "Container image", "dev container", "Docker", "Dockerfile", "Host exceptions", "devenv", "host git", "glob to discover", "read_file", "Keep one-off", "Network access is controlled", "bypass", "do not fall back"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("CPSL sub-agent prompt contains %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildSystemPromptCPSLModeMentionsWebSearchOnlyWhenAvailable(t *testing.T) {
+	tools := []Tool{stubTool{toolLocalSandboxExec}}
+
+	withoutSearch := buildSystemPrompt(buildSystemPromptOptions{
+		tools:       tools,
+		serverTools: nil,
+		workDir:     t.TempDir(),
+		backend:     backendCPSL,
+	})
+	if strings.Contains(withoutSearch, "`web_search`") {
+		t.Fatalf("CPSL prompt without web_search server tool should not mention web_search:\n%s", withoutSearch)
+	}
+
+	withSearch := buildSystemPrompt(buildSystemPromptOptions{
+		tools:       tools,
+		serverTools: []types.ToolDefinition{WebSearchToolDef()},
+		workDir:     t.TempDir(),
+		backend:     backendCPSL,
+	})
+	if !strings.Contains(withSearch, "`web_search`") {
+		t.Fatalf("CPSL prompt with web_search server tool should mention web_search:\n%s", withSearch)
 	}
 }
 
@@ -721,6 +817,42 @@ func TestToolDescriptionContainsGuidance(t *testing.T) {
 				t.Errorf("tool %q description missing keyword %q", tt.tool, kw)
 			}
 		}
+	}
+}
+
+func TestCPSLToolDescriptionOverrides(t *testing.T) {
+	descs := loadToolDescriptions(loadToolDescriptionsOptions{workDir: "/workspace", backend: backendCPSL})
+	if len(descs) != 2 {
+		t.Fatalf("CPSL tool descriptions = %#v, want local_sandbox_exec and agent", descs)
+	}
+	for _, forbidden := range []string{"luau", "bash", toolLocalSandboxExecBash, "glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
+		if _, ok := descs[forbidden]; ok {
+			t.Fatalf("CPSL tool descriptions included unavailable tool %q", forbidden)
+		}
+	}
+
+	luau := descs[toolLocalSandboxExec]
+	if !strings.Contains(luau.Full, "native Luau") || !strings.Contains(luau.Full, "/workdir") {
+		t.Fatalf("CPSL luau description = %q, want native Luau and /workdir", luau.Full)
+	}
+	for _, want := range []string{"default execution tool", "`help()`", "`<module>.help()`", "reusable `.luau` source", "/workdir/.herm/luau"} {
+		if !strings.Contains(luau.Full, want) {
+			t.Fatalf("CPSL luau description missing %q: %q", want, luau.Full)
+		}
+	}
+	if strings.Contains(luau.Full, "CPSL") || strings.Contains(luau.Full, "dev container") || strings.Contains(luau.Full, "Docker") || strings.Contains(luau.Full, "devenv") {
+		t.Fatalf("CPSL luau description contains container-only guidance: %q", luau.Full)
+	}
+	if strings.Contains(luau.Full, "local sandbox") || strings.Contains(luau.Full, "Current folder") || strings.Contains(luau.Full, "mounted at") || strings.Contains(luau.Full, "network-policy") {
+		t.Fatalf("CPSL luau description contains stale wording: %q", luau.Full)
+	}
+
+	agent := descs["agent"]
+	if !strings.Contains(agent.Full, "sandbox-safe") || !strings.Contains(agent.Full, "/workdir/.herm/agents") {
+		t.Fatalf("CPSL agent description = %q, want sandbox-safe output guidance", agent.Full)
+	}
+	if strings.Contains(agent.Full, "CPSL") || strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "Docker") || strings.Contains(agent.Full, "read_file") {
+		t.Fatalf("CPSL agent description contains unavailable-tool guidance: %q", agent.Full)
 	}
 }
 
@@ -1101,10 +1233,12 @@ func TestBudgetConstantsFlowIntoAllOutputs(t *testing.T) {
 		WorkDir:                 "/work",
 		ContainerImage:          "alpine:latest",
 		Date:                    "2026-01-01",
+		WorkflowFirstStep:       "Understand what's needed.",
+		ProjectOrientation:      "Use the project snapshot.",
 		DefaultSubAgentMaxTurns: altGeneral,
 	}
 	var buf bytes.Buffer
-	if err := prompts.Templates.ExecuteTemplate(&buf, "role", data); err != nil {
+	if err := prompts.Templates.ExecuteTemplate(&buf, "common/main_workflow", data); err != nil {
 		t.Fatalf("template execution failed: %v", err)
 	}
 	role := buf.String()

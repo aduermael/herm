@@ -27,10 +27,73 @@ const (
 	truncTailLines = 60        // lines to keep from the end
 )
 
-// BashTool executes commands inside the Docker container via ContainerClient.
-type BashTool struct {
+const (
+	toolBash                 = "bash"
+	toolLocalSandboxExec     = "local_sandbox_exec"
+	toolLocalSandboxExecBash = "local_sandbox_exec_bash"
+)
+
+type bashRunner interface {
+	RunBash(ctx context.Context, opts bashRunOptions) (CommandResult, error)
+}
+
+type containerBashRunner struct {
 	container *ContainerClient
-	timeout   int // default timeout in seconds
+}
+
+type bashRunOptions struct {
+	command string
+	timeout int
+}
+
+func (r containerBashRunner) RunBash(ctx context.Context, opts bashRunOptions) (CommandResult, error) {
+	if r.container == nil {
+		return CommandResult{}, fmt.Errorf("container not configured")
+	}
+	return r.container.Exec(containerExecOptions{ctx: ctx, command: opts.command, timeout: opts.timeout})
+}
+
+type cpslEvaluator interface {
+	EvalCPSL(ctx context.Context, opts cpslEvalOptions) (cpslEvalResponse, error)
+}
+
+type cpslEvalErrorFormatOptions struct {
+	response cpslEvalResponse
+	err      error
+}
+
+func formatCPSLEvalError(opts cpslEvalErrorFormatOptions) error {
+	code := "runtime_error"
+	message := ""
+	if opts.response.Error != nil {
+		if opts.response.Error.Code != "" {
+			code = opts.response.Error.Code
+		}
+		message = opts.response.Error.Message
+	}
+	if message == "" && opts.err != nil {
+		message = opts.err.Error()
+	}
+	if message == "" {
+		message = "sandbox command could not be evaluated"
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Sandbox %s: %s", code, message)
+	if output := truncateOutput(opts.response.Stdout + opts.response.Stderr); strings.TrimSpace(output) != "" {
+		b.WriteString("\n")
+		b.WriteString(output)
+	}
+	return fmt.Errorf("%s", b.String())
+}
+
+// BashTool executes commands through the configured bash runner.
+type BashTool struct {
+	name                string
+	runner              bashRunner
+	timeout             int // default timeout in seconds
+	descriptionFallback string
+	commandDescription  string
 }
 
 // NewBashToolOptions holds the parameters for NewBashTool.
@@ -45,19 +108,34 @@ func NewBashTool(opts NewBashToolOptions) *BashTool {
 	if timeout <= 0 {
 		timeout = 120
 	}
-	return &BashTool{container: opts.Container, timeout: timeout}
+	return &BashTool{
+		name:                toolBash,
+		runner:              containerBashRunner{container: opts.Container},
+		timeout:             timeout,
+		descriptionFallback: "Run a shell command in the dev container. Output is truncated to 80 lines / 12KB (head+tail).",
+		commandDescription:  "The shell command to execute in the dev container",
+	}
 }
 
 func (t *BashTool) Definition() types.ToolDefinition {
+	name := t.name
+	if name == "" {
+		name = toolBash
+	}
+	commandDescription := t.commandDescription
+	if commandDescription == "" {
+		commandDescription = "The bash command to execute"
+	}
+	commandDescriptionJSON, _ := json.Marshal(commandDescription)
 	return types.ToolDefinition{
-		Name:        "bash",
-		Description: getToolDescription(getToolDescriptionOptions{name: "bash", fallback: "Run a shell command in the dev container. Output is truncated to 80 lines / 12KB (head+tail)."}),
-		InputSchema: json.RawMessage(`{
+		Name:        name,
+		Description: getToolDescription(getToolDescriptionOptions{name: name, fallback: t.descriptionFallback}),
+		InputSchema: json.RawMessage(fmt.Sprintf(`{
 			"type": "object",
 			"properties": {
 				"command": {
 					"type": "string",
-					"description": "The bash command to execute"
+					"description": %s
 				},
 				"timeout": {
 					"type": "integer",
@@ -65,7 +143,7 @@ func (t *BashTool) Definition() types.ToolDefinition {
 				}
 			},
 			"required": ["command"]
-		}`),
+		}`, commandDescriptionJSON)),
 	}
 }
 
@@ -95,7 +173,10 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	// (e.g. && → &amp;&amp;). Unescape before execution.
 	command := html.UnescapeString(in.Command)
 
-	result, err := t.container.Exec(containerExecOptions{ctx: ctx, command: command, timeout: timeout})
+	if t.runner == nil {
+		return "", fmt.Errorf("bash runner not configured")
+	}
+	result, err := t.runner.RunBash(ctx, bashRunOptions{command: command, timeout: timeout})
 	if err != nil {
 		return "", err
 	}
@@ -114,6 +195,95 @@ func (t *BashTool) RequiresApproval(_ json.RawMessage) bool {
 }
 
 func (t *BashTool) HostTool() bool { return false }
+
+// NewCPSLLuauToolOptions holds the parameters for NewCPSLLuauTool.
+type NewCPSLLuauToolOptions struct {
+	Worker  cpslEvaluator
+	Timeout int
+}
+
+// CPSLLuauTool executes native Luau source through CPSL.
+type CPSLLuauTool struct {
+	worker  cpslEvaluator
+	timeout int
+}
+
+// NewCPSLLuauTool creates a tool that routes native Luau source through CPSL.
+func NewCPSLLuauTool(opts NewCPSLLuauToolOptions) *CPSLLuauTool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 120
+	}
+	return &CPSLLuauTool{worker: opts.Worker, timeout: timeout}
+}
+
+func (t *CPSLLuauTool) Definition() types.ToolDefinition {
+	return types.ToolDefinition{
+		Name:        toolLocalSandboxExec,
+		Description: getToolDescription(getToolDescriptionOptions{name: toolLocalSandboxExec, fallback: "Run native Luau source in the sandbox at /workdir. Output is truncated to 80 lines / 12KB (head+tail)."}),
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"script": {
+					"type": "string",
+					"description": "Native Luau source to run in the sandbox at /workdir. Use this by default for sandbox execution. For repeated automation, keep reusable .luau source in the workspace and pass that source here."
+				},
+				"timeout": {
+					"type": "integer",
+					"description": "Timeout in seconds (default: 120, max: 600)"
+				}
+			},
+			"required": ["script"]
+		}`),
+	}
+}
+
+type luauInput struct {
+	Script  string `json:"script"`
+	Timeout int    `json:"timeout,omitempty"`
+}
+
+func (t *CPSLLuauTool) Execute(ctx context.Context, input json.RawMessage) (string, error) {
+	var in luauInput
+	if err := json.Unmarshal(input, &in); err != nil {
+		return "", fmt.Errorf("invalid luau input: %w", err)
+	}
+	if in.Script == "" {
+		return "", fmt.Errorf("script is required")
+	}
+
+	timeout := t.timeout
+	if in.Timeout > 0 {
+		timeout = in.Timeout
+	}
+	if timeout > 600 {
+		timeout = 600
+	}
+
+	if t.worker == nil {
+		return "", fmt.Errorf("sandbox worker not configured")
+	}
+	script := html.UnescapeString(in.Script)
+	response, err := t.worker.EvalCPSL(ctx, cpslEvalOptions{language: cpslLanguageLuau, input: script, timeoutSeconds: timeout})
+	if err != nil {
+		return "", formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response, err: err})
+	}
+	if !response.OK {
+		return "", formatCPSLEvalError(cpslEvalErrorFormatOptions{response: response})
+	}
+
+	output := truncateOutput(response.Stdout + response.Stderr)
+	if response.ExitCode != nil && *response.ExitCode != 0 {
+		return fmt.Sprintf("exit code: %d\n%s", *response.ExitCode, output), nil
+	}
+	return output, nil
+}
+
+func (t *CPSLLuauTool) RequiresApproval(_ json.RawMessage) bool {
+	return false
+}
+
+func (t *CPSLLuauTool) HostTool() bool { return false }
 
 // truncateOutput trims output to bashMaxLines lines and bashMaxBytes bytes using
 // a head+tail strategy: keep the first truncHeadLines and last truncTailLines,

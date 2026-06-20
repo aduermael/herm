@@ -254,12 +254,12 @@ type isSleepWaitCommandOptions struct {
 	input    json.RawMessage
 }
 
-// isSleepWaitCommand returns true if the tool call is a "bash" command
+// isSleepWaitCommand returns true if the tool call is Bash-compatible input
 // containing only a sleep (optionally followed by echo). These are internal
 // polling waits whose purpose is already conveyed by the sub-agent display.
 func isSleepWaitCommand(opts isSleepWaitCommandOptions) bool {
 	toolName, input := opts.toolName, opts.input
-	if toolName != "bash" {
+	if toolName != toolBash && toolName != toolLocalSandboxExecBash {
 		return false
 	}
 	var in struct {
@@ -295,7 +295,18 @@ type toolCallSummaryOptions struct {
 func toolCallSummary(opts toolCallSummaryOptions) string {
 	toolName, input := opts.toolName, opts.input
 	switch toolName {
-	case "bash":
+	case toolLocalSandboxExec, "luau":
+		var in struct {
+			Script string `json:"script"`
+		}
+		if json.Unmarshal(input, &in) == nil && in.Script != "" {
+			script := strings.TrimSpace(in.Script)
+			if len(script) > 120 {
+				script = script[:120] + "..."
+			}
+			return fmt.Sprintf("~ %s %s", toolLocalSandboxExec, compactWhitespace(script))
+		}
+	case toolBash, toolLocalSandboxExecBash:
 		var in struct {
 			Command string `json:"command"`
 		}
@@ -357,7 +368,18 @@ type approvalCmdDescOptions struct {
 func approvalCmdDesc(opts approvalCmdDescOptions) string {
 	toolName, input := opts.toolName, opts.input
 	switch toolName {
-	case "bash":
+	case toolLocalSandboxExec, "luau":
+		var in struct {
+			Script string `json:"script"`
+		}
+		if json.Unmarshal(input, &in) == nil && in.Script != "" {
+			script := compactWhitespace(strings.TrimSpace(in.Script))
+			if len(script) > 80 {
+				script = script[:80] + "..."
+			}
+			return toolLocalSandboxExec + ": " + script
+		}
+	case toolBash, toolLocalSandboxExecBash:
 		var in struct {
 			Command string `json:"command"`
 		}
@@ -396,7 +418,18 @@ type approvalShortDescOptions struct {
 func approvalShortDesc(opts approvalShortDescOptions) string {
 	toolName, input := opts.toolName, opts.input
 	switch toolName {
-	case "bash":
+	case toolLocalSandboxExec, "luau":
+		var in struct {
+			Script string `json:"script"`
+		}
+		if json.Unmarshal(input, &in) == nil && in.Script != "" {
+			script := compactWhitespace(strings.TrimSpace(in.Script))
+			if len(script) > 80 {
+				script = script[:80] + "..."
+			}
+			return fmt.Sprintf("%s: %s", toolLocalSandboxExec, script)
+		}
+	case toolBash, toolLocalSandboxExecBash:
 		var in struct {
 			Command string `json:"command"`
 		}
@@ -416,6 +449,10 @@ func approvalShortDesc(opts approvalShortDescOptions) string {
 		}
 	}
 	return toolName
+}
+
+func compactWhitespace(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func collapseToolResult(result string) string {

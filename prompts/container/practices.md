@@ -1,5 +1,5 @@
-{{/* practices: general coding best practices. Used by both entry points. */}}
-{{define "practices"}}
+{{/* container/practices: coding practices for Docker/container mode. */}}
+{{define "container/practices"}}
 
 ## Practices
 

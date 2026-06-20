@@ -1,5 +1,5 @@
-{{/* tools: cross-tool workflow guidance. Per-tool guidance lives in tool Description fields (prompts/tools/). Used by both entry points. */}}
-{{define "tools"}}
+{{/* container/tools: cross-tool workflow guidance for Docker mode. */}}
+{{define "container/tools"}}
 
 ## Tools
 
@@ -9,7 +9,7 @@ All tools except git run inside the dev container. Prefer dedicated tools over b
 Explore in layers: glob (structure) → grep (search){{if .HasOutline}} → outline (signatures){{end}} → read_file (examine). Each step narrows focus.
 
 **Quick decision guide:** Know the file name/pattern? → glob first. Know the code pattern? → grep first. Exploring unfamiliar project? → Start from the project snapshot, then glob to narrow.
-{{- end}}
+{{end}}
 {{- if containsStr .HostTools "git"}}
 
 **Git practices:**

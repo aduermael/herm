@@ -544,6 +544,23 @@ func TestBuildInputRows(t *testing.T) {
 	}
 }
 
+func TestBuildInputRowsCPSLStatusUsesSandboxLabel(t *testing.T) {
+	app := &App{
+		width:          80,
+		backend:        backendCPSL,
+		cpslStatusText: "ready (/workdir)",
+	}
+
+	rows := app.buildInputRows()
+	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	if !strings.Contains(plain, "sandbox: ready (/workdir)") {
+		t.Fatalf("CPSL status rows = %q, want sandbox status label", plain)
+	}
+	if strings.Contains(plain, "container:") || strings.Contains(plain, "cpsl:") {
+		t.Fatalf("CPSL status rows = %q, should not include container or cpsl label", plain)
+	}
+}
+
 func TestLayoutInlineBlocks(t *testing.T) {
 	strip := func(rows []string) []string {
 		out := make([]string, 0, len(rows))
@@ -2938,11 +2955,14 @@ func TestIsSleepWaitCommand(t *testing.T) {
 		want     bool
 	}{
 		{"pure sleep", "bash", `{"command":"sleep 15"}`, true},
+		{"pure sleep local sandbox bash", toolLocalSandboxExecBash, `{"command":"sleep 15"}`, true},
 		{"sleep with echo", "bash", `{"command":"sleep 30 && echo done"}`, true},
 		{"sleep with quoted echo", "bash", `{"command":"sleep 5 && echo \"done waiting\""}`, true},
 		{"sleep in pipeline", "bash", `{"command":"sleep 5 && ls -la && echo done"}`, false},
+		{"sleep in local sandbox bash pipeline", toolLocalSandboxExecBash, `{"command":"sleep 5 && ls -la && echo done"}`, false},
 		{"non-sleep bash", "bash", `{"command":"ls -la"}`, false},
 		{"non-bash tool", "agent", `{"command":"sleep 10"}`, false},
+		{"native sandbox tool", toolLocalSandboxExec, `{"script":"task.wait(10)"}`, false},
 		{"empty command", "bash", `{"command":""}`, false},
 		{"sleep with leading space", "bash", `{"command":"  sleep 10"}`, true},
 	}

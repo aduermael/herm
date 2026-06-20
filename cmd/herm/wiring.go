@@ -224,6 +224,15 @@ func (a *App) startInit() {
 	go func() { a.resultCh <- checkForUpdate(Version) }()
 }
 
+func (a *App) startBackendForWorkspace(workspace string) {
+	switch a.backend {
+	case backendContainer:
+		go bootContainer(bootContainerCmdOptions{workspace: workspace, sessionID: a.sessionID, ch: a.resultCh, stop: a.stopCh})
+	case backendCPSL:
+		go bootCPSLWorker(bootCPSLWorkerCmdOptions{config: a.cpsl, workspace: workspace, ch: a.resultCh})
+	}
+}
+
 // modelCatalogCachePath returns the path where the dynamically fetched model
 // catalog is persisted across sessions (~/.herm/model_catalog.json). An empty
 // string means no cache is available (e.g. home dir undiscoverable); callers

@@ -539,7 +539,7 @@ type shouldShowToolOutputOptions struct {
 // displayed within a grouped block. Rules:
 //   - Errors: always shown
 //   - Edit/write tools: always shown (diff output)
-//   - Bash/git: shown only for the last result-bearing tool in the group
+//   - Luau/bash/git: shown only for the last result-bearing tool in the group
 //   - All others (read, glob, grep, etc.): hidden (summary line is enough)
 func shouldShowToolOutput(opts shouldShowToolOutputOptions) bool {
 	entry := opts.entry
@@ -549,7 +549,7 @@ func shouldShowToolOutput(opts shouldShowToolOutputOptions) bool {
 	switch entry.toolName {
 	case "edit_file", "write_file":
 		return true
-	case "bash", "git":
+	case toolLocalSandboxExec, toolLocalSandboxExecBash, "luau", "bash", "git":
 		return opts.idx == opts.lastResultIdx
 	default:
 		return false

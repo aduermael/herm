@@ -428,7 +428,8 @@ func TestSubAgentToolDepthAllowsNestedAgent(t *testing.T) {
 func TestSubAgentToolExploreModeFiltersTools(t *testing.T) {
 	// Provide a full set of tools including write tools that should be excluded.
 	allTools := []Tool{
-		&testTool{name: "bash", result: "ok"},
+		&testTool{name: toolLocalSandboxExec, result: "ok"},
+		&testTool{name: toolBash, result: "ok"},
 		&testTool{name: "glob", result: "ok"},
 		&testTool{name: "grep", result: "ok"},
 		&testTool{name: "read_file", result: "ok"},
@@ -463,7 +464,8 @@ func TestSubAgentToolExploreModeFiltersTools(t *testing.T) {
 
 func TestSubAgentToolImplementModeIncludesAllTools(t *testing.T) {
 	allTools := []Tool{
-		&testTool{name: "bash", result: "ok"},
+		&testTool{name: toolLocalSandboxExec, result: "ok"},
+		&testTool{name: toolBash, result: "ok"},
 		&testTool{name: "glob", result: "ok"},
 		&testTool{name: "grep", result: "ok"},
 		&testTool{name: "read_file", result: "ok"},
@@ -494,7 +496,8 @@ func TestSubAgentToolExploreSystemPromptExcludesWriteTools(t *testing.T) {
 	// Verify the sub-agent system prompt built from explore-filtered tools
 	// does not advertise write tools.
 	allTools := []Tool{
-		&testTool{name: "bash", result: "ok"},
+		&testTool{name: toolLocalSandboxExec, result: "ok"},
+		&testTool{name: toolBash, result: "ok"},
 		&testTool{name: "glob", result: "ok"},
 		&testTool{name: "grep", result: "ok"},
 		&testTool{name: "read_file", result: "ok"},
@@ -520,7 +523,7 @@ func TestSubAgentToolExploreSystemPromptExcludesWriteTools(t *testing.T) {
 	}
 
 	// The prompt should mention read-only tools that are present.
-	if !strings.Contains(prompt, "bash") && !strings.Contains(prompt, "glob") {
+	if !strings.Contains(prompt, toolLocalSandboxExec) && !strings.Contains(prompt, toolBash) && !strings.Contains(prompt, "glob") {
 		t.Error("explore sub-agent prompt should reference available read-only tools")
 	}
 }
@@ -531,7 +534,7 @@ func TestModeToolAllowlistsStructure(t *testing.T) {
 	if exploreList == nil {
 		t.Fatal("explore mode should have a non-nil allowlist")
 	}
-	for _, name := range []string{"glob", "grep", "read_file", "outline", "bash"} {
+	for _, name := range []string{"glob", "grep", "read_file", "outline", toolLocalSandboxExec, toolBash} {
 		if !exploreList[name] {
 			t.Errorf("explore allowlist should include %q", name)
 		}

@@ -109,8 +109,9 @@ Accessible in chat mode using `/` prefix with autocomplete.
 - Switches workspace to selected worktree
 
 **`/shell`**
-- Enter shell mode (dedicated command interpreter)
-- Allows running shell commands within agent context
+- Enter dedicated command interpreter
+- In local sandbox mode, defaults to Luau; use `/shell --bash` for Bash-compatible input
+- In container mode, enters the container shell
 - Return to chat mode to exit
 
 **`/session`** *(with subcommands)*

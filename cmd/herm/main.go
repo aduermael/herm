@@ -109,6 +109,10 @@ type App struct {
 	containerReady          bool
 	containerErr            error
 	containerStatusText     string
+	cpslWorker              cpslWorkerBackend
+	cpslReady               bool
+	cpslErr                 error
+	cpslStatusText          string
 	containerRetryMsgIdx    int
 	containerRetryMsgActive bool
 	configReady             bool // true after workspace/project config has been merged
@@ -227,7 +231,9 @@ type App struct {
 	cliContinueID      string // --continue/--from node ID for headless continuation
 	cliConfigOverrides string // --config-overrides JSON object
 	cliCacheDir        string // --cache directory for request cache
-	headless           bool   // true when running in --prompt mode (no TUI)
+	backend            backendKind
+	cpsl               cpslConfig
+	headless           bool // true when running in --prompt mode (no TUI)
 
 	// JSON trace debug file
 	traceCollector *TraceCollector
@@ -564,8 +570,13 @@ func (a *App) handleEnter() {
 		a.render()
 		return
 	}
-	if !a.containerReady {
+	if a.backend == backendContainer && !a.containerReady {
 		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Container is still starting — the agent won't have bash or file tools until it's ready."})
+	}
+	if a.backend == backendCPSL && !a.cpslReady {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Local sandbox is still starting — the agent won't have Luau tools until it's ready."})
+		a.render()
+		return
 	}
 	a.startAgent(content)
 	a.render()
@@ -826,9 +837,7 @@ func (a *App) handleResult(result any) {
 		wtPath := msg.worktreePath
 		go func() { a.resultCh <- fetchStatusCmd(wtPath) }()
 		go func() { a.resultCh <- fetchProjectSnapshot(wtPath) }()
-		go func() {
-			bootContainerCmd(bootContainerCmdOptions{workspace: wtPath, sessionID: a.sessionID, ch: a.resultCh, stop: a.stopCh})
-		}()
+		a.startBackendForWorkspace(wtPath)
 		go cleanupTmpDir(wtPath)
 		go cleanupAgentOutputDir(wtPath)
 		// Start periodic commit info refresh (only if git is available)
@@ -859,6 +868,26 @@ func (a *App) handleResult(result any) {
 			}
 			a.containerStatusText = shortID
 		}
+
+	case cpslReadyMsg:
+		a.cpslWorker = msg.client
+		if msg.worktreePath != "" {
+			a.worktreePath = msg.worktreePath
+		}
+		a.cpslReady = true
+		a.cpslErr = nil
+		a.cpslStatusText = "ready (/workdir)"
+
+	case cpslErrMsg:
+		a.cpslErr = msg.err
+		a.cpslReady = false
+		a.cpslStatusText = "error"
+		if msg.err != nil {
+			a.messages = append(a.messages, chatMessage{kind: msgError, content: msg.err.Error()})
+		}
+
+	case cpslStatusMsg:
+		a.cpslStatusText = msg.text
 
 	case containerStatusMsg:
 		a.containerStatusText = msg.text
@@ -952,6 +981,9 @@ func (a *App) cleanup() {
 	}
 	if a.container != nil {
 		_ = a.container.Stop()
+	}
+	if a.cpslWorker != nil {
+		_ = a.cpslWorker.Close()
 	}
 	if a.langdagClient != nil {
 		_ = a.langdagClient.Close()

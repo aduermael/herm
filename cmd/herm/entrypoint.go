@@ -19,10 +19,20 @@ type cliOptions struct {
 	continueID      string
 	configOverrides string
 	cacheDir        string
+	cpsl            cpslConfig
 }
 
 func main() {
 	log.SetOutput(io.Discard)
+
+	if len(os.Args) > 1 && os.Args[1] == "__cpsl-worker" {
+		os.Exit(runCPSLWorker(runCPSLWorkerOptions{
+			args:   os.Args[2:],
+			stdin:  os.Stdin,
+			stdout: os.Stdout,
+			stderr: os.Stderr,
+		}))
+	}
 
 	opts, err := parseCLI(parseCLIOptions{args: os.Args[1:], stderr: os.Stderr})
 	if err != nil {
@@ -33,7 +43,11 @@ func main() {
 		return
 	}
 	if opts.version {
-		fmt.Println("herm " + Version + " (container: " + hermImageTag + ")")
+		backend := backendContainer
+		if opts.cpsl.LibraryPath != "" {
+			backend = backendCPSL
+		}
+		fmt.Println("herm " + Version + " " + backendVersionSuffix(backend))
 		return
 	}
 
@@ -43,6 +57,10 @@ func main() {
 	app.cliContinueID = opts.continueID
 	app.cliConfigOverrides = opts.configOverrides
 	app.cliCacheDir = opts.cacheDir
+	app.cpsl = opts.cpsl
+	if opts.cpsl.LibraryPath != "" {
+		app.backend = backendCPSL
+	}
 	if _, err := effectiveConfig(effectiveConfigOptions{global: app.globalConfig, project: app.projectConfig, overridesJSON: app.cliConfigOverrides, cacheDir: app.cliCacheDir}); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(2)
@@ -74,9 +92,16 @@ func parseCLI(opts parseCLIOptions) (cliOptions, error) {
 		parsed.help = true
 		return parsed, nil
 	}
+	if missingCPSLFlagValue(opts.args) {
+		fmt.Fprintln(opts.stderr, cpslLibraryErrorMessage)
+		return parsed, errCPSLLibrary
+	}
+	cpslRequested := hasCPSLFlag(opts.args)
 	fs := flag.NewFlagSet("herm", flag.ContinueOnError)
 	fs.SetOutput(opts.stderr)
 	fs.Usage = func() { printCLIUsage(opts.stderr) }
+	var allowDomains stringListFlag
+	var denyDomains stringListFlag
 	fs.BoolVar(&parsed.help, "help", false, "show help")
 	fs.BoolVar(&parsed.help, "h", false, "show help")
 	fs.BoolVar(&parsed.version, "version", false, "show version")
@@ -88,8 +113,21 @@ func parseCLI(opts parseCLIOptions) (cliOptions, error) {
 	fs.StringVar(&parsed.continueID, "from", "", "continue from a conversation node ID, prefix, or alias")
 	fs.StringVar(&parsed.configOverrides, "config-overrides", "", "JSON object overlaid onto the effective config")
 	fs.StringVar(&parsed.cacheDir, "cache", "", "directory for cached model responses")
+	fs.StringVar(&parsed.cpsl.LibraryPath, "cpsl", "", "path to a local sandbox library")
+	fs.Var(&allowDomains, "allow-domain", "allow a domain in sandbox mode")
+	fs.Var(&denyDomains, "deny-domain", "deny a domain in sandbox mode")
 	if err := fs.Parse(opts.args); err != nil {
 		return parsed, err
+	}
+	parsed.cpsl.AllowDomains = append([]string(nil), allowDomains...)
+	parsed.cpsl.DenyDomains = append([]string(nil), denyDomains...)
+	if cpslRequested {
+		path, err := validateCPSLLibraryPath(parsed.cpsl.LibraryPath)
+		if err != nil {
+			fmt.Fprintln(opts.stderr, cpslLibraryErrorMessage)
+			return parsed, err
+		}
+		parsed.cpsl.LibraryPath = path
 	}
 	if fs.NArg() > 0 {
 		if parsed.prompt != "" {
@@ -113,6 +151,36 @@ func parseCLI(opts parseCLIOptions) (cliOptions, error) {
 	return parsed, nil
 }
 
+type stringListFlag []string
+
+func (f *stringListFlag) Set(value string) error {
+	*f = append(*f, value)
+	return nil
+}
+
+func (f *stringListFlag) String() string {
+	return strings.Join(*f, ",")
+}
+
+func missingCPSLFlagValue(args []string) bool {
+	for i, arg := range args {
+		if arg != "--cpsl" && arg != "-cpsl" {
+			continue
+		}
+		return i == len(args)-1 || strings.HasPrefix(args[i+1], "-")
+	}
+	return false
+}
+
+func hasCPSLFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--cpsl" || arg == "-cpsl" || strings.HasPrefix(arg, "--cpsl=") || strings.HasPrefix(arg, "-cpsl=") {
+			return true
+		}
+	}
+	return false
+}
+
 func printCLIUsage(w io.Writer) {
 	fmt.Fprintf(w, `Usage:
   herm [flags]
@@ -127,6 +195,9 @@ Flags:
       --from node                  Alias for --continue.
       --config-overrides json      Overlay config fields for this run only.
       --cache path                 Cache successful model responses in path.
+      --cpsl path                  Run with a local sandbox library instead of Docker.
+      --allow-domain domain        Allow a domain in sandbox mode. Repeatable.
+      --deny-domain domain         Deny a domain in sandbox mode. Repeatable.
 
 Examples:
   herm -p say ok

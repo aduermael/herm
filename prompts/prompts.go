@@ -8,7 +8,7 @@ import (
 	"text/template"
 )
 
-//go:embed *.md
+//go:embed common/*.md container/*.md cpsl/*.md
 var templateFS embed.FS
 
 // funcMap provides helper functions available in all prompt templates.
@@ -24,10 +24,11 @@ var funcMap = template.FuncMap{
 	},
 }
 
-// Templates is the parsed prompt template set (system, role, tools, etc.).
-var Templates = template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "*.md"))
+// Templates is the parsed prompt template set. Backend-specific templates use
+// namespaced template names such as "container/role" and "cpsl/role".
+var Templates = template.Must(template.New("").Funcs(funcMap).ParseFS(templateFS, "common/*.md", "container/*.md", "cpsl/*.md"))
 
-//go:embed tools/*.md
+//go:embed container/tools/*.md cpsl/tools/*.md
 var ToolDescFS embed.FS
 
 // Standalone content files embedded as strings — used by tool implementations

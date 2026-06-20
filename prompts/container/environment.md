@@ -1,5 +1,5 @@
-{{/* environment: runtime context (date, paths, image, project snapshot). Used by both entry points. */}}
-{{define "environment"}}
+{{/* container/environment: Docker container runtime context. */}}
+{{define "container/environment"}}
 
 ## Environment
 
@@ -15,26 +15,5 @@
 {{- end}}
 {{- if .ContainerEnv}}
 {{.ContainerEnv}}
-{{- end}}
-{{- if or .TopLevelListing .RecentCommits .GitStatus}}
-
-## Project context
-
-{{- if .TopLevelListing}}
-
-Top-level:
-{{.TopLevelListing}}
-{{- end}}
-{{- if .RecentCommits}}
-
-Recent commits:
-{{.RecentCommits}}
-{{- end}}
-
-{{- if .GitStatus}}
-
-Uncommitted changes:
-{{.GitStatus}}
-{{- end}}
 {{- end}}
 {{- end}}

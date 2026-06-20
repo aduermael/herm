@@ -56,6 +56,9 @@ func TestFetchProjectSnapshot_NormalRepo(t *testing.T) {
 	if snap.RecentCommits == "" {
 		t.Error("RecentCommits should not be empty for a repo with commits")
 	}
+	if !snap.IsGitRepo {
+		t.Error("IsGitRepo should be true for a repo with commits")
+	}
 	if !strings.Contains(snap.RecentCommits, "initial commit") {
 		t.Errorf("RecentCommits should contain commit message, got: %q", snap.RecentCommits)
 	}
@@ -117,6 +120,9 @@ func TestFetchProjectSnapshot_NonGitDir(t *testing.T) {
 	if snap.RecentCommits != "" {
 		t.Errorf("RecentCommits should be empty for non-git dir, got: %q", snap.RecentCommits)
 	}
+	if snap.IsGitRepo {
+		t.Error("IsGitRepo should be false for non-git dir")
+	}
 	if snap.GitStatus != "" {
 		t.Errorf("GitStatus should be empty for non-git dir, got: %q", snap.GitStatus)
 	}
@@ -151,6 +157,7 @@ func TestBuildSystemPromptWithSnapshot(t *testing.T) {
 		TopLevel:      "cmd/\ngo.mod\nREADME.md",
 		RecentCommits: "abc123 initial commit\ndef456 add feature",
 		GitStatus:     "M main.go",
+		IsGitRepo:     true,
 	}
 
 	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: nil, serverTools: nil, skills: nil, workDir: "/work", personality: "", containerImage: "alpine:latest", worktreeBranch: "", snap: snap})
@@ -159,7 +166,7 @@ func TestBuildSystemPromptWithSnapshot(t *testing.T) {
 		t.Error("prompt should contain Project context section when snapshot is provided")
 	}
 	if !strings.Contains(prompt, "Top-level:") {
-		t.Error("prompt should contain Top-level listing")
+		t.Error("container prompt should contain Top-level listing")
 	}
 	if !strings.Contains(prompt, "cmd/") {
 		t.Error("prompt should contain snapshot listing content")
@@ -191,6 +198,7 @@ func TestBuildSystemPromptCleanRepo(t *testing.T) {
 		TopLevel:      "cmd/\ngo.mod",
 		RecentCommits: "abc123 initial commit",
 		GitStatus:     "", // clean
+		IsGitRepo:     true,
 	}
 
 	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: nil, serverTools: nil, skills: nil, workDir: "/work", personality: "", containerImage: "alpine:latest", worktreeBranch: "", snap: snap})
@@ -203,6 +211,40 @@ func TestBuildSystemPromptCleanRepo(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptCPSLProjectContextLabels(t *testing.T) {
+	snap := &projectSnapshot{
+		TopLevel:      "cmd/\ngo.mod",
+		RecentCommits: "abc123 initial commit",
+		IsGitRepo:     true,
+	}
+
+	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: []Tool{stubTool{toolLocalSandboxExec}}, serverTools: nil, skills: nil, workDir: "/ignored", personality: "", backend: backendCPSL, snap: snap})
+
+	for _, want := range []string{"Files in /workdir (2 levels):", "/workdir is a git repository, recent commits:", "abc123 initial commit"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("CPSL prompt missing project context %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Top-level:") || strings.Contains(prompt, "Recent commits:") {
+		t.Fatalf("CPSL prompt used container project context labels:\n%s", prompt)
+	}
+}
+
+func TestBuildSystemPromptCPSLOmitsGitSectionOutsideRepo(t *testing.T) {
+	snap := &projectSnapshot{
+		TopLevel: "notes.txt",
+	}
+
+	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: []Tool{stubTool{toolLocalSandboxExec}}, serverTools: nil, skills: nil, workDir: "/ignored", personality: "", backend: backendCPSL, snap: snap})
+
+	if !strings.Contains(prompt, "Files in /workdir (2 levels):") {
+		t.Fatalf("CPSL prompt missing files label:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "/workdir is a git repository") {
+		t.Fatalf("CPSL prompt should omit git section outside a git repo:\n%s", prompt)
+	}
+}
+
 // --- Sub-agent snapshot propagation ---
 
 func TestBuildSubAgentSystemPromptWithSnapshot(t *testing.T) {
@@ -210,6 +252,7 @@ func TestBuildSubAgentSystemPromptWithSnapshot(t *testing.T) {
 		TopLevel:      "src/\npackage.json",
 		RecentCommits: "aaa111 fix bug\nbbb222 add tests",
 		GitStatus:     "",
+		IsGitRepo:     true,
 	}
 
 	tools := []Tool{stubTool{"bash"}}
@@ -429,6 +472,7 @@ func TestExploreModeSkipsGitStatus(t *testing.T) {
 		TopLevel:      "src/\npackage.json",
 		RecentCommits: "aaa111 fix bug",
 		GitStatus:     "M main.go\n?? new.txt",
+		IsGitRepo:     true,
 	}
 
 	allTools := []Tool{
@@ -467,6 +511,7 @@ func TestGeneralModeGetsFullContext(t *testing.T) {
 		TopLevel:      "src/\npackage.json",
 		RecentCommits: "aaa111 fix bug",
 		GitStatus:     "M main.go\n?? new.txt",
+		IsGitRepo:     true,
 	}
 
 	allTools := []Tool{

@@ -1,6 +1,6 @@
-// tooldesc.go loads tool descriptions from embedded markdown files in
-// prompts/tools/. Each file has frontmatter (name, description) plus a body
-// of guidance; combined, they form a tool's Definition().Description.
+// tooldesc.go loads backend-specific tool descriptions from embedded markdown
+// files. Each file has frontmatter (name, description) plus a body of guidance;
+// combined, they form a tool's Definition().Description.
 package main
 
 import (
@@ -28,23 +28,36 @@ type loadToolDescriptionsOptions struct {
 	workDir         string
 	exploreMaxTurns int
 	generalMaxTurns int
+	backend         backendKind
+	dir             string
 }
 
-// loadToolDescriptions reads all markdown files from the embedded prompts/tools/
-// directory and returns a map keyed by tool name. Dynamic placeholders
+// loadToolDescriptions reads markdown files from the selected backend profile
+// directories and returns a map keyed by tool name. Dynamic placeholders
 // (__CONTAINER_IMAGE__, __WORK_DIR__, __EXPLORE_MAX_TURNS__, __GENERAL_MAX_TURNS__)
 // are replaced with the provided values.
 func loadToolDescriptions(opts loadToolDescriptionsOptions) map[string]ToolDesc {
-	exploreMaxTurns := opts.exploreMaxTurns
-	generalMaxTurns := opts.generalMaxTurns
-	if exploreMaxTurns <= 0 {
-		exploreMaxTurns = defaultExploreMaxTurns
+	if opts.exploreMaxTurns <= 0 {
+		opts.exploreMaxTurns = defaultExploreMaxTurns
 	}
-	if generalMaxTurns <= 0 {
-		generalMaxTurns = defaultGeneralMaxTurns
+	if opts.generalMaxTurns <= 0 {
+		opts.generalMaxTurns = defaultGeneralMaxTurns
 	}
 
-	entries, err := prompts.ToolDescFS.ReadDir("tools")
+	profile := promptProfileForBackend(opts.backend)
+	descs := make(map[string]ToolDesc)
+	for _, dir := range profile.toolDescriptionDirs {
+		dirOpts := opts
+		dirOpts.dir = dir
+		for name, td := range loadToolDescriptionsFromDir(dirOpts) {
+			descs[name] = td
+		}
+	}
+	return descs
+}
+
+func loadToolDescriptionsFromDir(opts loadToolDescriptionsOptions) map[string]ToolDesc {
+	entries, err := prompts.ToolDescFS.ReadDir(opts.dir)
 	if err != nil {
 		return nil
 	}
@@ -55,7 +68,7 @@ func loadToolDescriptions(opts loadToolDescriptionsOptions) map[string]ToolDesc 
 			continue
 		}
 
-		data, err := prompts.ToolDescFS.ReadFile("tools/" + e.Name())
+		data, err := prompts.ToolDescFS.ReadFile(opts.dir + "/" + e.Name())
 		if err != nil {
 			continue
 		}
@@ -75,8 +88,8 @@ func loadToolDescriptions(opts loadToolDescriptionsOptions) map[string]ToolDesc 
 			td.Brief = strings.ReplaceAll(td.Brief, "__WORK_DIR__", opts.workDir)
 		}
 		// Per-mode budget placeholders.
-		exploreStr := fmt.Sprintf("%d", exploreMaxTurns)
-		generalStr := fmt.Sprintf("%d", generalMaxTurns)
+		exploreStr := fmt.Sprintf("%d", opts.exploreMaxTurns)
+		generalStr := fmt.Sprintf("%d", opts.generalMaxTurns)
 		td.Full = strings.ReplaceAll(td.Full, "__EXPLORE_MAX_TURNS__", exploreStr)
 		td.Brief = strings.ReplaceAll(td.Brief, "__EXPLORE_MAX_TURNS__", exploreStr)
 		td.Full = strings.ReplaceAll(td.Full, "__GENERAL_MAX_TURNS__", generalStr)

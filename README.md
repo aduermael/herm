@@ -21,7 +21,8 @@ A coding agent CLI that's containerized by default. Every command runs inside a 
 ## Requirements
 
 - macOS or Linux (arm64 and amd64)
-- Docker installed and running
+- Docker installed and running for the default container backend
+- For CPSL local sandbox mode: native build tools, Go, and Rust
 
 ## Install
 
@@ -54,6 +55,9 @@ If you already cloned without submodules, run this before building:
 ```sh
 git submodule update --init --recursive
 ```
+
+To build Herm with a native CPSL local sandbox library instead of Docker, see
+[`CPSL_BUILD.md`](CPSL_BUILD.md).
 
 ## Quick Start
 
@@ -89,10 +93,13 @@ herm/
 │   │   ├── prompts/           System prompt templates (embedded)
 │   │   └── dockerfiles/       Base container definition (embedded)
 │   └── debug/                 Debug utilities
+├── scripts/                   Build helpers
 ├── .herm/
 │   └── skills/                Skill definitions (e.g. devenv)
+├── .herm-cpsl/                Ignored CPSL dependency checkout and artifacts
 ├── img/                       Demo assets
 ├── plans/                     Project planning docs
+├── CPSL_BUILD.md              Native CPSL local sandbox build guide
 ├── go.mod
 ├── LICENSE
 └── README.md

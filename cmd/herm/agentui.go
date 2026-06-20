@@ -61,6 +61,35 @@ func formatToolDefinitions(opts formatToolDefinitionsOptions) string {
 	return b.String()
 }
 
+type serverToolsForRuntimeOptions struct {
+	backend  backendKind
+	cpsl     cpslConfig
+	provider string
+	modelID  string
+	models   []ModelDef
+}
+
+func serverToolsForRuntime(opts serverToolsForRuntimeOptions) []types.ToolDefinition {
+	if !supportsServerTools(supportsServerToolsOptions{provider: opts.provider, modelID: opts.modelID, models: opts.models}) {
+		return nil
+	}
+	if opts.backend == backendCPSL && !cpslAllowsProviderServerTools(opts.cpsl) {
+		return nil
+	}
+	return []types.ToolDefinition{WebSearchToolDef()}
+}
+
+func cpslAllowsProviderServerTools(config cpslConfig) bool {
+	if len(config.DenyDomains) > 0 {
+		return false
+	}
+	for _, domain := range config.AllowDomains {
+		if domain == "*" {
+			return true
+		}
+	}
+	return false
+}
 func (a *App) startAgent(userMessage string) {
 	a.normalizeProjectConfigWithCurrentModels()
 	if !modelsReadyForAgent(a.effectiveModelConfig()) {
@@ -89,46 +118,11 @@ func (a *App) startAgent(userMessage string) {
 		}
 	}
 
-	var tools []Tool
-	if a.containerReady && a.container != nil {
-		tools = append(tools, NewBashTool(NewBashToolOptions{Container: a.container, Timeout: 120}))
-		tools = append(tools, NewGlobTool(a.container))
-		tools = append(tools, NewGrepTool(a.container))
-		tools = append(tools, NewReadFileTool(a.container))
-		tools = append(tools, NewOutlineTool(a.container))
-		tools = append(tools, NewEditFileTool(a.container))
-		tools = append(tools, NewWriteFileTool(a.container))
-		if a.worktreePath != "" {
-			hermDir := filepath.Join(a.worktreePath, ".herm")
-			cacheDir := filepath.Join(a.worktreePath, ".herm", "cache")
-			mounts := []MountSpec{
-				{Source: a.worktreePath, Destination: a.worktreePath},
-				{Source: a.attachmentDir(), Destination: "/attachments", ReadOnly: true},
-				{Source: cacheDir, Destination: "/cache", ReadOnly: false},
-			}
-			var projectID string
-			if repoRoot := gitRepoRoot(); repoRoot != "" {
-				projectID, _ = ensureProjectID(repoRoot)
-			}
-			onRebuild := func(imageName string) {
-				a.containerImage = imageName
-			}
-			onStatus := func(text string) {
-				a.resultCh <- containerStatusMsg{text: text}
-			}
-			tools = append(tools, NewDevEnvTool(NewDevEnvToolOptions{
-				Container: a.container,
-				HermDir:   hermDir,
-				Workspace: a.worktreePath,
-				Mounts:    mounts,
-				ProjectID: projectID,
-				OnRebuild: onRebuild,
-				OnStatus:  onStatus,
-			}))
-		}
-	}
-	if a.worktreePath != "" {
-		tools = append(tools, NewGitTool(NewGitToolOptions{WorkDir: a.worktreePath, CoAuthor: a.config.effectiveGitCoAuthor()}))
+	tools := a.runtimeTools()
+	if a.backend == backendCPSL && !a.cpslReady {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Local sandbox is still starting — the agent won't have Luau tools until it's ready."})
+		a.render()
+		return
 	}
 
 	modelResult := a.resolveMainAgentModelResult()
@@ -145,12 +139,13 @@ func (a *App) startAgent(userMessage string) {
 		modelProvider = configuredProviderForModel(configuredProviderForModelOptions{cfg: a.config, model: *modelDef})
 	}
 
-	// Server-side tools (e.g. web search) are handled by the LLM provider.
-	// Some models don't support them, so we check before including them.
-	var serverTools []types.ToolDefinition
-	if supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: modelID, models: availableModels}) {
-		serverTools = []types.ToolDefinition{WebSearchToolDef()}
-	}
+	serverTools := serverToolsForRuntime(serverToolsForRuntimeOptions{
+		backend:  a.backend,
+		cpsl:     a.cpsl,
+		provider: modelProvider,
+		modelID:  modelID,
+		models:   availableModels,
+	})
 
 	// Load project-local skills from .herm/skills/
 	var skills []Skill
@@ -182,16 +177,24 @@ func (a *App) startAgent(userMessage string) {
 		workDir:         workDir,
 		exploreMaxTurns: exploreMaxTurns,
 		generalMaxTurns: generalMaxTurns,
+		backend:         a.backend,
 	})
 	maxDepth := a.config.MaxAgentDepth
 	if maxDepth <= 0 {
 		maxDepth = defaultMaxAgentDepth
 	}
 	explorationModelID := a.config.resolveExplorationModel(a.models)
-	subAgentServerTools := serverTools
-	if !supportsServerTools(supportsServerToolsOptions{provider: modelProvider, modelID: explorationModelID, models: availableModels}) {
-		subAgentServerTools = nil
+	explorationModelProvider := modelProvider
+	if modelDef := findModelByID(findModelByIDOptions{models: availableModels, id: explorationModelID}); modelDef != nil {
+		explorationModelProvider = configuredProviderForModel(configuredProviderForModelOptions{cfg: a.config, model: *modelDef})
 	}
+	subAgentServerTools := serverToolsForRuntime(serverToolsForRuntimeOptions{
+		backend:  a.backend,
+		cpsl:     a.cpsl,
+		provider: explorationModelProvider,
+		modelID:  explorationModelID,
+		models:   availableModels,
+	})
 	subAgentTool := NewSubAgentTool(SubAgentConfig{
 		Client:           a.langdagClient,
 		Tools:            tools,
@@ -204,6 +207,7 @@ func (a *App) startAgent(userMessage string) {
 		WorkDir:          workDir,
 		Personality:      a.config.Personality,
 		ContainerImage:   containerImage,
+		Backend:          a.backend,
 	})
 	tools = append(tools, subAgentTool)
 
@@ -219,6 +223,7 @@ func (a *App) startAgent(userMessage string) {
 		personality:    a.config.Personality,
 		containerImage: containerImage,
 		worktreeBranch: wtBranch,
+		backend:        a.backend,
 		snap:           a.projectSnap,
 	})
 
@@ -298,6 +303,64 @@ func (a *App) startAgent(userMessage string) {
 
 	parentNodeID := a.agentNodeID
 	go agent.Run(context.Background(), RunOptions{UserMessage: userMessage, ParentNodeID: parentNodeID})
+}
+
+func (a *App) runtimeTools() []Tool {
+	if a.backend == backendCPSL {
+		if !a.cpslReady || a.cpslWorker == nil {
+			return nil
+		}
+		return []Tool{
+			NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: a.cpslWorker, Timeout: 120}),
+		}
+	}
+
+	var tools []Tool
+	if a.containerReady && a.container != nil {
+		tools = append(tools, NewBashTool(NewBashToolOptions{Container: a.container, Timeout: 120}))
+		tools = append(tools, NewGlobTool(a.container))
+		tools = append(tools, NewGrepTool(a.container))
+		tools = append(tools, NewReadFileTool(a.container))
+		tools = append(tools, NewOutlineTool(a.container))
+		tools = append(tools, NewEditFileTool(a.container))
+		tools = append(tools, NewWriteFileTool(a.container))
+		if a.worktreePath != "" {
+			tools = append(tools, a.newDevEnvTool())
+		}
+	}
+	if a.worktreePath != "" {
+		tools = append(tools, NewGitTool(NewGitToolOptions{WorkDir: a.worktreePath, CoAuthor: a.config.effectiveGitCoAuthor()}))
+	}
+	return tools
+}
+
+func (a *App) newDevEnvTool() *DevEnvTool {
+	hermDir := filepath.Join(a.worktreePath, ".herm")
+	cacheDir := filepath.Join(a.worktreePath, ".herm", "cache")
+	mounts := []MountSpec{
+		{Source: a.worktreePath, Destination: a.worktreePath},
+		{Source: a.attachmentDir(), Destination: "/attachments", ReadOnly: true},
+		{Source: cacheDir, Destination: "/cache", ReadOnly: false},
+	}
+	var projectID string
+	if repoRoot := gitRepoRoot(); repoRoot != "" {
+		projectID, _ = ensureProjectID(repoRoot)
+	}
+	onRebuild := func(imageName string) {
+		a.containerImage = imageName
+	}
+	onStatus := func(text string) {
+		a.resultCh <- containerStatusMsg{text: text}
+	}
+	return NewDevEnvTool(NewDevEnvToolOptions{
+		Container: a.container,
+		HermDir:   hermDir,
+		Workspace: a.worktreePath,
+		Mounts:    mounts,
+		ProjectID: projectID,
+		OnRebuild: onRebuild,
+		OnStatus:  onStatus,
+	})
 }
 
 // hasActiveSubAgents returns true if any sub-agent in the display map is still running.
