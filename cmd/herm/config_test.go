@@ -1037,6 +1037,50 @@ func TestEnterConfigModeClearsStaleProjectModelsWhenNoProviders(t *testing.T) {
 	}
 }
 
+// TestEnterConfigModeDoesNotLeakRoutingEditsBeforeSave guards against the
+// config-draft aliasing issue: routing is edited in place (setRoutingStages),
+// so without deep-cloning Routing on entry, draft edits mutate the live
+// globalConfig even when the user never saves.
+func TestEnterConfigModeDoesNotLeakRoutingEditsBeforeSave(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	app := &App{
+		repoRoot: t.TempDir(),
+		globalConfig: Config{
+			AnthropicAPIKey: "sk-test",
+			Routing: &RoutingPolicy{
+				Default: []RoutingStage{{Deployments: []DeploymentChoice{{DeploymentID: "anthropic"}}}},
+			},
+		},
+		models:   defaultTestModels(),
+		resultCh: make(chan any, 8),
+		headless: true,
+	}
+
+	app.enterConfigMode()
+	app.stopConfigTicker()
+
+	// Edit routing in the draft only (no save).
+	setRoutingStages(setRoutingStagesOptions{
+		cfg:    &app.cfgDraft,
+		scope:  routingScopeModel,
+		key:    "openrouter/some-model",
+		stages: []RoutingStage{{Deployments: []DeploymentChoice{{DeploymentID: "openrouter"}}}},
+	})
+
+	// The live config must be untouched until exitConfigMode(save=true).
+	if app.globalConfig.Routing == nil {
+		t.Fatal("globalConfig.Routing became nil after a draft-only edit")
+	}
+	if len(app.globalConfig.Routing.Models) != 0 {
+		t.Fatalf("draft routing edit leaked into globalConfig.Routing.Models = %v", app.globalConfig.Routing.Models)
+	}
+	// The draft itself should reflect the edit.
+	if app.cfgDraft.Routing == nil || len(app.cfgDraft.Routing.Models["openrouter/some-model"]) == 0 {
+		t.Fatal("draft routing edit was not applied to cfgDraft")
+	}
+}
+
 func TestEnterConfigModeSetsPreferredAPIKeyCursorFromEffectiveProvider(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -126,6 +126,12 @@ func (a *App) enterConfigMode() {
 		}
 		a.cfgDraft.Deployments = cloned
 	}
+	// Deep-clone reference-typed fields so draft edits never mutate the live
+	// config before save. Routing in particular is edited in place
+	// (setRoutingStages), which would otherwise leak into a.globalConfig even
+	// if the user cancels.
+	a.cfgDraft.Routing = cloneRoutingPolicy(a.cfgDraft.Routing)
+	a.cfgDraft.ModelSortDirs = cloneBoolMap(a.cfgDraft.ModelSortDirs)
 	a.cfgProjectDraft = a.projectConfig
 	if len(a.cfgDraft.configuredProviders()) == 0 {
 		a.cfgProjectDraft.ActiveModel = ""
