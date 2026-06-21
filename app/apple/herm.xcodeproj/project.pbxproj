@@ -6,7 +6,27 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		850B3BFA2FE8390E00A21FC8 /* cpsl.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */; };
+		850B3BFB2FE8390E00A21FC8 /* cpsl.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		850B3BFC2FE8390E00A21FC8 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				850B3BFB2FE8390E00A21FC8 /* cpsl.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = cpsl.xcframework; path = "../../.herm-cpsl/artifacts/apple/cpsl.xcframework"; sourceTree = "<group>"; };
 		85D75D332FE62B6F0095BAB2 /* herm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = herm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -23,16 +43,26 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				850B3BFA2FE8390E00A21FC8 /* cpsl.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		850B3BF82FE8390E00A21FC8 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		85D75D2A2FE62B6F0095BAB2 = {
 			isa = PBXGroup;
 			children = (
 				85D75D352FE62B6F0095BAB2 /* herm */,
+				850B3BF82FE8390E00A21FC8 /* Frameworks */,
 				85D75D342FE62B6F0095BAB2 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -55,6 +85,7 @@
 				85D75D2F2FE62B6F0095BAB2 /* Sources */,
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
 				85D75D312FE62B6F0095BAB2 /* Resources */,
+				850B3BFC2FE8390E00A21FC8 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
