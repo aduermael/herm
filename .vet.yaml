@@ -1,0 +1,24 @@
+version: 1
+rules:
+  max-function-parameters:
+    enabled: true
+    max: 3
+  source-file-header:
+    required: true
+    min-length: 60
+    max-length: 0
+  max-source-file-lines:
+    max: 1000
+  max-function-body-lines:
+    max: 0
+  function-docstring:
+    policy: optional
+  indent:
+    type: language-default
+    width: 0
+  casing:
+    enabled: false
+    functions: language-default
+    variables: language-default
+    types: language-default
+    constants: language-default

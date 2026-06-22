@@ -9,11 +9,7 @@ unset $git_local_env
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/herm-pre-commit.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
-echo "pre-commit: building ci-check"
-if ! (cd tools/ci-check && GOWORK=off go build -o "$tmpdir/ci-check" .); then
-	echo "pre-commit: failed to build tools/ci-check"
-	exit 1
-fi
+vet_pkg="github.com/gdevillele/vet/implementations/go/cmd/vet@v0.0.0-20260622231611-d7d07ebc435d"
 
 pids=()
 names=()
@@ -32,9 +28,23 @@ start_task() {
 	logs+=("$log")
 }
 
-start_task "file-length" env GOWORK=off "$tmpdir/ci-check" file-length .
-start_task "docstring" env GOWORK=off "$tmpdir/ci-check" docstring .
-start_task "positional-params" env GOWORK=off "$tmpdir/ci-check" positional-params .
+start_task "vet" bash -c '
+	vet_pkg="$1"
+	mapfile -t files < <(
+		git ls-files -- "*.go" \
+			":(exclude)*_test.go" \
+			":(exclude)external/**" \
+			":(exclude)external-deps-workspace/**" \
+			":(exclude)vendor/**" \
+			":(exclude)node_modules/**" \
+			":(exclude)**/testdata/**" \
+			":(exclude)tools/ci-check/**"
+	)
+	if [ "${#files[@]}" -eq 0 ]; then
+		exit 0
+	fi
+	go run "$vet_pkg" --config .vet.yaml "${files[@]}"
+' _ "$vet_pkg"
 start_task "go-test-root" go test ./...
 
 for mod in tools/*/go.mod; do
