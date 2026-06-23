@@ -9,8 +9,8 @@ unset $git_local_env
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/herm-pre-commit.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
-vet_version="v0.0.0-20260623005521-5df86c92e16c"
-vet_commit="5df86c92e16c4d29065178b681fbbfc5ace795ae"
+vet_version="10c75b5db6203ab3c0cb54d555e60a96e11e2e1f"
+vet_commit="10c75b5db6203ab3c0cb54d555e60a96e11e2e1f"
 vet_go_pkg="github.com/gdevillele/vet/implementations/go/cmd/vet@$vet_version"
 vet_repo="https://github.com/gdevillele/vet.git"
 
@@ -33,20 +33,7 @@ start_task() {
 
 start_task "vet" bash -c '
 	vet_pkg="$1"
-	mapfile -t files < <(
-		git ls-files -- "*.go" \
-			":(exclude)*_test.go" \
-			":(exclude)external/**" \
-			":(exclude)external-deps-workspace/**" \
-			":(exclude)vendor/**" \
-			":(exclude)node_modules/**" \
-			":(exclude)**/testdata/**" \
-			":(exclude)tools/ci-check/**"
-	)
-	if [ "${#files[@]}" -eq 0 ]; then
-		exit 0
-	fi
-	go run "$vet_pkg" --config .vet.yaml "${files[@]}"
+	go run "$vet_pkg" --config .vet.yaml
 ' _ "$vet_go_pkg"
 
 start_task "vet-swift" bash -c '
