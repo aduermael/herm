@@ -13,12 +13,15 @@ rules:
     max: 0
   function-docstring:
     policy: optional
-  indent:
-    type: language-default
-    width: 0
-  casing:
-    enabled: false
-    functions: language-default
-    variables: language-default
-    types: language-default
-    constants: language-default
+languages:
+  go:
+    rules:
+      indent:
+        type: language-default
+        width: 0
+      casing:
+        enabled: false
+        functions: language-default
+        variables: language-default
+        types: language-default
+        constants: language-default

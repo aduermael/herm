@@ -9,7 +9,7 @@ unset $git_local_env
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/herm-pre-commit.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
-vet_pkg="github.com/gdevillele/vet/implementations/go/cmd/vet@v0.0.0-20260622231611-d7d07ebc435d"
+vet_pkg="github.com/gdevillele/vet/implementations/go/cmd/vet@v0.0.0-20260623005521-5df86c92e16c"
 
 pids=()
 names=()
