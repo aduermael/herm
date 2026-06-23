@@ -9,7 +9,10 @@ unset $git_local_env
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/herm-pre-commit.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
-vet_pkg="github.com/gdevillele/vet/implementations/go/cmd/vet@v0.0.0-20260623005521-5df86c92e16c"
+vet_version="v0.0.0-20260623005521-5df86c92e16c"
+vet_commit="5df86c92e16c4d29065178b681fbbfc5ace795ae"
+vet_go_pkg="github.com/gdevillele/vet/implementations/go/cmd/vet@$vet_version"
+vet_repo="https://github.com/gdevillele/vet.git"
 
 pids=()
 names=()
@@ -44,7 +47,37 @@ start_task "vet" bash -c '
 		exit 0
 	fi
 	go run "$vet_pkg" --config .vet.yaml "${files[@]}"
-' _ "$vet_pkg"
+' _ "$vet_go_pkg"
+
+start_task "vet-swift" bash -c '
+	set -e
+
+	vet_repo="$1"
+	vet_commit="$2"
+	mapfile -t files < <(
+		git ls-files -- apple app/apple | grep -E "\.swift$" || true
+	)
+	if [ "${#files[@]}" -eq 0 ]; then
+		exit 0
+	fi
+
+	cache_home="${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}"
+	cache_root="$cache_home/herm/vet"
+	checkout_dir="$cache_root/$vet_commit"
+	package_dir="$checkout_dir/implementations/swift"
+
+	if [ ! -f "$package_dir/Package.swift" ]; then
+		tmp_checkout="$cache_root/$vet_commit.tmp.$$"
+		mkdir -p "$cache_root"
+		rm -rf "$tmp_checkout"
+		git clone --quiet --filter=blob:none "$vet_repo" "$tmp_checkout"
+		git -C "$tmp_checkout" checkout --quiet "$vet_commit"
+		rm -rf "$checkout_dir"
+		mv "$tmp_checkout" "$checkout_dir"
+	fi
+
+	swift run --package-path "$package_dir" vet --config "$PWD/.vet.yaml" "${files[@]}"
+' _ "$vet_repo" "$vet_commit"
 start_task "go-test-root" go test ./...
 
 for mod in tools/*/go.mod; do
