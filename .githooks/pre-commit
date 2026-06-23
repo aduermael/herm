@@ -9,8 +9,8 @@ unset $git_local_env
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/herm-pre-commit.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
 
-vet_version="10c75b5db6203ab3c0cb54d555e60a96e11e2e1f"
-vet_commit="10c75b5db6203ab3c0cb54d555e60a96e11e2e1f"
+vet_version="a052c0a56f758cf35ece162b60f45a6f9b17974c"
+vet_commit="a052c0a56f758cf35ece162b60f45a6f9b17974c"
 vet_go_pkg="github.com/gdevillele/vet/implementations/go/cmd/vet@$vet_version"
 vet_repo="https://github.com/gdevillele/vet.git"
 
