@@ -2361,10 +2361,25 @@ func TestRenderFullClearSequence(t *testing.T) {
 		t.Errorf("renderFull should emit hide-cursor + home + clear-screen + clear-scrollback sequence")
 	}
 
-	// Should move to the right edge before clearing below so background-only
-	// final rows remain visible.
-	if !strings.Contains(output, "\033[999C\033[0m\033[J") {
-		t.Errorf("render should preserve final row fill before clear-to-end-of-screen")
+	if strings.Contains(output, "\033[999C\033[0m\033[J") {
+		t.Errorf("render should not clear from the final row's rightmost cell")
+	}
+	if !strings.Contains(output, "\033[J") {
+		t.Errorf("render should clear stale rows below written content")
+	}
+}
+
+func TestClearRowsBelowWrittenRowsDoesNotTouchFinalRow(t *testing.T) {
+	var buf strings.Builder
+	clearRowsBelowWrittenRows(&buf, 6, 20)
+	if got, want := buf.String(), "\033[7;1H\033[0m\033[J"; got != want {
+		t.Fatalf("clearRowsBelowWrittenRows = %q, want %q", got, want)
+	}
+
+	buf.Reset()
+	clearRowsBelowWrittenRows(&buf, 20, 20)
+	if got := buf.String(); got != "" {
+		t.Fatalf("clearRowsBelowWrittenRows on bottom row = %q, want no clear", got)
 	}
 }
 

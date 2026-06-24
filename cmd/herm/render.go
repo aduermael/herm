@@ -862,10 +862,11 @@ func (a *App) backendStatusDisplay() (label, text string, err error) {
 	return "container", a.containerStatusText, a.containerErr
 }
 
-func clearBelowWrittenRows(buf *strings.Builder) {
-	// A background-only final row leaves the cursor at column 1. Move to the
-	// right edge first so clearing stale rows below does not erase that fill.
-	buf.WriteString("\033[999C\033[0m\033[J")
+func clearRowsBelowWrittenRows(buf *strings.Builder, lastRow, terminalHeight int) {
+	if lastRow <= 0 || terminalHeight <= 0 || lastRow >= terminalHeight {
+		return
+	}
+	buf.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[J", lastRow+1))
 }
 
 func (a *App) positionCursor(buf *strings.Builder) {
@@ -930,6 +931,7 @@ func (a *App) render() {
 
 	var buf strings.Builder
 	buf.WriteString("\033[?2026h") // begin synchronized update (atomic frame)
+	lastWrittenRow := totalRows - newScrollShift
 
 	if newScrollShift > 0 && a.scrollShift > 0 && newScrollShift >= a.scrollShift {
 		// Content overflows and grew or stayed same: write only visible portion.
@@ -941,6 +943,7 @@ func (a *App) render() {
 			}
 		}
 		visibleRows := allRows[newScrollShift:]
+		lastWrittenRow = len(visibleRows)
 		writeRows(writeRowsOptions{buf: &buf, rows: visibleRows, from: 1})
 	} else {
 		// No overflow, or content shrank: write from top.
@@ -950,7 +953,7 @@ func (a *App) render() {
 		writeRows(writeRowsOptions{buf: &buf, rows: allRows, from: 1})
 	}
 
-	clearBelowWrittenRows(&buf)
+	clearRowsBelowWrittenRows(&buf, lastWrittenRow, th)
 
 	a.prevRowCount = totalRows
 	a.scrollShift = newScrollShift
@@ -1002,7 +1005,7 @@ func (a *App) renderInput() {
 	var buf strings.Builder
 	buf.WriteString("\033[?2026h") // begin synchronized update (atomic frame)
 	writeRows(writeRowsOptions{buf: &buf, rows: inputRows, from: screenSepRow})
-	clearBelowWrittenRows(&buf)
+	clearRowsBelowWrittenRows(&buf, screenSepRow+len(inputRows)-1, th)
 
 	a.scrollShift = newScrollShift
 	a.prevRowCount = totalRows
