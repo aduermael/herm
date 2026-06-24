@@ -568,7 +568,13 @@ func TestBuildInputRowsApprovalUsesCodeBlockAndOptions(t *testing.T) {
 	if !strings.Contains(joined, codeBackgroundStyle) {
 		t.Fatalf("approval detail should use code block style: %#v", rows)
 	}
-	if !strings.Contains(joined, "\033[7m Always accept [cmd+y] \033[0m") {
+	if !strings.Contains(joined, inputBgStyle) {
+		t.Fatalf("approval panel should use input background style: %#v", rows)
+	}
+	if strings.Contains(plain, "─") {
+		t.Fatalf("approval panel should not render separator rules: %#v", rows)
+	}
+	if !strings.Contains(joined, "\033[7m Always accept [cmd+y] \033[27m") {
 		t.Fatalf("selected option not highlighted: %#v", rows)
 	}
 }

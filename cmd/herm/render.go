@@ -160,6 +160,10 @@ func inputTextRow(content string) string {
 	return fillStyledRow(fillStyledRowOptions{row: inputTextStyle + content, fillStyle: inputBgStyle})
 }
 
+func approvalTextRow(content string) string {
+	return fillStyledRow(fillStyledRowOptions{row: inputTextStyle + content, fillStyle: inputBgStyle})
+}
+
 type wrapStringOptions struct {
 	s        string
 	startCol int
@@ -635,7 +639,7 @@ func renderApprovalOptionsRow(opts renderApprovalOptionsRowOptions) string {
 	parts := make([]string, 0, len(labels))
 	for i, label := range labels {
 		if i == opts.selected {
-			parts = append(parts, "\033[7m "+label+" \033[0m")
+			parts = append(parts, "\033[7m "+label+" \033[27m")
 		} else {
 			parts = append(parts, " "+label+" ")
 		}
@@ -647,13 +651,13 @@ func renderApprovalOptionsRow(opts renderApprovalOptionsRowOptions) string {
 	if opts.width > 0 && visibleWidth(row) < opts.width {
 		row = strings.Repeat(" ", (opts.width-visibleWidth(row))/2) + row
 	}
-	return row
+	return approvalTextRow(row)
 }
 
 func (a *App) buildInputRows() []string {
 	sep := strings.Repeat("─", a.width)
 
-	// Approval mode: animated yellow gradient borders + centered message
+	// Approval mode uses the same background-filled panel as the prompt area.
 	if a.awaitingApproval {
 		t := time.Since(a.approvalPauseStart)
 		color := approvalGradientColor(t)
@@ -669,13 +673,13 @@ func (a *App) buildInputRows() []string {
 		if detail == a.approvalSummary {
 			detail = ""
 		}
-		approvalRows := []string{sep}
-		approvalRows = append(approvalRows, fmt.Sprintf("%s%s%s[0m", color, strings.Repeat(" ", shortPad), shortMsg))
+		approvalRows := []string{inputBackgroundRow()}
+		approvalRows = append(approvalRows, approvalTextRow(fmt.Sprintf("%s%s%s\033[0m", color, strings.Repeat(" ", shortPad), shortMsg)))
 		if detail != "" {
 			approvalRows = append(approvalRows, renderApprovalCodeRows(renderApprovalCodeRowsOptions{text: detail, width: a.width})...)
 		}
 		approvalRows = append(approvalRows, renderApprovalOptionsRow(renderApprovalOptionsRowOptions{selected: a.approvalSelected, width: a.width}))
-		approvalRows = append(approvalRows, sep)
+		approvalRows = append(approvalRows, inputBackgroundRow())
 		return approvalRows
 	}
 

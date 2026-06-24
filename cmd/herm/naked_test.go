@@ -264,6 +264,9 @@ func TestDarwinNakedSandboxCommandUsesWorkspaceWriteProfile(t *testing.T) {
 	if !strings.Contains(args[1], "(allow file-read*)") {
 		t.Fatalf("profile = %q, want broad file reads for macOS command startup", args[1])
 	}
+	if !strings.Contains(args[1], "(allow lsopen)") || !strings.Contains(args[1], "(allow appleevent-send)") {
+		t.Fatalf("profile = %q, want macOS browser launch allowances", args[1])
+	}
 	if !strings.Contains(args[1], `(allow file-write* (subpath "`+workspace+`"))`) {
 		t.Fatalf("profile = %q, want workspace write allowance", args[1])
 	}
