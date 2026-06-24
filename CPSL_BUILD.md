@@ -62,7 +62,7 @@ CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 ```
 
 The default build is the minimum Herm CPSL profile. It compiles `fs`, `json`,
-`csv`, `http`, and `grep`.
+`csv`, `http`, and `ripgrep`.
 
 To compile every CPSL core module into the library:
 
@@ -144,7 +144,7 @@ dynamic library without an Apple SDK and macOS-compatible C/C++ toolchain. For
 the full Herm + CPSL macOS build, run the script on macOS.
 
 The default CPSL tools are the same on Linux and macOS: `fs`, `json`, `csv`,
-`http`, and `grep`. Building on macOS does not unlock additional default tools.
+`http`, and `ripgrep`. Building on macOS does not unlock additional default tools.
 Use `--all` on either platform when you want every CPSL core module and have the
 required native dependencies installed.
 
