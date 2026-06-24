@@ -580,6 +580,23 @@ func TestBuildInputRowsApprovalUsesCodeBlockAndOptions(t *testing.T) {
 	if !strings.Contains(joined, "\033[7m Always accept [cmd+y] \033[27m") {
 		t.Fatalf("selected option not highlighted: %#v", rows)
 	}
+	detailRow := -1
+	for i, row := range rows {
+		if strings.Contains(ansiEscRe.ReplaceAllString(row, ""), "git status && go test ./...") {
+			detailRow = i
+			break
+		}
+	}
+	if detailRow < 0 {
+		t.Fatalf("approval detail row missing in %#v", rows)
+	}
+	detailPlain := ansiEscRe.ReplaceAllString(rows[detailRow], "")
+	if strings.TrimSpace(detailPlain) != "git status && go test ./..." {
+		t.Fatalf("approval detail row = %q, want centered command detail", detailPlain)
+	}
+	if strings.HasPrefix(detailPlain, "git status") {
+		t.Fatalf("approval detail should be centered, got %q", detailPlain)
+	}
 	if len(rows) < 7 {
 		t.Fatalf("approval rows = %#v, want title, spacing, detail, spacing, options, spacing", rows)
 	}
@@ -2344,9 +2361,10 @@ func TestRenderFullClearSequence(t *testing.T) {
 		t.Errorf("renderFull should emit hide-cursor + home + clear-screen + clear-scrollback sequence")
 	}
 
-	// Should contain clear-to-end-of-screen after rows
-	if !strings.Contains(output, "\033[0m\033[J") {
-		t.Errorf("render should emit clear-to-end-of-screen (\\033[J) after rows")
+	// Should move to the right edge before clearing below so background-only
+	// final rows remain visible.
+	if !strings.Contains(output, "\033[999C\033[0m\033[J") {
+		t.Errorf("render should preserve final row fill before clear-to-end-of-screen")
 	}
 }
 

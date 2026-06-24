@@ -623,7 +623,11 @@ func renderApprovalCodeRows(opts renderApprovalCodeRowsOptions) []string {
 		}
 		wrapped := wrapString(wrapStringOptions{s: approvalDetailStyle + line, w: width})
 		for i := range wrapped {
-			rows = append(rows, fillStyledRow(fillStyledRowOptions{row: wrapped[i], fillStyle: inputBgStyle}))
+			row := wrapped[i]
+			if pad := (width - visibleWidth(row)) / 2; pad > 0 {
+				row = approvalDetailStyle + strings.Repeat(" ", pad) + row
+			}
+			rows = append(rows, fillStyledRow(fillStyledRowOptions{row: row, fillStyle: inputBgStyle}))
 		}
 	}
 	return rows
@@ -858,6 +862,12 @@ func (a *App) backendStatusDisplay() (label, text string, err error) {
 	return "container", a.containerStatusText, a.containerErr
 }
 
+func clearBelowWrittenRows(buf *strings.Builder) {
+	// A background-only final row leaves the cursor at column 1. Move to the
+	// right edge first so clearing stale rows below does not erase that fill.
+	buf.WriteString("\033[999C\033[0m\033[J")
+}
+
 func (a *App) positionCursor(buf *strings.Builder) {
 	s := a.scrollShift
 	if a.cfgActive {
@@ -940,7 +950,7 @@ func (a *App) render() {
 		writeRows(writeRowsOptions{buf: &buf, rows: allRows, from: 1})
 	}
 
-	buf.WriteString("\033[0m\033[J") // clear from cursor to end of screen
+	clearBelowWrittenRows(&buf)
 
 	a.prevRowCount = totalRows
 	a.scrollShift = newScrollShift
@@ -992,7 +1002,7 @@ func (a *App) renderInput() {
 	var buf strings.Builder
 	buf.WriteString("\033[?2026h") // begin synchronized update (atomic frame)
 	writeRows(writeRowsOptions{buf: &buf, rows: inputRows, from: screenSepRow})
-	buf.WriteString("\033[0m\033[J") // clear remaining lines
+	clearBelowWrittenRows(&buf)
 
 	a.scrollShift = newScrollShift
 	a.prevRowCount = totalRows
