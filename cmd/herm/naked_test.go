@@ -274,3 +274,77 @@ func TestDarwinNakedSandboxCommandUsesWorkspaceWriteProfile(t *testing.T) {
 		t.Fatalf("env = %#v, want HOME in workspace", env)
 	}
 }
+
+func TestDarwinNakedSandboxCommandConfiguresBrowserOpenShim(t *testing.T) {
+	origLookPath := lookPath
+	t.Cleanup(func() { lookPath = origLookPath })
+	lookPath = func(file string) (string, error) {
+		if file == "sandbox-exec" {
+			return "/usr/bin/sandbox-exec", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	workspace := filepath.Join(t.TempDir(), "project")
+	openLog := filepath.Join(workspace, ".herm", "tmp", "browser-open.log")
+	_, _, env, err := nakedSandboxCommand(nakedSandboxCommandOptions{
+		goos:      "darwin",
+		workspace: workspace,
+		command:   "login",
+		openLog:   openLog,
+	})
+	if err != nil {
+		t.Fatalf("nakedSandboxCommand: %v", err)
+	}
+	shim := filepath.Join(workspace, configDir, "bin", "open")
+	if !slices.Contains(env, "BROWSER="+shim) {
+		t.Fatalf("env = %#v, want BROWSER shim", env)
+	}
+	if !slices.Contains(env, "HERM_BROWSER_OPEN_LOG="+openLog) {
+		t.Fatalf("env = %#v, want browser open log", env)
+	}
+	foundPath := false
+	for _, item := range env {
+		if strings.HasPrefix(item, "PATH="+filepath.Join(workspace, configDir, "bin")+string(os.PathListSeparator)) {
+			foundPath = true
+		}
+	}
+	if !foundPath {
+		t.Fatalf("env = %#v, want PATH prepended with shim dir", env)
+	}
+}
+
+func TestDarwinBrowserOpenBrokerLaunchesOnlyURLs(t *testing.T) {
+	origOpenCommand := darwinOpenCommand
+	t.Cleanup(func() { darwinOpenCommand = origOpenCommand })
+
+	var opened [][]string
+	darwinOpenCommand = func(_ context.Context, args []string) error {
+		opened = append(opened, append([]string(nil), args...))
+		return nil
+	}
+
+	logPath := filepath.Join(t.TempDir(), "browser-open.log")
+	content := strings.Join([]string{
+		"__HERM_OPEN__",
+		"https://example.com/login",
+		"__HERM_DONE__",
+		"__HERM_OPEN__",
+		"/etc/passwd",
+		"__HERM_DONE__",
+		"",
+	}, "\n")
+	if err := os.WriteFile(logPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	broker := &darwinBrowserOpenBroker{logPath: logPath}
+	broker.process()
+
+	if len(opened) != 1 || !slices.Equal(opened[0], []string{"https://example.com/login"}) {
+		t.Fatalf("opened = %#v, want only URL request", opened)
+	}
+	if !strings.Contains(broker.Errors(), "ignored non-URL") {
+		t.Fatalf("broker errors = %q, want ignored non-URL error", broker.Errors())
+	}
+}
