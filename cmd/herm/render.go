@@ -621,9 +621,9 @@ func renderApprovalCodeRows(opts renderApprovalCodeRowsOptions) []string {
 		if line == "" {
 			line = " "
 		}
-		wrapped := wrapString(wrapStringOptions{s: codeStyle + line, w: width})
+		wrapped := wrapString(wrapStringOptions{s: approvalDetailStyle + line, w: width})
 		for i := range wrapped {
-			rows = append(rows, padCodeBlockRow(padCodeBlockRowOptions{row: wrapped[i], width: width}))
+			rows = append(rows, fillStyledRow(fillStyledRowOptions{row: wrapped[i], fillStyle: inputBgStyle}))
 		}
 	}
 	return rows
@@ -675,8 +675,10 @@ func (a *App) buildInputRows() []string {
 		}
 		approvalRows := []string{inputBackgroundRow()}
 		approvalRows = append(approvalRows, approvalTextRow(fmt.Sprintf("%s%s%s\033[0m", color, strings.Repeat(" ", shortPad), shortMsg)))
+		approvalRows = append(approvalRows, inputBackgroundRow())
 		if detail != "" {
 			approvalRows = append(approvalRows, renderApprovalCodeRows(renderApprovalCodeRowsOptions{text: detail, width: a.width})...)
+			approvalRows = append(approvalRows, inputBackgroundRow())
 		}
 		approvalRows = append(approvalRows, renderApprovalOptionsRow(renderApprovalOptionsRowOptions{selected: a.approvalSelected, width: a.width}))
 		approvalRows = append(approvalRows, inputBackgroundRow())

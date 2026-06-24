@@ -17,6 +17,7 @@ const (
 	inputBgStyle         = "\033[48;5;234m"
 	inputFgStyle         = "\033[38;5;252m"
 	inputTextStyle       = inputBgStyle + inputFgStyle
+	approvalDetailStyle  = inputBgStyle + "\033[38;5;245m"
 )
 
 // ─── Progress bar (from simple-chat) ───

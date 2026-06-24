@@ -565,8 +565,11 @@ func TestBuildInputRowsApprovalUsesCodeBlockAndOptions(t *testing.T) {
 			t.Fatalf("approval rows missing %q:\n%s", want, plain)
 		}
 	}
-	if !strings.Contains(joined, codeBackgroundStyle) {
-		t.Fatalf("approval detail should use code block style: %#v", rows)
+	if strings.Contains(joined, codeBackgroundStyle) {
+		t.Fatalf("approval detail should not use a second background: %#v", rows)
+	}
+	if !strings.Contains(joined, approvalDetailStyle) {
+		t.Fatalf("approval detail should use dimmed panel text style: %#v", rows)
 	}
 	if !strings.Contains(joined, inputBgStyle) {
 		t.Fatalf("approval panel should use input background style: %#v", rows)
@@ -576,6 +579,27 @@ func TestBuildInputRowsApprovalUsesCodeBlockAndOptions(t *testing.T) {
 	}
 	if !strings.Contains(joined, "\033[7m Always accept [cmd+y] \033[27m") {
 		t.Fatalf("selected option not highlighted: %#v", rows)
+	}
+	if len(rows) < 7 {
+		t.Fatalf("approval rows = %#v, want title, spacing, detail, spacing, options, spacing", rows)
+	}
+	if rowPlain := strings.TrimSpace(ansiEscRe.ReplaceAllString(rows[2], "")); rowPlain != "" {
+		t.Fatalf("row after approval title = %q, want empty spacer", rowPlain)
+	}
+	optionRow := -1
+	for i, row := range rows {
+		if strings.Contains(ansiEscRe.ReplaceAllString(row, ""), "Always accept") {
+			optionRow = i
+			break
+		}
+	}
+	if optionRow <= 0 || optionRow+1 >= len(rows) {
+		t.Fatalf("option row index = %d in %#v", optionRow, rows)
+	}
+	for _, idx := range []int{optionRow - 1, optionRow + 1} {
+		if rowPlain := strings.TrimSpace(ansiEscRe.ReplaceAllString(rows[idx], "")); rowPlain != "" {
+			t.Fatalf("row %d around approval choices = %q, want empty spacer", idx, rowPlain)
+		}
 	}
 }
 
