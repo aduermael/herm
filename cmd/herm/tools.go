@@ -39,12 +39,22 @@ type bashRunner interface {
 
 type commandApprovalPolicy interface {
 	RequiresApproval(command string) bool
-	RecordApproval(command string, remember bool) error
+	RecordApproval(opts recordCommandApprovalOptions) error
 	FinishApproval(command string)
 }
 
 type toolApprovalRecorder interface {
-	RecordApproval(input json.RawMessage, remember bool) error
+	RecordApproval(opts recordToolApprovalOptions) error
+}
+
+type recordCommandApprovalOptions struct {
+	command  string
+	remember bool
+}
+
+type recordToolApprovalOptions struct {
+	input    json.RawMessage
+	remember bool
 }
 
 type containerBashRunner struct {
@@ -221,18 +231,21 @@ func (t *BashTool) RequiresApproval(input json.RawMessage) bool {
 
 func (t *BashTool) HostTool() bool { return t.hostTool }
 
-func (t *BashTool) RecordApproval(input json.RawMessage, remember bool) error {
+func (t *BashTool) RecordApproval(opts recordToolApprovalOptions) error {
 	if t.approvalPolicy == nil {
 		return nil
 	}
 	var in bashInput
-	if err := json.Unmarshal(sanitizeToolJSON(input), &in); err != nil {
+	if err := json.Unmarshal(sanitizeToolJSON(opts.input), &in); err != nil {
 		return fmt.Errorf("invalid bash input: %w", err)
 	}
 	if in.Command == "" {
 		return nil
 	}
-	return t.approvalPolicy.RecordApproval(html.UnescapeString(in.Command), remember)
+	return t.approvalPolicy.RecordApproval(recordCommandApprovalOptions{
+		command:  html.UnescapeString(in.Command),
+		remember: opts.remember,
+	})
 }
 
 // NewNakedBashToolOptions holds the parameters for NewNakedBashTool.
@@ -253,7 +266,7 @@ func NewNakedBashTool(opts NewNakedBashToolOptions) *BashTool {
 	if approvalPath == "" && workDir != "" {
 		approvalPath = nakedPermissionsPath(workDir)
 	}
-	approvalPolicy := newNakedPermissionStore(approvalPath, workDir)
+	approvalPolicy := newNakedPermissionStore(newNakedPermissionStoreOptions{path: approvalPath, workspace: workDir})
 	return &BashTool{
 		name:                toolBash,
 		runner:              hostSandboxBashRunner{workspace: workDir, permissions: approvalPolicy},

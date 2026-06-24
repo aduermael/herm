@@ -679,7 +679,7 @@ func (a *Agent) runLoop(ctx context.Context, opts runLoopOptions) {
 						continue
 					}
 					if recorder, ok := tool.(toolApprovalRecorder); ok {
-						if err := recorder.RecordApproval(tc.Input, resp.Remember); err != nil {
+						if err := recorder.RecordApproval(recordToolApprovalOptions{input: tc.Input, remember: resp.Remember}); err != nil {
 							errResult := fmt.Sprintf("recording approval: %v", err)
 							a.emit(AgentEvent{
 								Type:       EventToolResult,

@@ -411,7 +411,7 @@ func TestApprovalEncodedCmdYAlwaysAccepts(t *testing.T) {
 	app.awaitingApproval = true
 	app.approvalPauseStart = time.Now()
 
-	app.handleApprovalEncodedKey(9, 'y')
+	app.handleApprovalEncodedKey(handleApprovalEncodedKeyOptions{mod: 9, code: 'y'})
 
 	select {
 	case resp := <-app.agent.approval:

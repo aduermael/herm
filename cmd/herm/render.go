@@ -605,59 +605,6 @@ const toolGroupShowEdge = 3
 
 // subAgent display state, spinner, and line formatting live in render_subagent.go.
 
-type renderApprovalCodeRowsOptions struct {
-	text  string
-	width int
-}
-
-func renderApprovalCodeRows(opts renderApprovalCodeRowsOptions) []string {
-	width := opts.width
-	if width <= 0 {
-		width = 80
-	}
-	lines := strings.Split(strings.ReplaceAll(opts.text, "\r", ""), "\n")
-	var rows []string
-	for _, line := range lines {
-		if line == "" {
-			line = " "
-		}
-		wrapped := wrapString(wrapStringOptions{s: approvalDetailStyle + line, w: width})
-		for i := range wrapped {
-			row := wrapped[i]
-			if pad := (width - visibleWidth(row)) / 2; pad > 0 {
-				row = approvalDetailStyle + strings.Repeat(" ", pad) + row
-			}
-			rows = append(rows, fillStyledRow(fillStyledRowOptions{row: row, fillStyle: inputBgStyle}))
-		}
-	}
-	return rows
-}
-
-type renderApprovalOptionsRowOptions struct {
-	selected int
-	width    int
-}
-
-func renderApprovalOptionsRow(opts renderApprovalOptionsRowOptions) string {
-	labels := []string{"Accept once [y]", "Always accept [cmd+y]", "Deny [n]"}
-	parts := make([]string, 0, len(labels))
-	for i, label := range labels {
-		if i == opts.selected {
-			parts = append(parts, "\033[7m "+label+" \033[27m")
-		} else {
-			parts = append(parts, " "+label+" ")
-		}
-	}
-	row := strings.Join(parts, "  ")
-	if visibleWidth(row) > opts.width && opts.width > 0 {
-		row = strings.Join([]string{"[y] once", "[cmd+y] always", "[n] deny"}, "  ")
-	}
-	if opts.width > 0 && visibleWidth(row) < opts.width {
-		row = strings.Repeat(" ", (opts.width-visibleWidth(row))/2) + row
-	}
-	return approvalTextRow(row)
-}
-
 func (a *App) buildInputRows() []string {
 	sep := strings.Repeat("─", a.width)
 
@@ -862,11 +809,17 @@ func (a *App) backendStatusDisplay() (label, text string, err error) {
 	return "container", a.containerStatusText, a.containerErr
 }
 
-func clearRowsBelowWrittenRows(buf *strings.Builder, lastRow, terminalHeight int) {
-	if lastRow <= 0 || terminalHeight <= 0 || lastRow >= terminalHeight {
+type clearRowsBelowWrittenRowsOptions struct {
+	buf            *strings.Builder
+	lastRow        int
+	terminalHeight int
+}
+
+func clearRowsBelowWrittenRows(opts clearRowsBelowWrittenRowsOptions) {
+	if opts.buf == nil || opts.lastRow <= 0 || opts.terminalHeight <= 0 || opts.lastRow >= opts.terminalHeight {
 		return
 	}
-	buf.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[J", lastRow+1))
+	opts.buf.WriteString(fmt.Sprintf("\033[%d;1H\033[0m\033[J", opts.lastRow+1))
 }
 
 func (a *App) positionCursor(buf *strings.Builder) {
@@ -953,7 +906,7 @@ func (a *App) render() {
 		writeRows(writeRowsOptions{buf: &buf, rows: allRows, from: 1})
 	}
 
-	clearRowsBelowWrittenRows(&buf, lastWrittenRow, th)
+	clearRowsBelowWrittenRows(clearRowsBelowWrittenRowsOptions{buf: &buf, lastRow: lastWrittenRow, terminalHeight: th})
 
 	a.prevRowCount = totalRows
 	a.scrollShift = newScrollShift
@@ -1005,7 +958,7 @@ func (a *App) renderInput() {
 	var buf strings.Builder
 	buf.WriteString("\033[?2026h") // begin synchronized update (atomic frame)
 	writeRows(writeRowsOptions{buf: &buf, rows: inputRows, from: screenSepRow})
-	clearRowsBelowWrittenRows(&buf, screenSepRow+len(inputRows)-1, th)
+	clearRowsBelowWrittenRows(clearRowsBelowWrittenRowsOptions{buf: &buf, lastRow: screenSepRow + len(inputRows) - 1, terminalHeight: th})
 
 	a.scrollShift = newScrollShift
 	a.prevRowCount = totalRows

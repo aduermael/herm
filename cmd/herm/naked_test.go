@@ -28,14 +28,14 @@ func TestNakedPermissionStoreRecordsCommandsAndExternalPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(workspace, ".herm", nakedPermissionsFile)
-	store := newNakedPermissionStore(path, workspace)
+	store := newNakedPermissionStore(newNakedPermissionStoreOptions{path: path, workspace: workspace})
 	command := "git status && go test ./cmd/herm"
 	commandWithPath := command + " --config " + outsidePath
 
 	if !store.RequiresApproval(commandWithPath) {
 		t.Fatal("new command should require approval")
 	}
-	if err := store.RecordApproval(commandWithPath, true); err != nil {
+	if err := store.RecordApproval(recordCommandApprovalOptions{command: commandWithPath, remember: true}); err != nil {
 		t.Fatalf("RecordApproval: %v", err)
 	}
 	if store.RequiresApproval(commandWithPath) {
@@ -90,7 +90,7 @@ func TestNakedPermissionStoreRegexesAreUserEditableAndNotRecorded(t *testing.T) 
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	store := newNakedPermissionStore(path, workspace)
+	store := newNakedPermissionStore(newNakedPermissionStoreOptions{path: path, workspace: workspace})
 
 	if store.RequiresApproval("git status --short " + outsidePath) {
 		t.Fatal("regex-approved command and path should not require approval")
@@ -103,10 +103,10 @@ func TestNakedPermissionStoreRegexesAreUserEditableAndNotRecorded(t *testing.T) 
 func TestNakedPermissionStoreAcceptOnceDoesNotPersist(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, ".herm", nakedPermissionsFile)
-	store := newNakedPermissionStore(path, workspace)
+	store := newNakedPermissionStore(newNakedPermissionStoreOptions{path: path, workspace: workspace})
 	command := "git status"
 
-	if err := store.RecordApproval(command, false); err != nil {
+	if err := store.RecordApproval(recordCommandApprovalOptions{command: command, remember: false}); err != nil {
 		t.Fatalf("RecordApproval: %v", err)
 	}
 	if store.RequiresApproval(command) {
@@ -127,7 +127,7 @@ func TestCommandExternalPathsIncludesRelativeOutsideWorkspace(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got := commandExternalPaths("cat ../secrets.env", workspace)
+	got := commandExternalPaths(commandExternalPathsOptions{command: "cat ../secrets.env", workspace: workspace})
 	want := filepath.Join(root, "secrets.env")
 	if !slices.Equal(got, []string{want}) {
 		t.Fatalf("external paths = %#v, want %#v", got, []string{want})
@@ -147,7 +147,7 @@ func (r *fakeBashRunner) RunBash(_ context.Context, opts bashRunOptions) (Comman
 func TestNakedBashToolApprovalPolicyRecordsOnlyWhenRequested(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, ".herm", nakedPermissionsFile)
-	store := newNakedPermissionStore(path, workspace)
+	store := newNakedPermissionStore(newNakedPermissionStoreOptions{path: path, workspace: workspace})
 	runner := &fakeBashRunner{result: CommandResult{Stdout: "ok\n"}}
 	tool := &BashTool{
 		name:                toolBash,
@@ -162,7 +162,7 @@ func TestNakedBashToolApprovalPolicyRecordsOnlyWhenRequested(t *testing.T) {
 	if !tool.RequiresApproval(input) {
 		t.Fatal("new naked bash command should require approval")
 	}
-	if err := tool.RecordApproval(input, false); err != nil {
+	if err := tool.RecordApproval(recordToolApprovalOptions{input: input, remember: false}); err != nil {
 		t.Fatalf("RecordApproval once: %v", err)
 	}
 	out, err := tool.Execute(context.Background(), input)
@@ -178,7 +178,7 @@ func TestNakedBashToolApprovalPolicyRecordsOnlyWhenRequested(t *testing.T) {
 	if !tool.RequiresApproval(input) {
 		t.Fatal("accept-once command should require approval again after execution")
 	}
-	if err := tool.RecordApproval(input, true); err != nil {
+	if err := tool.RecordApproval(recordToolApprovalOptions{input: input, remember: true}); err != nil {
 		t.Fatalf("RecordApproval always: %v", err)
 	}
 	if tool.RequiresApproval(input) {

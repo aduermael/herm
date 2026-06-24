@@ -2371,13 +2371,13 @@ func TestRenderFullClearSequence(t *testing.T) {
 
 func TestClearRowsBelowWrittenRowsDoesNotTouchFinalRow(t *testing.T) {
 	var buf strings.Builder
-	clearRowsBelowWrittenRows(&buf, 6, 20)
+	clearRowsBelowWrittenRows(clearRowsBelowWrittenRowsOptions{buf: &buf, lastRow: 6, terminalHeight: 20})
 	if got, want := buf.String(), "\033[7;1H\033[0m\033[J"; got != want {
 		t.Fatalf("clearRowsBelowWrittenRows = %q, want %q", got, want)
 	}
 
 	buf.Reset()
-	clearRowsBelowWrittenRows(&buf, 20, 20)
+	clearRowsBelowWrittenRows(clearRowsBelowWrittenRowsOptions{buf: &buf, lastRow: 20, terminalHeight: 20})
 	if got := buf.String(); got != "" {
 		t.Fatalf("clearRowsBelowWrittenRows on bottom row = %q, want no clear", got)
 	}

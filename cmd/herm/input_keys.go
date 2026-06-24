@@ -458,16 +458,21 @@ func (a *App) moveApprovalSelection(delta int) {
 	a.renderInput()
 }
 
-func (a *App) handleApprovalEncodedKey(mod, code int) {
-	if isEncodedEnterCode(code) {
+type handleApprovalEncodedKeyOptions struct {
+	mod  int
+	code int
+}
+
+func (a *App) handleApprovalEncodedKey(opts handleApprovalEncodedKeyOptions) {
+	if isEncodedEnterCode(opts.code) {
 		a.handleApprovalByte('\r')
 		return
 	}
-	if isApprovalAlwaysShortcut(mod, code) {
+	if isApprovalAlwaysShortcut(approvalAlwaysShortcutOptions{mod: opts.mod, code: opts.code}) {
 		a.applyApprovalDecision(approvalAcceptAlways)
 		return
 	}
-	if letter, ok := asciiLetterForCtrl(code); ok {
+	if letter, ok := asciiLetterForCtrl(opts.code); ok {
 		switch letter {
 		case 'y':
 			a.handleApprovalByte('y')
@@ -477,12 +482,17 @@ func (a *App) handleApprovalEncodedKey(mod, code int) {
 	}
 }
 
-func isApprovalAlwaysShortcut(mod, code int) bool {
-	_, _, _, isSuper := decodeCSIEncodedModifierExtended(mod)
+type approvalAlwaysShortcutOptions struct {
+	mod  int
+	code int
+}
+
+func isApprovalAlwaysShortcut(opts approvalAlwaysShortcutOptions) bool {
+	_, _, _, isSuper := decodeCSIEncodedModifierExtended(opts.mod)
 	if !isSuper {
 		return false
 	}
-	return code == 'y' || code == 'Y'
+	return opts.code == 'y' || opts.code == 'Y'
 }
 
 // handleNavKey dispatches a navigation key (A/B/C/D/H/F) with optional CSI
@@ -629,7 +639,7 @@ func (a *App) handleEncodedKey(opts handleEncodedKeyOptions) bool {
 		return a.handlePlainEscape()
 	}
 	if a.awaitingApproval {
-		a.handleApprovalEncodedKey(mod, code)
+		a.handleApprovalEncodedKey(handleApprovalEncodedKeyOptions{mod: mod, code: code})
 		return false
 	}
 	isShift, isAlt, isCtrl := decodeCSIEncodedModifier(mod)

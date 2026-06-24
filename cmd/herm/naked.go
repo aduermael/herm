@@ -1,3 +1,4 @@
+// naked.go implements host sandboxing and permissions for naked mode.
 package main
 
 import (
@@ -137,9 +138,18 @@ type nakedSandboxCommandOptions struct {
 func nakedSandboxCommand(opts nakedSandboxCommandOptions) (name string, args []string, env []string, err error) {
 	switch opts.goos {
 	case "linux":
-		return linuxNakedSandboxCommand(opts.workspace, opts.command, opts.extraPaths)
+		return linuxNakedSandboxCommand(linuxNakedSandboxCommandOptions{
+			workspace:  opts.workspace,
+			command:    opts.command,
+			extraPaths: opts.extraPaths,
+		})
 	case "darwin":
-		return darwinNakedSandboxCommand(opts.workspace, opts.command, opts.extraPaths, opts.openLog)
+		return darwinNakedSandboxCommand(darwinNakedSandboxCommandOptions{
+			workspace:  opts.workspace,
+			command:    opts.command,
+			extraPaths: opts.extraPaths,
+			openLog:    opts.openLog,
+		})
 	default:
 		return "", nil, nil, fmt.Errorf("--naked sandboxing is unsupported on %s", opts.goos)
 	}
@@ -162,15 +172,21 @@ func checkNakedSandboxAvailable() error {
 	}
 }
 
-func linuxNakedSandboxCommand(workspace, command string, extraPaths []string) (string, []string, []string, error) {
+type linuxNakedSandboxCommandOptions struct {
+	workspace  string
+	command    string
+	extraPaths []string
+}
+
+func linuxNakedSandboxCommand(opts linuxNakedSandboxCommandOptions) (string, []string, []string, error) {
 	bwrapPath, err := lookPath("bwrap")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("bubblewrap (bwrap) is required for --naked on Linux")
 	}
 
-	homeDir := filepath.Join(workspace, configDir, "home")
-	cacheDir := filepath.Join(workspace, configDir, "cache")
-	tmpDir := filepath.Join(workspace, configDir, "tmp")
+	homeDir := filepath.Join(opts.workspace, configDir, "home")
+	cacheDir := filepath.Join(opts.workspace, configDir, "cache")
+	tmpDir := filepath.Join(opts.workspace, configDir, "tmp")
 
 	args := []string{
 		"--die-with-parent",
@@ -188,10 +204,10 @@ func linuxNakedSandboxCommand(workspace, command string, extraPaths []string) (s
 	for _, path := range linuxReadOnlySandboxPaths() {
 		args = append(args, "--ro-bind", path, path)
 	}
-	for _, dir := range sandboxParentDirs(workspace) {
+	for _, dir := range sandboxParentDirs(opts.workspace) {
 		args = append(args, "--dir", dir)
 	}
-	for _, path := range normalizeNakedExternalPaths(workspace, extraPaths) {
+	for _, path := range normalizeNakedExternalPaths(normalizeNakedExternalPathsOptions{workspace: opts.workspace, paths: opts.extraPaths}) {
 		info, err := os.Stat(path)
 		if err != nil {
 			continue
@@ -207,9 +223,9 @@ func linuxNakedSandboxCommand(workspace, command string, extraPaths []string) (s
 	}
 
 	args = append(args,
-		"--bind", workspace, workspace,
-		"--chdir", workspace,
-		"bash", "-lc", command,
+		"--bind", opts.workspace, opts.workspace,
+		"--chdir", opts.workspace,
+		"bash", "-lc", opts.command,
 	)
 	return bwrapPath, args, nil, nil
 }
@@ -245,32 +261,44 @@ func sandboxParentDirs(path string) []string {
 	return dirs
 }
 
-func darwinNakedSandboxCommand(workspace, command string, extraPaths []string, openLog string) (string, []string, []string, error) {
+type darwinNakedSandboxCommandOptions struct {
+	workspace  string
+	command    string
+	extraPaths []string
+	openLog    string
+}
+
+func darwinNakedSandboxCommand(opts darwinNakedSandboxCommandOptions) (string, []string, []string, error) {
 	sandboxExecPath, err := lookPath("sandbox-exec")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("sandbox-exec is required for --naked on macOS")
 	}
-	profile := darwinNakedSandboxProfile(workspace, extraPaths)
+	profile := darwinNakedSandboxProfile(darwinNakedSandboxProfileOptions{workspace: opts.workspace, extraPaths: opts.extraPaths})
 	env := []string{
-		"HOME=" + filepath.Join(workspace, configDir, "home"),
-		"XDG_CACHE_HOME=" + filepath.Join(workspace, configDir, "cache"),
-		"TMPDIR=" + filepath.Join(workspace, configDir, "tmp"),
+		"HOME=" + filepath.Join(opts.workspace, configDir, "home"),
+		"XDG_CACHE_HOME=" + filepath.Join(opts.workspace, configDir, "cache"),
+		"TMPDIR=" + filepath.Join(opts.workspace, configDir, "tmp"),
 	}
-	if openLog != "" {
-		shim := filepath.Join(workspace, configDir, "bin", "open")
+	if opts.openLog != "" {
+		shim := filepath.Join(opts.workspace, configDir, "bin", "open")
 		env = append(env,
 			"BROWSER="+shim,
-			"HERM_BROWSER_OPEN_LOG="+openLog,
-			"PATH="+filepath.Join(workspace, configDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"HERM_BROWSER_OPEN_LOG="+opts.openLog,
+			"PATH="+filepath.Join(opts.workspace, configDir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 		)
 	}
-	return sandboxExecPath, []string{"-p", profile, "/bin/bash", "-lc", command}, env, nil
+	return sandboxExecPath, []string{"-p", profile, "/bin/bash", "-lc", opts.command}, env, nil
 }
 
-func darwinNakedSandboxProfile(workspace string, extraPaths []string) string {
-	quoted := sandboxProfileQuote(workspace)
+type darwinNakedSandboxProfileOptions struct {
+	workspace  string
+	extraPaths []string
+}
+
+func darwinNakedSandboxProfile(opts darwinNakedSandboxProfileOptions) string {
+	quoted := sandboxProfileQuote(opts.workspace)
 	var b strings.Builder
-	for _, path := range normalizeNakedExternalPaths(workspace, extraPaths) {
+	for _, path := range normalizeNakedExternalPaths(normalizeNakedExternalPathsOptions{workspace: opts.workspace, paths: opts.extraPaths}) {
 		q := sandboxProfileQuote(path)
 		fmt.Fprintf(&b, "(allow file-read* (subpath %s))\n", q)
 		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", q)
@@ -479,12 +507,17 @@ type nakedPermissionStore struct {
 	once      nakedPermissionSet
 }
 
-func newNakedPermissionStore(path, workspace string) *nakedPermissionStore {
-	if path == "" {
+type newNakedPermissionStoreOptions struct {
+	path      string
+	workspace string
+}
+
+func newNakedPermissionStore(opts newNakedPermissionStoreOptions) *nakedPermissionStore {
+	if opts.path == "" {
 		return nil
 	}
-	workspace, _ = filepath.Abs(workspace)
-	return &nakedPermissionStore{path: path, workspace: workspace}
+	workspace, _ := filepath.Abs(opts.workspace)
+	return &nakedPermissionStore{path: opts.path, workspace: workspace}
 }
 
 type nakedPermissionFile struct {
@@ -522,26 +555,27 @@ func (s *nakedPermissionStore) RequiresApproval(command string) bool {
 		return true
 	}
 	for _, segment := range commandApprovalSegments(command) {
-		if !s.commandAllowedLocked(permissions, segment) {
+		if !s.commandAllowedLocked(commandAllowedLockedOptions{permissions: permissions, command: segment}) {
 			return true
 		}
 	}
-	for _, path := range commandExternalPaths(command, s.workspace) {
-		if !s.pathAllowedLocked(permissions, path) {
+	for _, path := range commandExternalPaths(commandExternalPathsOptions{command: command, workspace: s.workspace}) {
+		if !s.pathAllowedLocked(pathAllowedLockedOptions{permissions: permissions, path: path}) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *nakedPermissionStore) RecordApproval(command string, remember bool) error {
+func (s *nakedPermissionStore) RecordApproval(opts recordCommandApprovalOptions) error {
+	command := opts.command
 	if s == nil || strings.TrimSpace(command) == "" {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if remember {
+	if opts.remember {
 		permissions, err := s.loadLocked()
 		if err != nil {
 			return err
@@ -553,7 +587,7 @@ func (s *nakedPermissionStore) RecordApproval(command string, remember bool) err
 				changed = true
 			}
 		}
-		for _, path := range commandExternalPaths(command, s.workspace) {
+		for _, path := range commandExternalPaths(commandExternalPathsOptions{command: command, workspace: s.workspace}) {
 			if path != "" && !permissions.paths[path] {
 				permissions.paths[path] = true
 				changed = true
@@ -573,7 +607,7 @@ func (s *nakedPermissionStore) RecordApproval(command string, remember bool) err
 			s.once.Commands[segment] = true
 		}
 	}
-	for _, path := range commandExternalPaths(command, s.workspace) {
+	for _, path := range commandExternalPaths(commandExternalPathsOptions{command: command, workspace: s.workspace}) {
 		if path != "" {
 			if s.once.Paths == nil {
 				s.once.Paths = map[string]bool{}
@@ -593,7 +627,7 @@ func (s *nakedPermissionStore) FinishApproval(command string) {
 	for _, segment := range commandApprovalSegments(command) {
 		delete(s.once.Commands, segment)
 	}
-	for _, path := range commandExternalPaths(command, s.workspace) {
+	for _, path := range commandExternalPaths(commandExternalPathsOptions{command: command, workspace: s.workspace}) {
 		delete(s.once.Paths, path)
 	}
 }
@@ -610,32 +644,42 @@ func (s *nakedPermissionStore) AllowedExternalPaths(command string) []string {
 		return nil
 	}
 	var paths []string
-	for _, path := range commandExternalPaths(command, s.workspace) {
-		if s.pathAllowedLocked(permissions, path) {
+	for _, path := range commandExternalPaths(commandExternalPathsOptions{command: command, workspace: s.workspace}) {
+		if s.pathAllowedLocked(pathAllowedLockedOptions{permissions: permissions, path: path}) {
 			paths = append(paths, path)
 		}
 	}
 	return uniqueSortedStrings(paths)
 }
 
-func (s *nakedPermissionStore) commandAllowedLocked(permissions loadedNakedPermissions, command string) bool {
-	if permissions.commands[command] || s.once.Commands[command] {
+type commandAllowedLockedOptions struct {
+	permissions loadedNakedPermissions
+	command     string
+}
+
+func (s *nakedPermissionStore) commandAllowedLocked(opts commandAllowedLockedOptions) bool {
+	if opts.permissions.commands[opts.command] || s.once.Commands[opts.command] {
 		return true
 	}
-	for _, re := range permissions.commandRegexes {
-		if re.MatchString(command) {
+	for _, re := range opts.permissions.commandRegexes {
+		if re.MatchString(opts.command) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *nakedPermissionStore) pathAllowedLocked(permissions loadedNakedPermissions, path string) bool {
-	if permissions.paths[path] || s.once.Paths[path] {
+type pathAllowedLockedOptions struct {
+	permissions loadedNakedPermissions
+	path        string
+}
+
+func (s *nakedPermissionStore) pathAllowedLocked(opts pathAllowedLockedOptions) bool {
+	if opts.permissions.paths[opts.path] || s.once.Paths[opts.path] {
 		return true
 	}
-	for _, re := range permissions.pathRegexes {
-		if re.MatchString(path) {
+	for _, re := range opts.permissions.pathRegexes {
+		if re.MatchString(opts.path) {
 			return true
 		}
 	}
@@ -667,7 +711,7 @@ func (s *nakedPermissionStore) loadLocked() (loadedNakedPermissions, error) {
 		}
 	}
 	for _, path := range loaded.file.Paths {
-		if normalized, ok := normalizeNakedPath(s.workspace, path); ok {
+		if normalized, ok := normalizeNakedPath(normalizeNakedPathOptions{workspace: s.workspace, path: path}); ok {
 			loaded.paths[normalized] = true
 		}
 	}
@@ -790,11 +834,16 @@ func commandApprovalSegments(command string) []string {
 	return segments
 }
 
-func commandExternalPaths(command, workspace string) []string {
+type commandExternalPathsOptions struct {
+	command   string
+	workspace string
+}
+
+func commandExternalPaths(opts commandExternalPathsOptions) []string {
 	var paths []string
-	for _, word := range shellWords(command) {
+	for _, word := range shellWords(opts.command) {
 		for _, candidate := range pathCandidatesFromShellWord(word) {
-			if normalized, ok := normalizeNakedPath(workspace, candidate); ok {
+			if normalized, ok := normalizeNakedPath(normalizeNakedPathOptions{workspace: opts.workspace, path: candidate}); ok {
 				paths = append(paths, normalized)
 			}
 		}
@@ -872,23 +921,29 @@ func shellWords(command string) []string {
 	return words
 }
 
-func normalizeNakedPath(workspace, path string) (string, bool) {
+type normalizeNakedPathOptions struct {
+	workspace string
+	path      string
+}
+
+func normalizeNakedPath(opts normalizeNakedPathOptions) (string, bool) {
+	path := opts.path
 	if strings.HasPrefix(path, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
 			path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
 		}
 	}
 	if !filepath.IsAbs(path) {
-		if workspace == "" {
+		if opts.workspace == "" {
 			return "", false
 		}
-		path = filepath.Join(workspace, path)
+		path = filepath.Join(opts.workspace, path)
 	}
 	normalized := filepath.Clean(path)
 	if resolved, err := filepath.EvalSymlinks(normalized); err == nil {
 		normalized = resolved
 	}
-	workspace = filepath.Clean(workspace)
+	workspace := filepath.Clean(opts.workspace)
 	if resolved, err := filepath.EvalSymlinks(workspace); err == nil {
 		workspace = resolved
 	}
@@ -898,10 +953,15 @@ func normalizeNakedPath(workspace, path string) (string, bool) {
 	return normalized, true
 }
 
-func normalizeNakedExternalPaths(workspace string, paths []string) []string {
+type normalizeNakedExternalPathsOptions struct {
+	workspace string
+	paths     []string
+}
+
+func normalizeNakedExternalPaths(opts normalizeNakedExternalPathsOptions) []string {
 	var normalized []string
-	for _, path := range paths {
-		if p, ok := normalizeNakedPath(workspace, path); ok {
+	for _, path := range opts.paths {
+		if p, ok := normalizeNakedPath(normalizeNakedPathOptions{workspace: opts.workspace, path: path}); ok {
 			normalized = append(normalized, p)
 		}
 	}
