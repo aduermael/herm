@@ -410,11 +410,11 @@ func TestNakedBashToolPrefixRuleIsScopedToSandboxPermissions(t *testing.T) {
 }
 
 func TestBashApprovalCommandScopesEverySegment(t *testing.T) {
-	got := commandApprovalSegments(bashApprovalCommand(
-		"cat /tmp/a && echo ok",
-		bashSandboxPermissionsRequireEscalated,
-		bashAdditionalPermissions{},
-	))
+	got := commandApprovalSegments(bashApprovalCommand(bashApprovalCommandOptions{
+		command:               "cat /tmp/a && echo ok",
+		sandboxPermissions:    bashSandboxPermissionsRequireEscalated,
+		additionalPermissions: bashAdditionalPermissions{},
+	}))
 	want := []string{"require_escalated: cat /tmp/a", "require_escalated: echo ok"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("approval segments = %#v, want %#v", got, want)
@@ -426,13 +426,21 @@ func TestBashApprovalCommandScopesEverySegment(t *testing.T) {
 			Read: []string{"/tmp/read.txt"},
 		},
 	}
-	key := bashApprovalCommand("cat data", bashSandboxPermissionsWithAdditional, permissions)
+	key := bashApprovalCommand(bashApprovalCommandOptions{
+		command:               "cat data",
+		sandboxPermissions:    bashSandboxPermissionsWithAdditional,
+		additionalPermissions: permissions,
+	})
 	if !strings.Contains(key, `with_additional_permissions: network.enabled=true __herm_read="/tmp/read.txt" cat data`) ||
 		!strings.Contains(key, "network.enabled=true") ||
 		!strings.Contains(key, `__herm_read="/tmp/read.txt"`) {
 		t.Fatalf("additional-permission approval key = %q", key)
 	}
-	prefixRules := bashApprovalPrefixRules([]string{"cat"}, bashSandboxPermissionsWithAdditional, permissions)
+	prefixRules := bashApprovalPrefixRules(bashApprovalPrefixRulesOptions{
+		prefixRule:            []string{"cat"},
+		sandboxPermissions:    bashSandboxPermissionsWithAdditional,
+		additionalPermissions: permissions,
+	})
 	wantRule := []string{"with_additional_permissions:", "network.enabled=true", `__herm_read="/tmp/read.txt"`, "cat"}
 	if len(prefixRules) != 1 || !slices.Equal(prefixRules[0], wantRule) {
 		t.Fatalf("additional-permission prefix rules = %#v, want %#v", prefixRules, [][]string{wantRule})
@@ -443,7 +451,11 @@ func TestBashApprovalCommandScopesEverySegment(t *testing.T) {
 		FileSystem: bashFileSystemPermissions{Read: []string{spacedPath}},
 	}
 	paths := commandExternalPaths(commandExternalPathsOptions{
-		command:   bashApprovalCommand("cat data", bashSandboxPermissionsWithAdditional, spacedPermissions),
+		command: bashApprovalCommand(bashApprovalCommandOptions{
+			command:               "cat data",
+			sandboxPermissions:    bashSandboxPermissionsWithAdditional,
+			additionalPermissions: spacedPermissions,
+		}),
 		workspace: t.TempDir(),
 	})
 	if !slices.Equal(paths, []string{spacedPath}) {
@@ -528,7 +540,7 @@ func TestNakedRequestPermissionsToolSharesStoreWithBash(t *testing.T) {
 	workspace := t.TempDir()
 	outsideFile := filepath.Join(t.TempDir(), "token.txt")
 	store := newNakedPermissionStore(newNakedPermissionStoreOptions{path: nakedPermissionsPath(workspace), workspace: workspace})
-	requestTool := NewNakedRequestPermissionsToolWithStore(workspace, store)
+	requestTool := NewNakedRequestPermissionsToolWithStore(newNakedRequestPermissionsToolWithStoreOptions{workDir: workspace, store: store})
 	bashRunner := &fakeBashRunner{result: CommandResult{Stdout: "ok\n"}}
 	bashTool := &BashTool{
 		name:                toolBash,

@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"herm/prompts"
@@ -276,7 +275,10 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	if err != nil {
 		return "", err
 	}
-	additionalPermissions, err := validateBashAdditionalPermissions(sandboxPermissions, in.AdditionalPermissions)
+	additionalPermissions, err := validateBashAdditionalPermissions(validateBashAdditionalPermissionsOptions{
+		sandboxPermissions: sandboxPermissions,
+		permissions:        in.AdditionalPermissions,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -291,7 +293,11 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 		return "", fmt.Errorf("bash runner not configured")
 	}
 	if t.approvalPolicy != nil {
-		defer t.approvalPolicy.FinishApproval(bashApprovalCommand(command, sandboxPermissions, additionalPermissions))
+		defer t.approvalPolicy.FinishApproval(bashApprovalCommand(bashApprovalCommandOptions{
+			command:               command,
+			sandboxPermissions:    sandboxPermissions,
+			additionalPermissions: additionalPermissions,
+		}))
 	}
 	result, err := t.runner.RunBash(ctx, bashRunOptions{
 		command:               command,
@@ -327,11 +333,18 @@ func (t *BashTool) RequiresApproval(input json.RawMessage) bool {
 	if err != nil {
 		return false
 	}
-	additionalPermissions, err := validateBashAdditionalPermissions(sandboxPermissions, in.AdditionalPermissions)
+	additionalPermissions, err := validateBashAdditionalPermissions(validateBashAdditionalPermissionsOptions{
+		sandboxPermissions: sandboxPermissions,
+		permissions:        in.AdditionalPermissions,
+	})
 	if err != nil {
 		return false
 	}
-	return t.approvalPolicy.RequiresApproval(bashApprovalCommand(html.UnescapeString(in.Command), sandboxPermissions, additionalPermissions))
+	return t.approvalPolicy.RequiresApproval(bashApprovalCommand(bashApprovalCommandOptions{
+		command:               html.UnescapeString(in.Command),
+		sandboxPermissions:    sandboxPermissions,
+		additionalPermissions: additionalPermissions,
+	}))
 }
 
 func (t *BashTool) HostTool() bool { return t.hostTool }
@@ -351,221 +364,26 @@ func (t *BashTool) RecordApproval(opts recordToolApprovalOptions) error {
 	if err != nil {
 		return err
 	}
-	additionalPermissions, err := validateBashAdditionalPermissions(sandboxPermissions, in.AdditionalPermissions)
+	additionalPermissions, err := validateBashAdditionalPermissions(validateBashAdditionalPermissionsOptions{
+		sandboxPermissions: sandboxPermissions,
+		permissions:        in.AdditionalPermissions,
+	})
 	if err != nil {
 		return err
 	}
 	return t.approvalPolicy.RecordApproval(recordCommandApprovalOptions{
-		command:         bashApprovalCommand(html.UnescapeString(in.Command), sandboxPermissions, additionalPermissions),
-		commandPrefixes: bashApprovalPrefixRules(in.PrefixRule, sandboxPermissions, additionalPermissions),
-		remember:        opts.remember,
+		command: bashApprovalCommand(bashApprovalCommandOptions{
+			command:               html.UnescapeString(in.Command),
+			sandboxPermissions:    sandboxPermissions,
+			additionalPermissions: additionalPermissions,
+		}),
+		commandPrefixes: bashApprovalPrefixRules(bashApprovalPrefixRulesOptions{
+			prefixRule:            in.PrefixRule,
+			sandboxPermissions:    sandboxPermissions,
+			additionalPermissions: additionalPermissions,
+		}),
+		remember: opts.remember,
 	})
-}
-
-func normalizeBashSandboxPermissions(value string) (string, error) {
-	switch strings.TrimSpace(value) {
-	case "", bashSandboxPermissionsUseDefault:
-		return bashSandboxPermissionsUseDefault, nil
-	case bashSandboxPermissionsWithAdditional:
-		return bashSandboxPermissionsWithAdditional, nil
-	case bashSandboxPermissionsRequireEscalated:
-		return bashSandboxPermissionsRequireEscalated, nil
-	default:
-		return "", fmt.Errorf("unsupported sandbox_permissions %q", value)
-	}
-}
-
-func validateBashAdditionalPermissions(sandboxPermissions string, permissions bashAdditionalPermissions) (bashAdditionalPermissions, error) {
-	permissions.FileSystem.Read = uniqueSortedStrings(permissions.FileSystem.Read)
-	permissions.FileSystem.Write = uniqueSortedStrings(permissions.FileSystem.Write)
-	hasPermissions := !permissions.empty()
-	if sandboxPermissions == bashSandboxPermissionsWithAdditional {
-		if !hasPermissions {
-			return bashAdditionalPermissions{}, fmt.Errorf("missing additional_permissions; provide network or file_system permissions with sandbox_permissions with_additional_permissions")
-		}
-		return permissions, nil
-	}
-	if hasPermissions {
-		return bashAdditionalPermissions{}, fmt.Errorf("additional_permissions requires sandbox_permissions with_additional_permissions")
-	}
-	return bashAdditionalPermissions{}, nil
-}
-
-func (p bashAdditionalPermissions) empty() bool {
-	return !p.Network.Enabled && len(p.FileSystem.Read) == 0 && len(p.FileSystem.Write) == 0
-}
-
-func (p bashAdditionalPermissions) fileSystemPaths() (readPaths, writePaths []string) {
-	return p.FileSystem.Read, p.FileSystem.Write
-}
-
-func bashApprovalCommand(command, sandboxPermissions string, additionalPermissions bashAdditionalPermissions) string {
-	prefix := ""
-	switch sandboxPermissions {
-	case bashSandboxPermissionsRequireEscalated:
-		prefix = nakedEscalatedApprovalPrefix
-	case bashSandboxPermissionsWithAdditional:
-		prefix = nakedAdditionalApprovalPrefix
-	}
-	if prefix == "" {
-		return command
-	}
-	tokens := bashAdditionalPermissionApprovalTokens(additionalPermissions)
-	var scoped []string
-	for _, segment := range commandApprovalSegments(command) {
-		segment = strings.TrimSpace(segment)
-		if segment == "" {
-			continue
-		}
-		if len(tokens) > 0 {
-			segment = strings.Join(tokens, " ") + " " + segment
-		}
-		scoped = append(scoped, prefix+segment)
-	}
-	if len(scoped) == 0 {
-		return prefix + command
-	}
-	return strings.Join(scoped, " && ")
-}
-
-func bashAdditionalPermissionApprovalTokens(permissions bashAdditionalPermissions) []string {
-	var tokens []string
-	if permissions.Network.Enabled {
-		tokens = append(tokens, "network.enabled=true")
-	}
-	for _, path := range permissions.FileSystem.Read {
-		tokens = append(tokens, "__herm_read="+strconv.Quote(path))
-	}
-	for _, path := range permissions.FileSystem.Write {
-		tokens = append(tokens, "__herm_write="+strconv.Quote(path))
-	}
-	return tokens
-}
-
-func bashApprovalPrefixRules(prefixRule []string, sandboxPermissions string, additionalPermissions bashAdditionalPermissions) [][]string {
-	normalized := normalizeCommandPrefixRule(prefixRule)
-	if len(normalized) == 0 {
-		return nil
-	}
-	switch sandboxPermissions {
-	case bashSandboxPermissionsRequireEscalated:
-		return [][]string{append([]string{strings.TrimSpace(nakedEscalatedApprovalPrefix)}, normalized...)}
-	case bashSandboxPermissionsWithAdditional:
-		tokens := bashAdditionalPermissionApprovalTokens(additionalPermissions)
-		rule := []string{strings.TrimSpace(nakedAdditionalApprovalPrefix)}
-		rule = append(rule, tokens...)
-		rule = append(rule, normalized...)
-		return [][]string{rule}
-	default:
-		return [][]string{normalized}
-	}
-}
-
-type RequestPermissionsTool struct {
-	permissions *nakedPermissionStore
-}
-
-func NewNakedRequestPermissionsTool(workDir string) *RequestPermissionsTool {
-	return NewNakedRequestPermissionsToolWithStore(workDir, nil)
-}
-
-func NewNakedRequestPermissionsToolWithStore(workDir string, store *nakedPermissionStore) *RequestPermissionsTool {
-	if store == nil {
-		store = newNakedPermissionStore(newNakedPermissionStoreOptions{
-			path:      nakedPermissionsPath(workDir),
-			workspace: workDir,
-		})
-	}
-	return &RequestPermissionsTool{
-		permissions: store,
-	}
-}
-
-func (t *RequestPermissionsTool) Definition() types.ToolDefinition {
-	return types.ToolDefinition{
-		Name:        toolRequestPermissions,
-		Description: getToolDescription(getToolDescriptionOptions{name: toolRequestPermissions, fallback: "Request sandboxed file or network permissions before running a host command."}),
-		InputSchema: json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"permissions": {
-					"type": "object",
-					"description": "Sandboxed filesystem or network permissions to request.",
-					"properties": {
-						"network": {
-							"type": "object",
-							"properties": {
-								"enabled": {"type": "boolean"}
-							}
-						},
-						"file_system": {
-							"type": "object",
-							"properties": {
-								"read": {
-									"type": "array",
-									"items": {"type": "string"}
-								},
-								"write": {
-									"type": "array",
-									"items": {"type": "string"}
-								}
-							}
-						}
-					}
-				}
-			},
-			"required": ["permissions"]
-		}`),
-	}
-}
-
-func (t *RequestPermissionsTool) Execute(_ context.Context, input json.RawMessage) (string, error) {
-	permissions, err := parseRequestPermissionsInput(input)
-	if err != nil {
-		return "", err
-	}
-	if permissions.empty() {
-		return "", fmt.Errorf("request_permissions requires at least one permission")
-	}
-	return `{"approved":true}`, nil
-}
-
-func (t *RequestPermissionsTool) RequiresApproval(input json.RawMessage) bool {
-	permissions, err := parseRequestPermissionsInput(input)
-	if err != nil || permissions.empty() || t.permissions == nil {
-		return false
-	}
-	return t.permissions.RequestedPermissionsRequireApproval(permissions)
-}
-
-func (t *RequestPermissionsTool) HostTool() bool { return true }
-
-func (t *RequestPermissionsTool) RecordApproval(opts recordToolApprovalOptions) error {
-	permissions, err := parseRequestPermissionsInput(opts.input)
-	if err != nil {
-		return err
-	}
-	if permissions.empty() || t.permissions == nil {
-		return nil
-	}
-	return t.permissions.RecordRequestedPermissions(recordRequestedPermissionsOptions{
-		permissions: permissions,
-		remember:    opts.remember,
-	})
-}
-
-func parseRequestPermissionsInput(input json.RawMessage) (bashAdditionalPermissions, error) {
-	var in requestPermissionsInput
-	if err := json.Unmarshal(sanitizeToolJSON(input), &in); err != nil {
-		return bashAdditionalPermissions{}, fmt.Errorf("invalid request_permissions input: %w", err)
-	}
-	return validateRequestedPermissions(in.Permissions)
-}
-
-func validateRequestedPermissions(permissions bashAdditionalPermissions) (bashAdditionalPermissions, error) {
-	permissions.FileSystem.Read = uniqueSortedStrings(permissions.FileSystem.Read)
-	permissions.FileSystem.Write = uniqueSortedStrings(permissions.FileSystem.Write)
-	return permissions, nil
 }
 
 // NewNakedBashToolOptions holds the parameters for NewNakedBashTool.

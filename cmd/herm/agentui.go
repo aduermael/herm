@@ -333,7 +333,7 @@ func (a *App) runtimeTools() []Tool {
 		})
 		return []Tool{
 			NewNakedBashTool(NewNakedBashToolOptions{WorkDir: a.worktreePath, PermissionStore: permissions, Timeout: 120}),
-			NewNakedRequestPermissionsToolWithStore(a.worktreePath, permissions),
+			NewNakedRequestPermissionsToolWithStore(newNakedRequestPermissionsToolWithStoreOptions{workDir: a.worktreePath, store: permissions}),
 		}
 	}
 
