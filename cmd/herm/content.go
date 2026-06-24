@@ -381,14 +381,37 @@ func approvalCmdDesc(opts approvalCmdDescOptions) string {
 		}
 	case toolBash, toolLocalSandboxExecBash:
 		var in struct {
-			Command string `json:"command"`
+			Command            string   `json:"command"`
+			SandboxPermissions string   `json:"sandbox_permissions,omitempty"`
+			PrefixRule         []string `json:"prefix_rule,omitempty"`
+			Justification      string   `json:"justification,omitempty"`
 		}
 		if json.Unmarshal(input, &in) == nil && in.Command != "" {
 			cmd := in.Command
 			if len(cmd) > 80 {
 				cmd = cmd[:80] + "..."
 			}
+			format := func(prefix string) string {
+				desc := prefix + cmd
+				if justification := strings.TrimSpace(in.Justification); justification != "" {
+					desc = justification + "\n" + desc
+				}
+				if prefixRule := normalizeCommandPrefixRule(in.PrefixRule); len(prefixRule) > 0 {
+					return desc + "\nprefix_rule: " + strings.Join(prefixRule, " ")
+				}
+				return desc
+			}
+			if in.SandboxPermissions == bashSandboxPermissionsWithAdditional {
+				return format("with_additional_permissions: ")
+			}
+			if in.SandboxPermissions == bashSandboxPermissionsRequireEscalated {
+				return format("require_escalated: ")
+			}
 			return cmd
+		}
+	case toolRequestPermissions:
+		if desc := requestPermissionsDesc(input); desc != "" {
+			return desc
 		}
 	case "git":
 		var in struct {
@@ -431,15 +454,24 @@ func approvalShortDesc(opts approvalShortDescOptions) string {
 		}
 	case toolBash, toolLocalSandboxExecBash:
 		var in struct {
-			Command string `json:"command"`
+			Command            string `json:"command"`
+			SandboxPermissions string `json:"sandbox_permissions,omitempty"`
 		}
 		if json.Unmarshal(input, &in) == nil && in.Command != "" {
 			cmd := in.Command
 			if len(cmd) > 80 {
 				cmd = cmd[:80] + "..."
 			}
+			if in.SandboxPermissions == bashSandboxPermissionsWithAdditional {
+				return fmt.Sprintf("bash with_additional_permissions: %s", cmd)
+			}
+			if in.SandboxPermissions == bashSandboxPermissionsRequireEscalated {
+				return fmt.Sprintf("bash require_escalated: %s", cmd)
+			}
 			return fmt.Sprintf("bash: %s", cmd)
 		}
+	case toolRequestPermissions:
+		return "request permissions"
 	case "git":
 		var in struct {
 			Subcommand string `json:"subcommand"`
@@ -449,6 +481,24 @@ func approvalShortDesc(opts approvalShortDescOptions) string {
 		}
 	}
 	return toolName
+}
+
+func requestPermissionsDesc(input json.RawMessage) string {
+	permissions, err := parseRequestPermissionsInput(input)
+	if err != nil || permissions.empty() {
+		return ""
+	}
+	var parts []string
+	if permissions.Network.Enabled {
+		parts = append(parts, "network.enabled")
+	}
+	for _, path := range permissions.FileSystem.Read {
+		parts = append(parts, "read "+path)
+	}
+	for _, path := range permissions.FileSystem.Write {
+		parts = append(parts, "write "+path)
+	}
+	return "request_permissions: " + strings.Join(parts, ", ")
 }
 
 func compactWhitespace(value string) string {

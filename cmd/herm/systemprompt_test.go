@@ -452,7 +452,7 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 
 func TestBuildSystemPromptNakedMode(t *testing.T) {
 	workDir := t.TempDir()
-	tools := []Tool{stubHostTool{toolBash}, stubTool{"agent"}}
+	tools := []Tool{stubHostTool{toolBash}, stubHostTool{toolRequestPermissions}, stubTool{"agent"}}
 	prompt := buildSystemPrompt(buildSystemPromptOptions{
 		tools:       tools,
 		serverTools: nil,
@@ -470,8 +470,19 @@ func TestBuildSystemPromptNakedMode(t *testing.T) {
 		"no CPSL capsule",
 		workDir,
 		".herm/permissions.json",
-		"outside-workspace file paths require user approval",
+		"outside-workspace file paths, and host network access require user approval",
+		"An approval requirement is not a refusal",
+		`Treat "can you use/read/access this outside path" as a task request`,
+		"make the tool call that requests access instead of answering that approval is required",
+		"Do not refuse solely because a requested path is outside the workspace",
+		`sandbox_permissions: "with_additional_permissions"`,
+		"additional_permissions.file_system.read",
+		"network.enabled",
+		"`request_permissions`",
+		`sandbox_permissions: "require_escalated"`,
+		"prefix_rule",
 		"command_regexes",
+		"command_prefixes",
 		"path_regexes",
 		"workspace-scoped host sandbox",
 		"`bash`",
@@ -490,7 +501,7 @@ func TestBuildSystemPromptNakedMode(t *testing.T) {
 func TestBuildSubAgentSystemPromptNakedMode(t *testing.T) {
 	workDir := t.TempDir()
 	prompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{
-		tools:       []Tool{stubHostTool{toolBash}},
+		tools:       []Tool{stubHostTool{toolBash}, stubHostTool{toolRequestPermissions}},
 		serverTools: nil,
 		workDir:     workDir,
 		backend:     backendNaked,
@@ -502,7 +513,17 @@ func TestBuildSubAgentSystemPromptNakedMode(t *testing.T) {
 		"host system",
 		"workspace-scoped host sandbox",
 		workDir,
-		"outside-workspace file paths require user approval",
+		"outside-workspace file paths, and host network access require user approval",
+		"An approval requirement is not a refusal",
+		`Treat "can you use/read/access this outside path" as a task request`,
+		"make the tool call that requests access instead of answering that approval is required",
+		"Do not refuse solely because a requested path is outside the workspace",
+		`sandbox_permissions: "with_additional_permissions"`,
+		"additional_permissions.file_system.read",
+		"network.enabled",
+		"`request_permissions`",
+		`sandbox_permissions: "require_escalated"`,
+		"prefix_rule",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("naked sub-agent prompt missing %q:\n%s", want, prompt)
@@ -923,8 +944,8 @@ func TestCPSLToolDescriptionOverrides(t *testing.T) {
 
 func TestNakedToolDescriptionOverrides(t *testing.T) {
 	descs := loadToolDescriptions(loadToolDescriptionsOptions{workDir: "/workspace", backend: backendNaked})
-	if len(descs) != 2 {
-		t.Fatalf("naked tool descriptions = %#v, want bash and agent", descs)
+	if len(descs) != 3 {
+		t.Fatalf("naked tool descriptions = %#v, want bash, request_permissions, and agent", descs)
 	}
 	for _, forbidden := range []string{toolLocalSandboxExec, toolLocalSandboxExecBash, "glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
 		if _, ok := descs[forbidden]; ok {
@@ -933,13 +954,20 @@ func TestNakedToolDescriptionOverrides(t *testing.T) {
 	}
 
 	bash := descs[toolBash]
-	for _, want := range []string{"host system", "workspace-scoped sandbox", ".herm/permissions.json", "workspace writes", "regex permissions"} {
+	for _, want := range []string{"host system", "workspace-scoped sandbox", ".herm/permissions.json", "workspace writes", "approval-gated", "approval requirement is not a refusal", "task request", "answering that approval is required", "with_additional_permissions", "require_escalated", "prefix_rule", "regex permissions"} {
 		if !strings.Contains(bash.Full, want) {
 			t.Fatalf("naked bash description missing %q: %q", want, bash.Full)
 		}
 	}
 	if strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "Dockerfile") {
 		t.Fatalf("naked bash description contains unavailable-backend guidance: %q", bash.Full)
+	}
+
+	requestPermissions := descs[toolRequestPermissions]
+	for _, want := range []string{"sandboxed file or network access", "network", "file_system", "subsequent naked-mode sandboxed `bash`"} {
+		if !strings.Contains(requestPermissions.Full, want) {
+			t.Fatalf("request_permissions description missing %q: %q", want, requestPermissions.Full)
+		}
 	}
 
 	agent := descs["agent"]

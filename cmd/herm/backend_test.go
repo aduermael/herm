@@ -201,8 +201,8 @@ func TestNakedRuntimeToolsExposeOnlyHostBash(t *testing.T) {
 
 	tools := app.runtimeTools()
 	names := toolNameSet(tools)
-	if len(names) != 1 || !names[toolBash] {
-		t.Fatalf("runtimeTools names = %#v, want bash only", names)
+	if len(names) != 2 || !names[toolBash] || !names[toolRequestPermissions] {
+		t.Fatalf("runtimeTools names = %#v, want bash and request_permissions", names)
 	}
 	if !tools[0].HostTool() {
 		t.Fatal("naked bash should be marked as a host tool")

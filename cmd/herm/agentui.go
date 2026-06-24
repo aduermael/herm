@@ -327,8 +327,13 @@ func (a *App) runtimeTools() []Tool {
 		if !a.nakedReady || a.worktreePath == "" {
 			return nil
 		}
+		permissions := newNakedPermissionStore(newNakedPermissionStoreOptions{
+			path:      nakedPermissionsPath(a.worktreePath),
+			workspace: a.worktreePath,
+		})
 		return []Tool{
-			NewNakedBashTool(NewNakedBashToolOptions{WorkDir: a.worktreePath, Timeout: 120}),
+			NewNakedBashTool(NewNakedBashToolOptions{WorkDir: a.worktreePath, PermissionStore: permissions, Timeout: 120}),
+			NewNakedRequestPermissionsToolWithStore(a.worktreePath, permissions),
 		}
 	}
 

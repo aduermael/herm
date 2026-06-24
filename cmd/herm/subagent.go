@@ -515,12 +515,13 @@ func (t *SubAgentTool) WaitForBackgroundAgentsContext(ctx context.Context, timeo
 // Explore-mode includes read-only tools plus runtime execution tools.
 var modeToolAllowlists = map[string]map[string]bool{
 	ModeExplore: {
-		"glob":               true,
-		"grep":               true,
-		"read_file":          true,
-		"outline":            true,
-		toolLocalSandboxExec: true,
-		toolBash:             true,
+		"glob":                 true,
+		"grep":                 true,
+		"read_file":            true,
+		"outline":              true,
+		toolLocalSandboxExec:   true,
+		toolBash:               true,
+		toolRequestPermissions: true,
 	},
 	ModeGeneral: nil, // all tools
 }

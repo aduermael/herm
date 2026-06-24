@@ -434,6 +434,7 @@ func TestSubAgentToolExploreModeFiltersTools(t *testing.T) {
 		&testTool{name: "grep", result: "ok"},
 		&testTool{name: "read_file", result: "ok"},
 		&testTool{name: "outline", result: "ok"},
+		&testTool{name: toolRequestPermissions, result: "ok"},
 		&testTool{name: "edit_file", result: "ok"},
 		&testTool{name: "write_file", result: "ok"},
 		&testTool{name: "git", result: "ok"},
