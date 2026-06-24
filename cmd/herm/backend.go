@@ -18,6 +18,7 @@ type backendKind int
 const (
 	backendContainer backendKind = iota
 	backendCPSL
+	backendNaked
 )
 
 type cpslConfig struct {

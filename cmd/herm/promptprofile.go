@@ -29,6 +29,18 @@ func promptProfileForBackend(backend backendKind) backendPromptProfile {
 			projectGitStatusLabel: "Uncommitted changes",
 			workDir:               func(string) string { return cpslWorkerInitialCW },
 		}
+	case backendNaked:
+		return backendPromptProfile{
+			mainTemplate:          "naked/main",
+			subAgentTemplate:      "naked/subagent",
+			toolDescriptionDirs:   []string{"naked/tools"},
+			workflowFirstStep:     "Understand what's needed - inspect relevant files and run focused host commands through the sandboxed bash tool, asking if ambiguous.",
+			projectOrientation:    "The Project context section contains a pre-gathered snapshot. Use it to orient yourself before running host commands. If you need deeper context, inspect only the key files needed for the task.",
+			projectFilesLabel:     "Files in workspace (2 levels)",
+			projectGitRepoLabel:   "Workspace git repository, recent commits",
+			projectGitStatusLabel: "Uncommitted changes",
+			workDir:               func(hostWorkDir string) string { return hostWorkDir },
+		}
 	default:
 		return backendPromptProfile{
 			mainTemplate:          "container/main",

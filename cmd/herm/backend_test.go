@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -92,6 +94,55 @@ func TestContainerBackendBootsContainer(t *testing.T) {
 	}
 }
 
+func TestNakedBackendDoesNotBootContainerOrCPSL(t *testing.T) {
+	origBootContainer := bootContainer
+	origBootCPSLWorker := bootCPSLWorker
+	origLookPath := lookPath
+	t.Cleanup(func() {
+		bootContainer = origBootContainer
+		bootCPSLWorker = origBootCPSLWorker
+		lookPath = origLookPath
+	})
+
+	containerCalled := false
+	cpslCalled := false
+	bootContainer = func(bootContainerCmdOptions) {
+		containerCalled = true
+	}
+	bootCPSLWorker = func(bootCPSLWorkerCmdOptions) {
+		cpslCalled = true
+	}
+	lookPath = func(file string) (string, error) {
+		switch file {
+		case "bwrap", "sandbox-exec":
+			return "/usr/bin/" + file, nil
+		default:
+			return "", os.ErrNotExist
+		}
+	}
+
+	app := &App{
+		backend:   backendNaked,
+		sessionID: "session",
+		resultCh:  make(chan any, 1),
+		stopCh:    make(chan struct{}),
+	}
+	app.startBackendForWorkspace(t.TempDir())
+
+	if containerCalled {
+		t.Fatal("naked backend started container boot")
+	}
+	if cpslCalled {
+		t.Fatal("naked backend started CPSL worker")
+	}
+	if !app.nakedReady {
+		t.Fatal("naked backend was not marked ready")
+	}
+	if app.nakedStatusText == "" {
+		t.Fatal("naked backend status text is empty")
+	}
+}
+
 func TestCPSLRuntimeToolsExcludeContainerToolsBeforeWorker(t *testing.T) {
 	app := &App{
 		backend:        backendCPSL,
@@ -130,6 +181,39 @@ func TestCPSLRuntimeToolsExposeLocalSandboxToolsAfterWorkerReady(t *testing.T) {
 	for _, forbidden := range []string{toolLocalSandboxExecBash, toolBash, "luau", "glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
 		if names[forbidden] {
 			t.Fatalf("runtimeTools exposed %q in CPSL mode", forbidden)
+		}
+	}
+}
+
+func TestNakedRuntimeToolsExposeOnlyHostBash(t *testing.T) {
+	workdir := t.TempDir()
+	app := &App{
+		backend:        backendNaked,
+		nakedReady:     true,
+		containerReady: true,
+		container:      NewContainerClient(ContainerConfig{Image: "test:latest"}),
+		cpslReady:      true,
+		cpslWorker:     &CPSLWorkerClient{},
+		worktreePath:   workdir,
+		resultCh:       make(chan any, 1),
+		sessionID:      "session",
+	}
+
+	tools := app.runtimeTools()
+	names := toolNameSet(tools)
+	if len(names) != 1 || !names[toolBash] {
+		t.Fatalf("runtimeTools names = %#v, want bash only", names)
+	}
+	if !tools[0].HostTool() {
+		t.Fatal("naked bash should be marked as a host tool")
+	}
+	input := json.RawMessage(`{"command":"go test ./cmd/herm"}`)
+	if !tools[0].RequiresApproval(input) {
+		t.Fatal("new naked bash command should require approval")
+	}
+	for _, forbidden := range []string{toolLocalSandboxExec, "glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
+		if names[forbidden] {
+			t.Fatalf("runtimeTools exposed %q in naked mode", forbidden)
 		}
 	}
 }
@@ -199,6 +283,16 @@ func TestVersionDisplayMessageCPSLUsesSandboxLabel(t *testing.T) {
 	}
 	if strings.Contains(msg.content, "container") || strings.Contains(msg.content, "local sandbox: Luau") {
 		t.Fatalf("version message = %q, should not mention container or old sandbox label", msg.content)
+	}
+}
+
+func TestVersionDisplayMessageNakedUsesHostLabel(t *testing.T) {
+	msg := versionDisplayMessage(backendNaked)
+	if !strings.Contains(msg.content, "host: naked") {
+		t.Fatalf("version message = %q, want naked host label", msg.content)
+	}
+	if strings.Contains(msg.content, "container:") || strings.Contains(msg.content, "sandbox: CPSL") {
+		t.Fatalf("version message = %q, should not mention other backends", msg.content)
 	}
 }
 

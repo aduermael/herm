@@ -48,6 +48,46 @@ func TestParseCLI_CPSLFlags(t *testing.T) {
 	}
 }
 
+func TestParseCLI_NakedFlag(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := parseCLI(parseCLIOptions{args: []string{"--naked", "-p", "say ok"}, stderr: &stderr})
+	if err != nil {
+		t.Fatalf("parseCLI: %v", err)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	if !opts.naked {
+		t.Fatal("naked flag was not set")
+	}
+	if opts.cpsl.LibraryPath != "" {
+		t.Fatalf("CPSL library = %q, want empty", opts.cpsl.LibraryPath)
+	}
+	if opts.prompt != "say ok" {
+		t.Fatalf("prompt = %q, want say ok", opts.prompt)
+	}
+}
+
+func TestParseCLI_NakedAndCPSLMutuallyExclusive(t *testing.T) {
+	libPath := writeTestCPSLLibrary(t)
+	tests := [][]string{
+		{"--naked", "--cpsl", libPath},
+		{"--naked=true", "--cpsl", libPath},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args[:1], " "), func(t *testing.T) {
+			var stderr bytes.Buffer
+			_, err := parseCLI(parseCLIOptions{args: args, stderr: &stderr})
+			if err == nil {
+				t.Fatal("parseCLI returned nil error")
+			}
+			if !strings.Contains(stderr.String(), "mutually exclusive") {
+				t.Fatalf("stderr = %q, want mutually exclusive error", stderr.String())
+			}
+		})
+	}
+}
+
 func TestParseCLI_CPSLInvalidLibraryExactMessage(t *testing.T) {
 	dirWithExt := filepath.Join(t.TempDir(), "libcpsl"+cpslLibraryExtension())
 	if err := os.Mkdir(dirWithExt, 0o755); err != nil {

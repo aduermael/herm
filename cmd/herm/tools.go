@@ -37,6 +37,11 @@ type bashRunner interface {
 	RunBash(ctx context.Context, opts bashRunOptions) (CommandResult, error)
 }
 
+type commandApprovalPolicy interface {
+	RequiresApproval(command string) bool
+	RecordApproval(command string) error
+}
+
 type containerBashRunner struct {
 	container *ContainerClient
 }
@@ -94,6 +99,8 @@ type BashTool struct {
 	timeout             int // default timeout in seconds
 	descriptionFallback string
 	commandDescription  string
+	approvalPolicy      commandApprovalPolicy
+	hostTool            bool
 }
 
 // NewBashToolOptions holds the parameters for NewBashTool.
@@ -173,6 +180,12 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	// (e.g. && → &amp;&amp;). Unescape before execution.
 	command := html.UnescapeString(in.Command)
 
+	if t.approvalPolicy != nil {
+		if err := t.approvalPolicy.RecordApproval(command); err != nil {
+			return "", fmt.Errorf("recording command approval: %w", err)
+		}
+	}
+
 	if t.runner == nil {
 		return "", fmt.Errorf("bash runner not configured")
 	}
@@ -190,11 +203,49 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	return output, nil
 }
 
-func (t *BashTool) RequiresApproval(_ json.RawMessage) bool {
-	return false
+func (t *BashTool) RequiresApproval(input json.RawMessage) bool {
+	if t.approvalPolicy == nil {
+		return false
+	}
+	var in bashInput
+	if err := json.Unmarshal(sanitizeToolJSON(input), &in); err != nil {
+		return false
+	}
+	if in.Command == "" {
+		return false
+	}
+	return t.approvalPolicy.RequiresApproval(html.UnescapeString(in.Command))
 }
 
-func (t *BashTool) HostTool() bool { return false }
+func (t *BashTool) HostTool() bool { return t.hostTool }
+
+// NewNakedBashToolOptions holds the parameters for NewNakedBashTool.
+type NewNakedBashToolOptions struct {
+	WorkDir      string
+	ApprovalPath string
+	Timeout      int
+}
+
+// NewNakedBashTool creates a host bash tool for naked mode.
+func NewNakedBashTool(opts NewNakedBashToolOptions) *BashTool {
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 120
+	}
+	approvalPath := opts.ApprovalPath
+	if approvalPath == "" && opts.WorkDir != "" {
+		approvalPath = nakedApprovedCommandsPath(opts.WorkDir)
+	}
+	return &BashTool{
+		name:                toolBash,
+		runner:              hostSandboxBashRunner{workspace: opts.WorkDir},
+		timeout:             timeout,
+		descriptionFallback: "Run a host shell command in the workspace sandbox. Output is truncated to 80 lines / 12KB (head+tail).",
+		commandDescription:  "The host shell command to execute in the workspace sandbox",
+		approvalPolicy:      newApprovedCommandStore(approvalPath),
+		hostTool:            true,
+	}
+}
 
 // NewCPSLLuauToolOptions holds the parameters for NewCPSLLuauTool.
 type NewCPSLLuauToolOptions struct {

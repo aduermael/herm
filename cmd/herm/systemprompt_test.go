@@ -450,6 +450,69 @@ func TestBuildSubAgentSystemPromptCPSLMode(t *testing.T) {
 	}
 }
 
+func TestBuildSystemPromptNakedMode(t *testing.T) {
+	workDir := t.TempDir()
+	tools := []Tool{stubHostTool{toolBash}, stubTool{"agent"}}
+	prompt := buildSystemPrompt(buildSystemPromptOptions{
+		tools:       tools,
+		serverTools: nil,
+		skills:      nil,
+		workDir:     workDir,
+		personality: "",
+		backend:     backendNaked,
+		snap:        nil,
+	})
+
+	for _, want := range []string{
+		"naked mode",
+		"host system",
+		"no Docker container",
+		"no CPSL capsule",
+		workDir,
+		".herm/approved_commands.json",
+		"New shell command segments require user approval",
+		"workspace-scoped host sandbox",
+		"`bash`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("naked prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"Container image", "dev container", "devenv", "`local_sandbox_exec`", "native Luau runtime", "/workdir"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("naked prompt contains %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildSubAgentSystemPromptNakedMode(t *testing.T) {
+	workDir := t.TempDir()
+	prompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{
+		tools:       []Tool{stubHostTool{toolBash}},
+		serverTools: nil,
+		workDir:     workDir,
+		backend:     backendNaked,
+		snap:        nil,
+	})
+
+	for _, want := range []string{
+		"naked mode",
+		"host system",
+		"workspace-scoped host sandbox",
+		workDir,
+		"New shell command segments require user approval",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("naked sub-agent prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"Container image", "dev container", "devenv", "`local_sandbox_exec`", "native Luau runtime", "/workdir"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("naked sub-agent prompt contains %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
 func TestBuildSystemPromptCPSLModeMentionsWebSearchOnlyWhenAvailable(t *testing.T) {
 	tools := []Tool{stubTool{toolLocalSandboxExec}}
 
@@ -853,6 +916,36 @@ func TestCPSLToolDescriptionOverrides(t *testing.T) {
 	}
 	if strings.Contains(agent.Full, "CPSL") || strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "Docker") || strings.Contains(agent.Full, "read_file") {
 		t.Fatalf("CPSL agent description contains unavailable-tool guidance: %q", agent.Full)
+	}
+}
+
+func TestNakedToolDescriptionOverrides(t *testing.T) {
+	descs := loadToolDescriptions(loadToolDescriptionsOptions{workDir: "/workspace", backend: backendNaked})
+	if len(descs) != 2 {
+		t.Fatalf("naked tool descriptions = %#v, want bash and agent", descs)
+	}
+	for _, forbidden := range []string{toolLocalSandboxExec, toolLocalSandboxExecBash, "glob", "grep", "read_file", "outline", "edit_file", "write_file", "devenv", "git"} {
+		if _, ok := descs[forbidden]; ok {
+			t.Fatalf("naked tool descriptions included unavailable tool %q", forbidden)
+		}
+	}
+
+	bash := descs[toolBash]
+	for _, want := range []string{"host system", "workspace-scoped sandbox", ".herm/approved_commands.json", "workspace writes"} {
+		if !strings.Contains(bash.Full, want) {
+			t.Fatalf("naked bash description missing %q: %q", want, bash.Full)
+		}
+	}
+	if strings.Contains(bash.Full, "dev container") || strings.Contains(bash.Full, "Dockerfile") {
+		t.Fatalf("naked bash description contains unavailable-backend guidance: %q", bash.Full)
+	}
+
+	agent := descs["agent"]
+	if !strings.Contains(agent.Full, "naked-mode host sandbox") || !strings.Contains(agent.Full, ".herm/agents") {
+		t.Fatalf("naked agent description = %q, want naked-mode output guidance", agent.Full)
+	}
+	if strings.Contains(agent.Full, "dev container") || strings.Contains(agent.Full, "/workdir") || strings.Contains(agent.Full, "read_file") {
+		t.Fatalf("naked agent description contains unavailable-tool guidance: %q", agent.Full)
 	}
 }
 

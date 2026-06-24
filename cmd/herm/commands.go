@@ -483,6 +483,11 @@ func (a *App) enterShellMode(input string) {
 		a.enterCPSLShellMode(input)
 		return
 	}
+	if a.backend == backendNaked {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Shell mode is unavailable in naked mode. Ask Herm to run host commands through bash so approval and sandboxing are applied."})
+		a.render()
+		return
+	}
 	a.enterContainerShellMode()
 }
 

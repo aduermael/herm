@@ -23,6 +23,7 @@ A coding agent CLI that's containerized by default. Every command runs inside a 
 - macOS or Linux (arm64 and amd64)
 - Docker installed and running for the default container backend
 - For CPSL local sandbox mode: native build tools, Go, and Rust
+- For naked host mode (`--naked`): `sandbox-exec` on macOS or `bwrap` (bubblewrap) on Linux
 
 ## Install
 
@@ -58,6 +59,10 @@ git submodule update --init --recursive
 
 To build Herm with a native CPSL local sandbox library instead of Docker, see
 [`CPSL_BUILD.md`](CPSL_BUILD.md).
+
+To run directly on the host without Docker or CPSL, use `herm --naked`. Naked
+mode runs host shell commands through a workspace-scoped sandbox and records
+approved command segments in `.herm/approved_commands.json`.
 
 ## Quick Start
 

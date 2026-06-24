@@ -124,6 +124,15 @@ func (a *App) startAgent(userMessage string) {
 		a.render()
 		return
 	}
+	if a.backend == backendNaked && !a.nakedReady {
+		msg := "Naked sandbox is unavailable."
+		if a.nakedErr != nil {
+			msg += " " + a.nakedErr.Error()
+		}
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: msg})
+		a.render()
+		return
+	}
 
 	modelResult := a.resolveMainAgentModelResult()
 	modelID := modelResult.ResolvedModelID
@@ -312,6 +321,14 @@ func (a *App) runtimeTools() []Tool {
 		}
 		return []Tool{
 			NewCPSLLuauTool(NewCPSLLuauToolOptions{Worker: a.cpslWorker, Timeout: 120}),
+		}
+	}
+	if a.backend == backendNaked {
+		if !a.nakedReady || a.worktreePath == "" {
+			return nil
+		}
+		return []Tool{
+			NewNakedBashTool(NewNakedBashToolOptions{WorkDir: a.worktreePath, Timeout: 120}),
 		}
 	}
 

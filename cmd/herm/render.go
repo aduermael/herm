@@ -803,6 +803,9 @@ func (a *App) backendStatusDisplay() (label, text string, err error) {
 	if a.backend == backendCPSL {
 		return "sandbox", a.cpslStatusText, a.cpslErr
 	}
+	if a.backend == backendNaked {
+		return "host", a.nakedStatusText, a.nakedErr
+	}
 	return "container", a.containerStatusText, a.containerErr
 }
 

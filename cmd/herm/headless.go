@@ -46,7 +46,17 @@ func (a *App) waitHeadlessReady() error {
 				fmt.Fprintln(os.Stderr, "error: "+a.cpslErr.Error())
 				return a.cpslErr
 			}
-			backendReady := a.backend != backendCPSL || a.cpslReady
+			if a.backend == backendNaked && a.nakedErr != nil {
+				fmt.Fprintln(os.Stderr, "error: "+a.nakedErr.Error())
+				return a.nakedErr
+			}
+			backendReady := true
+			switch a.backend {
+			case backendCPSL:
+				backendReady = a.cpslReady
+			case backendNaked:
+				backendReady = a.nakedReady
+			}
 			if a.configReady && a.langdagClient != nil && a.models != nil && backendReady {
 				return nil
 			}
@@ -58,6 +68,14 @@ func (a *App) waitHeadlessReady() error {
 				}
 				fmt.Fprintln(os.Stderr, "error: timed out waiting for CPSL worker")
 				return fmt.Errorf("CPSL worker initialization timeout")
+			}
+			if a.backend == backendNaked && !a.nakedReady {
+				if a.nakedErr != nil {
+					fmt.Fprintln(os.Stderr, "error: "+a.nakedErr.Error())
+					return a.nakedErr
+				}
+				fmt.Fprintln(os.Stderr, "error: timed out waiting for naked sandbox")
+				return fmt.Errorf("naked sandbox initialization timeout")
 			}
 			if a.langdagClient == nil {
 				fmt.Fprintln(os.Stderr, "error: timed out waiting for initialization")

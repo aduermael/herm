@@ -20,6 +20,7 @@ type cliOptions struct {
 	configOverrides string
 	cacheDir        string
 	cpsl            cpslConfig
+	naked           bool
 }
 
 func main() {
@@ -44,7 +45,9 @@ func main() {
 	}
 	if opts.version {
 		backend := backendContainer
-		if opts.cpsl.LibraryPath != "" {
+		if opts.naked {
+			backend = backendNaked
+		} else if opts.cpsl.LibraryPath != "" {
 			backend = backendCPSL
 		}
 		fmt.Println("herm " + Version + " " + backendVersionSuffix(backend))
@@ -58,7 +61,9 @@ func main() {
 	app.cliConfigOverrides = opts.configOverrides
 	app.cliCacheDir = opts.cacheDir
 	app.cpsl = opts.cpsl
-	if opts.cpsl.LibraryPath != "" {
+	if opts.naked {
+		app.backend = backendNaked
+	} else if opts.cpsl.LibraryPath != "" {
 		app.backend = backendCPSL
 	}
 	if _, err := effectiveConfig(effectiveConfigOptions{global: app.globalConfig, project: app.projectConfig, overridesJSON: app.cliConfigOverrides, cacheDir: app.cliCacheDir}); err != nil {
@@ -114,9 +119,16 @@ func parseCLI(opts parseCLIOptions) (cliOptions, error) {
 	fs.StringVar(&parsed.configOverrides, "config-overrides", "", "JSON object overlaid onto the effective config")
 	fs.StringVar(&parsed.cacheDir, "cache", "", "directory for cached model responses")
 	fs.StringVar(&parsed.cpsl.LibraryPath, "cpsl", "", "path to a local sandbox library")
+	fs.BoolVar(&parsed.naked, "naked", false, "run directly on the host with workspace-scoped sandboxing")
 	fs.Var(&allowDomains, "allow-domain", "allow a domain in sandbox mode")
 	fs.Var(&denyDomains, "deny-domain", "deny a domain in sandbox mode")
 	if err := fs.Parse(opts.args); err != nil {
+		return parsed, err
+	}
+	if parsed.naked && cpslRequested {
+		err := fmt.Errorf("--naked and --cpsl are mutually exclusive")
+		fmt.Fprintln(opts.stderr, "Error:", err)
+		fs.Usage()
 		return parsed, err
 	}
 	parsed.cpsl.AllowDomains = append([]string(nil), allowDomains...)
@@ -196,6 +208,7 @@ Flags:
       --config-overrides json      Overlay config fields for this run only.
       --cache path                 Cache successful model responses in path.
       --cpsl path                  Run with a local sandbox library instead of Docker.
+      --naked                      Run on the host with workspace-scoped sandboxing.
       --allow-domain domain        Allow a domain in sandbox mode. Repeatable.
       --deny-domain domain         Deny a domain in sandbox mode. Repeatable.
 

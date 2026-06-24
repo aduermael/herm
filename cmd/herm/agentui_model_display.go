@@ -309,6 +309,9 @@ func backendVersionSuffix(backend backendKind) string {
 	if backend == backendCPSL {
 		return "(sandbox: CPSL)"
 	}
+	if backend == backendNaked {
+		return "(host: naked)"
+	}
 	return "(container: " + hermImageTag + ")"
 }
 

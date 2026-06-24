@@ -43,9 +43,11 @@ herm [options]
 ```
 
 **Available flags:**
-- `--version` / `-v` - Display version and container tag, then exit
+- `--version` / `-v` - Display version and selected backend label, then exit
 - `--debug` - Enable debug logging (sets `app.cliDebug = true`)
 - `--prompt <text>` - Run in headless mode: submit prompt and exit (non-interactive)
+- `--cpsl <path>` - Run with a CPSL local sandbox library instead of Docker
+- `--naked` - Run on the host with workspace-scoped sandboxing instead of Docker or CPSL
 
 **Mode Selection:**
 ```go
@@ -112,6 +114,7 @@ Accessible in chat mode using `/` prefix with autocomplete.
 - Enter dedicated command interpreter
 - In local sandbox mode, defaults to Luau; use `/shell --bash` for Bash-compatible input
 - In container mode, enters the container shell
+- In naked mode, shell mode is unavailable; host commands run through approved `bash` tool calls
 - Return to chat mode to exit
 
 **`/session`** *(with subcommands)*

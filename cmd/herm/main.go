@@ -113,6 +113,9 @@ type App struct {
 	cpslReady               bool
 	cpslErr                 error
 	cpslStatusText          string
+	nakedReady              bool
+	nakedErr                error
+	nakedStatusText         string
 	containerRetryMsgIdx    int
 	containerRetryMsgActive bool
 	configReady             bool // true after workspace/project config has been merged
@@ -575,6 +578,15 @@ func (a *App) handleEnter() {
 	}
 	if a.backend == backendCPSL && !a.cpslReady {
 		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "Local sandbox is still starting — the agent won't have Luau tools until it's ready."})
+		a.render()
+		return
+	}
+	if a.backend == backendNaked && !a.nakedReady {
+		msg := "Naked sandbox is unavailable."
+		if a.nakedErr != nil {
+			msg += " " + a.nakedErr.Error()
+		}
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: msg})
 		a.render()
 		return
 	}

@@ -9,8 +9,9 @@ go build -o herm ./cmd/herm
 ./herm
 ```
 
-**Requirements:** Go 1.24+, Docker for the default container backend. For local
-sandbox mode without Docker, see [`CPSL_BUILD.md`](CPSL_BUILD.md).
+**Requirements:** Go 1.24+, Docker for the default container backend. For CPSL
+local sandbox mode, see [`CPSL_BUILD.md`](CPSL_BUILD.md). For host naked mode,
+see `--naked` below.
 
 If you already cloned without submodules, run `git submodule update --init --recursive` before building.
 
@@ -39,6 +40,14 @@ Opens full TUI with chat interface. Use Ctrl+C to exit.
 ./herm --version
 # Output: herm dev (container: herm-latest)
 ```
+
+### Run Without Docker Or CPSL
+```bash
+./herm --naked
+```
+Runs commands on the host through a workspace-scoped sandbox. Requires
+`sandbox-exec` on macOS or `bwrap` (bubblewrap) on Linux. New command segments
+prompt for approval and are saved in `.herm/approved_commands.json`.
 
 ### Enable Debug Mode
 ```bash

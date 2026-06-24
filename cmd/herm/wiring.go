@@ -230,6 +230,16 @@ func (a *App) startBackendForWorkspace(workspace string) {
 		go bootContainer(bootContainerCmdOptions{workspace: workspace, sessionID: a.sessionID, ch: a.resultCh, stop: a.stopCh})
 	case backendCPSL:
 		go bootCPSLWorker(bootCPSLWorkerCmdOptions{config: a.cpsl, workspace: workspace, ch: a.resultCh})
+	case backendNaked:
+		if err := checkNakedSandboxAvailable(); err != nil {
+			a.nakedReady = false
+			a.nakedErr = err
+			a.nakedStatusText = "sandbox unavailable"
+			return
+		}
+		a.nakedReady = true
+		a.nakedErr = nil
+		a.nakedStatusText = "ready (workspace-write)"
 	}
 }
 
