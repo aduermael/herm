@@ -350,7 +350,9 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) bool {
 		if !ok {
 			return false
 		}
-		if !a.awaitingApproval {
+		if a.awaitingApproval {
+			a.handleApprovalNavKey(ss3)
+		} else {
 			a.handleNavKey(handleNavKeyOptions{final: ss3})
 		}
 		return false
@@ -402,6 +404,7 @@ func (a *App) handleEscapeSequence(opts handleEscapeSequenceOptions) bool {
 	}
 
 	if a.awaitingApproval {
+		a.handleApprovalNavKey(seq.final)
 		return false
 	}
 
@@ -438,6 +441,48 @@ func readCSISequence(readByte func() (byte, bool)) (csiSequence, bool) {
 type handleNavKeyOptions struct {
 	final  byte
 	params []byte
+}
+
+func (a *App) handleApprovalNavKey(final byte) {
+	switch final {
+	case 'A', 'D':
+		a.moveApprovalSelection(-1)
+	case 'B', 'C':
+		a.moveApprovalSelection(1)
+	}
+}
+
+func (a *App) moveApprovalSelection(delta int) {
+	const optionCount = 3
+	a.approvalSelected = (a.approvalSelected + delta + optionCount) % optionCount
+	a.renderInput()
+}
+
+func (a *App) handleApprovalEncodedKey(mod, code int) {
+	if isEncodedEnterCode(code) {
+		a.handleApprovalByte('\r')
+		return
+	}
+	if isApprovalAlwaysShortcut(mod, code) {
+		a.applyApprovalDecision(approvalAcceptAlways)
+		return
+	}
+	if letter, ok := asciiLetterForCtrl(code); ok {
+		switch letter {
+		case 'y':
+			a.handleApprovalByte('y')
+		case 'n':
+			a.handleApprovalByte('n')
+		}
+	}
+}
+
+func isApprovalAlwaysShortcut(mod, code int) bool {
+	_, _, _, isSuper := decodeCSIEncodedModifierExtended(mod)
+	if !isSuper {
+		return false
+	}
+	return code == 'y' || code == 'Y'
 }
 
 // handleNavKey dispatches a navigation key (A/B/C/D/H/F) with optional CSI
@@ -584,6 +629,7 @@ func (a *App) handleEncodedKey(opts handleEncodedKeyOptions) bool {
 		return a.handlePlainEscape()
 	}
 	if a.awaitingApproval {
+		a.handleApprovalEncodedKey(mod, code)
 		return false
 	}
 	isShift, isAlt, isCtrl := decodeCSIEncodedModifier(mod)
@@ -644,11 +690,16 @@ func (a *App) insertInputRune(r rune) {
 }
 
 func decodeCSIEncodedModifier(mod int) (isShift, isAlt, isCtrl bool) {
+	isShift, isAlt, isCtrl, _ = decodeCSIEncodedModifierExtended(mod)
+	return isShift, isAlt, isCtrl
+}
+
+func decodeCSIEncodedModifierExtended(mod int) (isShift, isAlt, isCtrl, isSuper bool) {
 	if mod <= 0 {
-		return false, false, false
+		return false, false, false, false
 	}
 	bits := mod - 1
-	return bits&1 != 0, bits&2 != 0, bits&4 != 0
+	return bits&1 != 0, bits&2 != 0, bits&4 != 0, bits&8 != 0
 }
 
 type encodedPrintableRuneOptions struct {

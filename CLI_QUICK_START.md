@@ -47,7 +47,9 @@ Opens full TUI with chat interface. Use Ctrl+C to exit.
 ```
 Runs commands on the host through a workspace-scoped sandbox. Requires
 `sandbox-exec` on macOS or `bwrap` (bubblewrap) on Linux. New command segments
-prompt for approval and are saved in `.herm/approved_commands.json`.
+and outside-workspace paths prompt for approval. Always-approved permissions are
+saved in `.herm/permissions.json`, which can include user-edited
+`command_regexes` and `path_regexes`.
 
 ### Enable Debug Mode
 ```bash

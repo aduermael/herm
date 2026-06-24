@@ -6,5 +6,5 @@
 - Date: {{.Date}}
 - Runtime: host system, naked mode
 - Workspace: {{.WorkDir}}
-- Command approval store: {{.WorkDir}}/.herm/approved_commands.json
+- Permission store: {{.WorkDir}}/.herm/permissions.json
 {{- end}}

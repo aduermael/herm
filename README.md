@@ -62,7 +62,9 @@ To build Herm with a native CPSL local sandbox library instead of Docker, see
 
 To run directly on the host without Docker or CPSL, use `herm --naked`. Naked
 mode runs host shell commands through a workspace-scoped sandbox and records
-approved command segments in `.herm/approved_commands.json`.
+always-approved command segments and outside-workspace paths in
+`.herm/permissions.json`. Users can edit that file to add `command_regexes` or
+`path_regexes`.
 
 ## Quick Start
 

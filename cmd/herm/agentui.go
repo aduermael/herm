@@ -684,6 +684,7 @@ func (a *App) handleAgentEvent(event AgentEvent) {
 		a.approvalToolID = event.ToolID
 		a.approvalSummary = approvalShortDesc(approvalShortDescOptions{toolName: event.ToolName, input: event.ToolInput})
 		a.approvalDesc = event.ApprovalDesc
+		a.approvalSelected = 0
 		// Stop tool timer ticker so the tool box timer freezes during approval.
 		if a.toolTimer != nil {
 			a.toolTimer.Stop()

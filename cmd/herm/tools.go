@@ -39,7 +39,12 @@ type bashRunner interface {
 
 type commandApprovalPolicy interface {
 	RequiresApproval(command string) bool
-	RecordApproval(command string) error
+	RecordApproval(command string, remember bool) error
+	FinishApproval(command string)
+}
+
+type toolApprovalRecorder interface {
+	RecordApproval(input json.RawMessage, remember bool) error
 }
 
 type containerBashRunner struct {
@@ -180,14 +185,11 @@ func (t *BashTool) Execute(ctx context.Context, input json.RawMessage) (string, 
 	// (e.g. && → &amp;&amp;). Unescape before execution.
 	command := html.UnescapeString(in.Command)
 
-	if t.approvalPolicy != nil {
-		if err := t.approvalPolicy.RecordApproval(command); err != nil {
-			return "", fmt.Errorf("recording command approval: %w", err)
-		}
-	}
-
 	if t.runner == nil {
 		return "", fmt.Errorf("bash runner not configured")
+	}
+	if t.approvalPolicy != nil {
+		defer t.approvalPolicy.FinishApproval(command)
 	}
 	result, err := t.runner.RunBash(ctx, bashRunOptions{command: command, timeout: timeout})
 	if err != nil {
@@ -219,6 +221,20 @@ func (t *BashTool) RequiresApproval(input json.RawMessage) bool {
 
 func (t *BashTool) HostTool() bool { return t.hostTool }
 
+func (t *BashTool) RecordApproval(input json.RawMessage, remember bool) error {
+	if t.approvalPolicy == nil {
+		return nil
+	}
+	var in bashInput
+	if err := json.Unmarshal(sanitizeToolJSON(input), &in); err != nil {
+		return fmt.Errorf("invalid bash input: %w", err)
+	}
+	if in.Command == "" {
+		return nil
+	}
+	return t.approvalPolicy.RecordApproval(html.UnescapeString(in.Command), remember)
+}
+
 // NewNakedBashToolOptions holds the parameters for NewNakedBashTool.
 type NewNakedBashToolOptions struct {
 	WorkDir      string
@@ -232,17 +248,19 @@ func NewNakedBashTool(opts NewNakedBashToolOptions) *BashTool {
 	if timeout <= 0 {
 		timeout = 120
 	}
+	workDir := opts.WorkDir
 	approvalPath := opts.ApprovalPath
-	if approvalPath == "" && opts.WorkDir != "" {
-		approvalPath = nakedApprovedCommandsPath(opts.WorkDir)
+	if approvalPath == "" && workDir != "" {
+		approvalPath = nakedPermissionsPath(workDir)
 	}
+	approvalPolicy := newNakedPermissionStore(approvalPath, workDir)
 	return &BashTool{
 		name:                toolBash,
-		runner:              hostSandboxBashRunner{workspace: opts.WorkDir},
+		runner:              hostSandboxBashRunner{workspace: workDir, permissions: approvalPolicy},
 		timeout:             timeout,
 		descriptionFallback: "Run a host shell command in the workspace sandbox. Output is truncated to 80 lines / 12KB (head+tail).",
 		commandDescription:  "The host shell command to execute in the workspace sandbox",
-		approvalPolicy:      newApprovedCommandStore(approvalPath),
+		approvalPolicy:      approvalPolicy,
 		hostTool:            true,
 	}
 }

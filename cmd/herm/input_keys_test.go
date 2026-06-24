@@ -367,3 +367,58 @@ func TestDoubleEscapeDuringApprovalCancelsAgent(t *testing.T) {
 		t.Fatal("second ESC during approval flow did not cancel the agent")
 	}
 }
+
+func TestApprovalSelectionEnterSendsRememberedApproval(t *testing.T) {
+	app, _ := newInterruptTestApp()
+	app.awaitingApproval = true
+	app.approvalPauseStart = time.Now()
+
+	app.handleApprovalNavKey('C')
+	if app.approvalSelected != 1 {
+		t.Fatalf("approvalSelected = %d, want always-accept option", app.approvalSelected)
+	}
+	app.handleApprovalByte('\r')
+
+	select {
+	case resp := <-app.agent.approval:
+		if !resp.Approved || !resp.Remember {
+			t.Fatalf("approval response = %#v, want approved remembered", resp)
+		}
+	default:
+		t.Fatal("approval response not sent")
+	}
+}
+
+func TestApprovalPlainYAcceptsOnce(t *testing.T) {
+	app, _ := newInterruptTestApp()
+	app.awaitingApproval = true
+	app.approvalPauseStart = time.Now()
+
+	app.handleApprovalByte('y')
+
+	select {
+	case resp := <-app.agent.approval:
+		if !resp.Approved || resp.Remember {
+			t.Fatalf("approval response = %#v, want approved once", resp)
+		}
+	default:
+		t.Fatal("approval response not sent")
+	}
+}
+
+func TestApprovalEncodedCmdYAlwaysAccepts(t *testing.T) {
+	app, _ := newInterruptTestApp()
+	app.awaitingApproval = true
+	app.approvalPauseStart = time.Now()
+
+	app.handleApprovalEncodedKey(9, 'y')
+
+	select {
+	case resp := <-app.agent.approval:
+		if !resp.Approved || !resp.Remember {
+			t.Fatalf("approval response = %#v, want approved remembered", resp)
+		}
+	default:
+		t.Fatal("approval response not sent")
+	}
+}

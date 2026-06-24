@@ -678,6 +678,25 @@ func (a *Agent) runLoop(ctx context.Context, opts runLoopOptions) {
 						})
 						continue
 					}
+					if recorder, ok := tool.(toolApprovalRecorder); ok {
+						if err := recorder.RecordApproval(tc.Input, resp.Remember); err != nil {
+							errResult := fmt.Sprintf("recording approval: %v", err)
+							a.emit(AgentEvent{
+								Type:       EventToolResult,
+								ToolName:   tc.Name,
+								ToolID:     tc.ID,
+								ToolResult: errResult,
+								IsError:    true,
+							})
+							toolResults = append(toolResults, types.ContentBlock{
+								Type:      "tool_result",
+								ToolUseID: tc.ID,
+								Content:   errResult,
+								IsError:   true,
+							})
+							continue
+						}
+					}
 				}
 			}
 

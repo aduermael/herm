@@ -469,8 +469,10 @@ func TestBuildSystemPromptNakedMode(t *testing.T) {
 		"no Docker container",
 		"no CPSL capsule",
 		workDir,
-		".herm/approved_commands.json",
-		"New shell command segments require user approval",
+		".herm/permissions.json",
+		"outside-workspace file paths require user approval",
+		"command_regexes",
+		"path_regexes",
 		"workspace-scoped host sandbox",
 		"`bash`",
 	} {
@@ -500,7 +502,7 @@ func TestBuildSubAgentSystemPromptNakedMode(t *testing.T) {
 		"host system",
 		"workspace-scoped host sandbox",
 		workDir,
-		"New shell command segments require user approval",
+		"outside-workspace file paths require user approval",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("naked sub-agent prompt missing %q:\n%s", want, prompt)
@@ -931,7 +933,7 @@ func TestNakedToolDescriptionOverrides(t *testing.T) {
 	}
 
 	bash := descs[toolBash]
-	for _, want := range []string{"host system", "workspace-scoped sandbox", ".herm/approved_commands.json", "workspace writes"} {
+	for _, want := range []string{"host system", "workspace-scoped sandbox", ".herm/permissions.json", "workspace writes", "regex permissions"} {
 		if !strings.Contains(bash.Full, want) {
 			t.Fatalf("naked bash description missing %q: %q", want, bash.Full)
 		}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -19,18 +20,25 @@ func TestCommandApprovalSegmentsSplitShellOperators(t *testing.T) {
 	}
 }
 
-func TestApprovedCommandStoreRecordsSegments(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".herm", approvedCommandsFile)
-	store := newApprovedCommandStore(path)
+func TestNakedPermissionStoreRecordsCommandsAndExternalPaths(t *testing.T) {
+	workspace := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "config.json")
+	if err := os.WriteFile(outsidePath, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(workspace, ".herm", nakedPermissionsFile)
+	store := newNakedPermissionStore(path, workspace)
 	command := "git status && go test ./cmd/herm"
+	commandWithPath := command + " --config " + outsidePath
 
-	if !store.RequiresApproval(command) {
+	if !store.RequiresApproval(commandWithPath) {
 		t.Fatal("new command should require approval")
 	}
-	if err := store.RecordApproval(command); err != nil {
+	if err := store.RecordApproval(commandWithPath, true); err != nil {
 		t.Fatalf("RecordApproval: %v", err)
 	}
-	if store.RequiresApproval(command) {
+	if store.RequiresApproval(commandWithPath) {
 		t.Fatal("recorded command should not require approval")
 	}
 	if store.RequiresApproval("git status") {
@@ -44,15 +52,85 @@ func TestApprovedCommandStoreRecordsSegments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read approval file: %v", err)
 	}
-	var file approvedCommandFile
+	var file nakedPermissionFile
 	if err := json.Unmarshal(data, &file); err != nil {
 		t.Fatalf("approval file JSON: %v", err)
 	}
 	if file.Version != 1 {
 		t.Fatalf("version = %d, want 1", file.Version)
 	}
-	if !slices.Contains(file.Commands, "git status") || !slices.Contains(file.Commands, "go test ./cmd/herm") {
+	if !slices.Contains(file.Commands, "git status") || !slices.Contains(file.Commands, "go test ./cmd/herm --config "+outsidePath) {
 		t.Fatalf("commands = %#v, want recorded segments", file.Commands)
+	}
+	if !slices.Contains(file.Paths, outsidePath) {
+		t.Fatalf("paths = %#v, want %q", file.Paths, outsidePath)
+	}
+}
+
+func TestNakedPermissionStoreRegexesAreUserEditableAndNotRecorded(t *testing.T) {
+	workspace := t.TempDir()
+	outsideDir := t.TempDir()
+	outsidePath := filepath.Join(outsideDir, "token.txt")
+	if err := os.WriteFile(outsidePath, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(workspace, ".herm", nakedPermissionsFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := nakedPermissionFile{
+		Version:        1,
+		CommandRegexes: []string{`^git status\b`},
+		PathRegexes:    []string{`^` + regexp.QuoteMeta(outsideDir) + `/.*\.txt$`},
+	}
+	data, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := newNakedPermissionStore(path, workspace)
+
+	if store.RequiresApproval("git status --short " + outsidePath) {
+		t.Fatal("regex-approved command and path should not require approval")
+	}
+	if !store.RequiresApproval("git diff " + outsidePath) {
+		t.Fatal("unmatched command should require approval")
+	}
+}
+
+func TestNakedPermissionStoreAcceptOnceDoesNotPersist(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, ".herm", nakedPermissionsFile)
+	store := newNakedPermissionStore(path, workspace)
+	command := "git status"
+
+	if err := store.RecordApproval(command, false); err != nil {
+		t.Fatalf("RecordApproval: %v", err)
+	}
+	if store.RequiresApproval(command) {
+		t.Fatal("one-shot approval should allow the pending command")
+	}
+	store.FinishApproval(command)
+	if !store.RequiresApproval(command) {
+		t.Fatal("one-shot approval should be cleared after execution")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("one-shot approval wrote permissions file: %v", err)
+	}
+}
+
+func TestCommandExternalPathsIncludesRelativeOutsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "project")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := commandExternalPaths("cat ../secrets.env", workspace)
+	want := filepath.Join(root, "secrets.env")
+	if !slices.Equal(got, []string{want}) {
+		t.Fatalf("external paths = %#v, want %#v", got, []string{want})
 	}
 }
 
@@ -66,9 +144,10 @@ func (r *fakeBashRunner) RunBash(_ context.Context, opts bashRunOptions) (Comman
 	return r.result, nil
 }
 
-func TestNakedBashToolApprovalPolicyRecordsOnExecute(t *testing.T) {
-	path := filepath.Join(t.TempDir(), ".herm", approvedCommandsFile)
-	store := newApprovedCommandStore(path)
+func TestNakedBashToolApprovalPolicyRecordsOnlyWhenRequested(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, ".herm", nakedPermissionsFile)
+	store := newNakedPermissionStore(path, workspace)
 	runner := &fakeBashRunner{result: CommandResult{Stdout: "ok\n"}}
 	tool := &BashTool{
 		name:                toolBash,
@@ -83,6 +162,9 @@ func TestNakedBashToolApprovalPolicyRecordsOnExecute(t *testing.T) {
 	if !tool.RequiresApproval(input) {
 		t.Fatal("new naked bash command should require approval")
 	}
+	if err := tool.RecordApproval(input, false); err != nil {
+		t.Fatalf("RecordApproval once: %v", err)
+	}
 	out, err := tool.Execute(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -93,8 +175,14 @@ func TestNakedBashToolApprovalPolicyRecordsOnExecute(t *testing.T) {
 	if runner.command != "echo a && echo b" {
 		t.Fatalf("runner command = %q, want HTML-unescaped command", runner.command)
 	}
+	if !tool.RequiresApproval(input) {
+		t.Fatal("accept-once command should require approval again after execution")
+	}
+	if err := tool.RecordApproval(input, true); err != nil {
+		t.Fatalf("RecordApproval always: %v", err)
+	}
 	if tool.RequiresApproval(input) {
-		t.Fatal("executed command should have been recorded as approved")
+		t.Fatal("always-approved command should not require approval")
 	}
 }
 
@@ -112,10 +200,15 @@ func TestLinuxNakedSandboxCommandUsesBubblewrapWorkspaceBind(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	outsideFile := filepath.Join(t.TempDir(), "token.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	name, args, env, err := nakedSandboxCommand(nakedSandboxCommandOptions{
-		goos:      "linux",
-		workspace: workspace,
-		command:   "go test ./...",
+		goos:       "linux",
+		workspace:  workspace,
+		command:    "go test ./...",
+		extraPaths: []string{outsideFile},
 	})
 	if err != nil {
 		t.Fatalf("nakedSandboxCommand: %v", err)
@@ -131,6 +224,7 @@ func TestLinuxNakedSandboxCommandUsesBubblewrapWorkspaceBind(t *testing.T) {
 		"\x00--unshare-all\x00",
 		"\x00--share-net\x00",
 		"\x00--bind\x00" + workspace + "\x00" + workspace + "\x00",
+		"\x00--bind\x00" + outsideFile + "\x00" + outsideFile + "\x00",
 		"\x00--chdir\x00" + workspace + "\x00",
 		"\x00bash\x00-lc\x00go test ./...\x00",
 	} {
@@ -151,10 +245,12 @@ func TestDarwinNakedSandboxCommandUsesWorkspaceWriteProfile(t *testing.T) {
 	}
 
 	workspace := filepath.Join(t.TempDir(), "project")
+	outsideFile := filepath.Join(t.TempDir(), "token.txt")
 	name, args, env, err := nakedSandboxCommand(nakedSandboxCommandOptions{
-		goos:      "darwin",
-		workspace: workspace,
-		command:   "go test ./...",
+		goos:       "darwin",
+		workspace:  workspace,
+		command:    "go test ./...",
+		extraPaths: []string{outsideFile},
 	})
 	if err != nil {
 		t.Fatalf("nakedSandboxCommand: %v", err)
@@ -167,6 +263,9 @@ func TestDarwinNakedSandboxCommandUsesWorkspaceWriteProfile(t *testing.T) {
 	}
 	if !strings.Contains(args[1], `(allow file-write* (subpath "`+workspace+`"))`) {
 		t.Fatalf("profile = %q, want workspace write allowance", args[1])
+	}
+	if !strings.Contains(args[1], `(allow file-read* (subpath "`+outsideFile+`"))`) || !strings.Contains(args[1], `(allow file-write* (subpath "`+outsideFile+`"))`) {
+		t.Fatalf("profile = %q, want outside file allowance", args[1])
 	}
 	if !slices.Contains(env, "HOME="+filepath.Join(workspace, configDir, "home")) {
 		t.Fatalf("env = %#v, want HOME in workspace", env)

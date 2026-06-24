@@ -430,6 +430,7 @@ type AgentEvent struct {
 // ApprovalResponse is sent back to the agent when the user approves/denies a tool call.
 type ApprovalResponse struct {
 	Approved bool
+	Remember bool
 }
 
 // Agent orchestrates LLM calls and tool execution.

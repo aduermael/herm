@@ -547,6 +547,32 @@ func TestBuildInputRows(t *testing.T) {
 	}
 }
 
+func TestBuildInputRowsApprovalUsesCodeBlockAndOptions(t *testing.T) {
+	app := &App{
+		width:              80,
+		awaitingApproval:   true,
+		approvalPauseStart: time.Now(),
+		approvalSummary:    "bash",
+		approvalDesc:       "git status && go test ./...",
+		approvalSelected:   1,
+	}
+
+	rows := app.buildInputRows()
+	joined := strings.Join(rows, "\n")
+	plain := ansiEscRe.ReplaceAllString(joined, "")
+	for _, want := range []string{"Allow bash?", "git status && go test ./...", "Accept once [y]", "Always accept [cmd+y]", "Deny [n]"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("approval rows missing %q:\n%s", want, plain)
+		}
+	}
+	if !strings.Contains(joined, codeBackgroundStyle) {
+		t.Fatalf("approval detail should use code block style: %#v", rows)
+	}
+	if !strings.Contains(joined, "\033[7m Always accept [cmd+y] \033[0m") {
+		t.Fatalf("selected option not highlighted: %#v", rows)
+	}
+}
+
 func TestBuildInputRowsCPSLStatusUsesSandboxLabel(t *testing.T) {
 	app := &App{
 		width:          80,

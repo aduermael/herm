@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -15,13 +16,14 @@ import (
 	"time"
 )
 
-const approvedCommandsFile = "approved_commands.json"
+const nakedPermissionsFile = "permissions.json"
 
 // sandboxCommand is a function variable for exec.CommandContext, replaceable in tests.
 var sandboxCommand = exec.CommandContext
 
 type hostSandboxBashRunner struct {
-	workspace string
+	workspace   string
+	permissions *nakedPermissionStore
 }
 
 func (r hostSandboxBashRunner) RunBash(ctx context.Context, opts bashRunOptions) (CommandResult, error) {
@@ -47,10 +49,15 @@ func (r hostSandboxBashRunner) RunBash(ctx context.Context, opts bashRunOptions)
 	runCtx, cancel := context.WithTimeout(parent, time.Duration(timeout)*time.Second)
 	defer cancel()
 
+	var extraPaths []string
+	if r.permissions != nil {
+		extraPaths = r.permissions.AllowedExternalPaths(opts.command)
+	}
 	name, args, env, err := nakedSandboxCommand(nakedSandboxCommandOptions{
-		goos:      runtime.GOOS,
-		workspace: workspace,
-		command:   opts.command,
+		goos:       runtime.GOOS,
+		workspace:  workspace,
+		command:    opts.command,
+		extraPaths: extraPaths,
 	})
 	if err != nil {
 		return CommandResult{}, err
@@ -98,17 +105,18 @@ func prepareNakedWorkspaceDirs(workspace string) error {
 }
 
 type nakedSandboxCommandOptions struct {
-	goos      string
-	workspace string
-	command   string
+	goos       string
+	workspace  string
+	command    string
+	extraPaths []string
 }
 
 func nakedSandboxCommand(opts nakedSandboxCommandOptions) (name string, args []string, env []string, err error) {
 	switch opts.goos {
 	case "linux":
-		return linuxNakedSandboxCommand(opts.workspace, opts.command)
+		return linuxNakedSandboxCommand(opts.workspace, opts.command, opts.extraPaths)
 	case "darwin":
-		return darwinNakedSandboxCommand(opts.workspace, opts.command)
+		return darwinNakedSandboxCommand(opts.workspace, opts.command, opts.extraPaths)
 	default:
 		return "", nil, nil, fmt.Errorf("--naked sandboxing is unsupported on %s", opts.goos)
 	}
@@ -131,7 +139,7 @@ func checkNakedSandboxAvailable() error {
 	}
 }
 
-func linuxNakedSandboxCommand(workspace, command string) (string, []string, []string, error) {
+func linuxNakedSandboxCommand(workspace, command string, extraPaths []string) (string, []string, []string, error) {
 	bwrapPath, err := lookPath("bwrap")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("bubblewrap (bwrap) is required for --naked on Linux")
@@ -159,6 +167,20 @@ func linuxNakedSandboxCommand(workspace, command string) (string, []string, []st
 	}
 	for _, dir := range sandboxParentDirs(workspace) {
 		args = append(args, "--dir", dir)
+	}
+	for _, path := range normalizeNakedExternalPaths(workspace, extraPaths) {
+		info, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		parentPath := filepath.Dir(path)
+		if info.IsDir() {
+			parentPath = path
+		}
+		for _, dir := range sandboxParentDirs(parentPath) {
+			args = append(args, "--dir", dir)
+		}
+		args = append(args, "--bind", path, path)
 	}
 
 	args = append(args,
@@ -200,12 +222,12 @@ func sandboxParentDirs(path string) []string {
 	return dirs
 }
 
-func darwinNakedSandboxCommand(workspace, command string) (string, []string, []string, error) {
+func darwinNakedSandboxCommand(workspace, command string, extraPaths []string) (string, []string, []string, error) {
 	sandboxExecPath, err := lookPath("sandbox-exec")
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("sandbox-exec is required for --naked on macOS")
 	}
-	profile := darwinNakedSandboxProfile(workspace)
+	profile := darwinNakedSandboxProfile(workspace, extraPaths)
 	env := []string{
 		"HOME=" + filepath.Join(workspace, configDir, "home"),
 		"XDG_CACHE_HOME=" + filepath.Join(workspace, configDir, "cache"),
@@ -214,8 +236,14 @@ func darwinNakedSandboxCommand(workspace, command string) (string, []string, []s
 	return sandboxExecPath, []string{"-p", profile, "bash", "-lc", command}, env, nil
 }
 
-func darwinNakedSandboxProfile(workspace string) string {
+func darwinNakedSandboxProfile(workspace string, extraPaths []string) string {
 	quoted := sandboxProfileQuote(workspace)
+	var b strings.Builder
+	for _, path := range normalizeNakedExternalPaths(workspace, extraPaths) {
+		q := sandboxProfileQuote(path)
+		fmt.Fprintf(&b, "(allow file-read* (subpath %s))\n", q)
+		fmt.Fprintf(&b, "(allow file-write* (subpath %s))\n", q)
+	}
 	return fmt.Sprintf(`(version 1)
 (deny default)
 (allow process*)
@@ -223,9 +251,17 @@ func darwinNakedSandboxProfile(workspace string) string {
 (allow sysctl-read)
 (allow mach-lookup)
 (allow network*)
-(allow file-read*)
+(allow file-read*
+  (subpath "/bin")
+  (subpath "/sbin")
+  (subpath "/usr")
+  (subpath "/System")
+  (subpath "/Library")
+  (subpath "/private/etc")
+  (subpath "/etc")
+  (subpath %s))
 (allow file-write* (subpath %s))
-`, quoted)
+%s`, quoted, quoted, b.String())
 }
 
 func sandboxProfileQuote(s string) string {
@@ -234,102 +270,232 @@ func sandboxProfileQuote(s string) string {
 	return `"` + escaped + `"`
 }
 
-func nakedApprovedCommandsPath(workspace string) string {
-	return filepath.Join(workspace, configDir, approvedCommandsFile)
+func nakedPermissionsPath(workspace string) string {
+	return filepath.Join(workspace, configDir, nakedPermissionsFile)
 }
 
-type approvedCommandStore struct {
-	path string
-	mu   sync.Mutex
+type nakedPermissionStore struct {
+	path      string
+	workspace string
+	mu        sync.Mutex
+	once      nakedPermissionSet
 }
 
-func newApprovedCommandStore(path string) *approvedCommandStore {
+func newNakedPermissionStore(path, workspace string) *nakedPermissionStore {
 	if path == "" {
 		return nil
 	}
-	return &approvedCommandStore{path: path}
+	workspace, _ = filepath.Abs(workspace)
+	return &nakedPermissionStore{path: path, workspace: workspace}
 }
 
-type approvedCommandFile struct {
-	Version  int      `json:"version"`
-	Commands []string `json:"commands"`
+type nakedPermissionFile struct {
+	Version        int      `json:"version"`
+	Commands       []string `json:"commands"`
+	CommandRegexes []string `json:"command_regexes,omitempty"`
+	Paths          []string `json:"paths,omitempty"`
+	PathRegexes    []string `json:"path_regexes,omitempty"`
 }
 
-func (s *approvedCommandStore) RequiresApproval(command string) bool {
+type nakedPermissionSet struct {
+	Commands map[string]bool
+	Paths    map[string]bool
+}
+
+type loadedNakedPermissions struct {
+	file            nakedPermissionFile
+	commands        map[string]bool
+	commandRegexes  []*regexp.Regexp
+	paths           map[string]bool
+	pathRegexes     []*regexp.Regexp
+	invalidRegexes  []string
+	invalidPatterns []string
+}
+
+func (s *nakedPermissionStore) RequiresApproval(command string) bool {
 	if s == nil || strings.TrimSpace(command) == "" {
 		return false
 	}
-	approved, err := s.load()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	permissions, err := s.loadLocked()
 	if err != nil {
 		return true
 	}
 	for _, segment := range commandApprovalSegments(command) {
-		if !approved[segment] {
+		if !s.commandAllowedLocked(permissions, segment) {
+			return true
+		}
+	}
+	for _, path := range commandExternalPaths(command, s.workspace) {
+		if !s.pathAllowedLocked(permissions, path) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *approvedCommandStore) RecordApproval(command string) error {
+func (s *nakedPermissionStore) RecordApproval(command string, remember bool) error {
 	if s == nil || strings.TrimSpace(command) == "" {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	approved, err := s.loadLocked()
-	if err != nil {
-		return err
+	if remember {
+		permissions, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
+		changed := false
+		for _, segment := range commandApprovalSegments(command) {
+			if segment != "" && !permissions.commands[segment] {
+				permissions.commands[segment] = true
+				changed = true
+			}
+		}
+		for _, path := range commandExternalPaths(command, s.workspace) {
+			if path != "" && !permissions.paths[path] {
+				permissions.paths[path] = true
+				changed = true
+			}
+		}
+		if !changed {
+			return nil
+		}
+		return s.saveLocked(permissions)
 	}
-	changed := false
+
 	for _, segment := range commandApprovalSegments(command) {
-		if !approved[segment] {
-			approved[segment] = true
-			changed = true
+		if segment != "" {
+			if s.once.Commands == nil {
+				s.once.Commands = map[string]bool{}
+			}
+			s.once.Commands[segment] = true
 		}
 	}
-	if !changed {
-		return nil
+	for _, path := range commandExternalPaths(command, s.workspace) {
+		if path != "" {
+			if s.once.Paths == nil {
+				s.once.Paths = map[string]bool{}
+			}
+			s.once.Paths[path] = true
+		}
 	}
-	return s.saveLocked(approved)
+	return nil
 }
 
-func (s *approvedCommandStore) load() (map[string]bool, error) {
+func (s *nakedPermissionStore) FinishApproval(command string) {
+	if s == nil || strings.TrimSpace(command) == "" {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.loadLocked()
+	for _, segment := range commandApprovalSegments(command) {
+		delete(s.once.Commands, segment)
+	}
+	for _, path := range commandExternalPaths(command, s.workspace) {
+		delete(s.once.Paths, path)
+	}
 }
 
-func (s *approvedCommandStore) loadLocked() (map[string]bool, error) {
-	approved := map[string]bool{}
-	data, err := os.ReadFile(s.path)
-	if os.IsNotExist(err) {
-		return approved, nil
+func (s *nakedPermissionStore) AllowedExternalPaths(command string) []string {
+	if s == nil || strings.TrimSpace(command) == "" {
+		return nil
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	permissions, err := s.loadLocked()
 	if err != nil {
-		return approved, err
+		return nil
 	}
-	var file approvedCommandFile
-	if err := json.Unmarshal(data, &file); err != nil {
-		return approved, err
-	}
-	for _, command := range file.Commands {
-		command = strings.TrimSpace(command)
-		if command != "" {
-			approved[command] = true
+	var paths []string
+	for _, path := range commandExternalPaths(command, s.workspace) {
+		if s.pathAllowedLocked(permissions, path) {
+			paths = append(paths, path)
 		}
 	}
-	return approved, nil
+	return uniqueSortedStrings(paths)
 }
 
-func (s *approvedCommandStore) saveLocked(approved map[string]bool) error {
-	commands := make([]string, 0, len(approved))
-	for command := range approved {
+func (s *nakedPermissionStore) commandAllowedLocked(permissions loadedNakedPermissions, command string) bool {
+	if permissions.commands[command] || s.once.Commands[command] {
+		return true
+	}
+	for _, re := range permissions.commandRegexes {
+		if re.MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *nakedPermissionStore) pathAllowedLocked(permissions loadedNakedPermissions, path string) bool {
+	if permissions.paths[path] || s.once.Paths[path] {
+		return true
+	}
+	for _, re := range permissions.pathRegexes {
+		if re.MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *nakedPermissionStore) loadLocked() (loadedNakedPermissions, error) {
+	loaded := loadedNakedPermissions{
+		file: nakedPermissionFile{
+			Version: 1,
+		},
+		commands: map[string]bool{},
+		paths:    map[string]bool{},
+	}
+	data, err := os.ReadFile(s.path)
+	if os.IsNotExist(err) {
+		return loaded, nil
+	}
+	if err != nil {
+		return loaded, err
+	}
+	if err := json.Unmarshal(data, &loaded.file); err != nil {
+		return loaded, err
+	}
+	for _, command := range loaded.file.Commands {
+		command = strings.TrimSpace(command)
+		if command != "" {
+			loaded.commands[command] = true
+		}
+	}
+	for _, path := range loaded.file.Paths {
+		if normalized, ok := normalizeNakedPath(s.workspace, path); ok {
+			loaded.paths[normalized] = true
+		}
+	}
+	loaded.commandRegexes, loaded.invalidRegexes = compileNakedRegexes(loaded.file.CommandRegexes)
+	loaded.pathRegexes, loaded.invalidPatterns = compileNakedRegexes(loaded.file.PathRegexes)
+	return loaded, nil
+}
+
+func (s *nakedPermissionStore) saveLocked(permissions loadedNakedPermissions) error {
+	commands := make([]string, 0, len(permissions.commands))
+	for command := range permissions.commands {
 		commands = append(commands, command)
 	}
 	sort.Strings(commands)
-	data, err := json.MarshalIndent(approvedCommandFile{Version: 1, Commands: commands}, "", "  ")
+
+	paths := make([]string, 0, len(permissions.paths))
+	for path := range permissions.paths {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	file := permissions.file
+	file.Version = 1
+	file.Commands = commands
+	file.Paths = paths
+	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -337,6 +503,24 @@ func (s *approvedCommandStore) saveLocked(approved map[string]bool) error {
 		return err
 	}
 	return os.WriteFile(s.path, append(data, '\n'), 0o644)
+}
+
+func compileNakedRegexes(patterns []string) ([]*regexp.Regexp, []string) {
+	var regexes []*regexp.Regexp
+	var invalid []string
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			invalid = append(invalid, pattern)
+			continue
+		}
+		regexes = append(regexes, re)
+	}
+	return regexes, invalid
 }
 
 func commandApprovalSegments(command string) []string {
@@ -406,4 +590,140 @@ func commandApprovalSegments(command string) []string {
 		}
 	}
 	return segments
+}
+
+func commandExternalPaths(command, workspace string) []string {
+	var paths []string
+	for _, word := range shellWords(command) {
+		for _, candidate := range pathCandidatesFromShellWord(word) {
+			if normalized, ok := normalizeNakedPath(workspace, candidate); ok {
+				paths = append(paths, normalized)
+			}
+		}
+	}
+	return uniqueSortedStrings(paths)
+}
+
+func pathCandidatesFromShellWord(word string) []string {
+	if word == "" {
+		return nil
+	}
+	word = strings.Trim(word, `"'`)
+	word = strings.TrimRight(word, `,`)
+	var candidates []string
+	if isNakedPathCandidate(word) {
+		candidates = append(candidates, word)
+	}
+	if idx := strings.IndexByte(word, '='); idx >= 0 && idx+1 < len(word) {
+		value := strings.Trim(word[idx+1:], `"'`)
+		if isNakedPathCandidate(value) {
+			candidates = append(candidates, value)
+		}
+	}
+	return candidates
+}
+
+func isNakedPathCandidate(s string) bool {
+	return strings.HasPrefix(s, "/") || strings.HasPrefix(s, "~/") || strings.HasPrefix(s, "../")
+}
+
+func shellWords(command string) []string {
+	var words []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		word := strings.TrimSpace(b.String())
+		if word != "" {
+			words = append(words, word)
+		}
+		b.Reset()
+	}
+
+	for _, r := range command {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				continue
+			}
+			b.WriteRune(r)
+			continue
+		}
+		switch r {
+		case '\'', '"':
+			quote = r
+		case ' ', '\t', '\n', ';', '|', '&', '(', ')':
+			flush()
+		default:
+			b.WriteRune(r)
+		}
+	}
+	flush()
+	return words
+}
+
+func normalizeNakedPath(workspace, path string) (string, bool) {
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	if !filepath.IsAbs(path) {
+		if workspace == "" {
+			return "", false
+		}
+		path = filepath.Join(workspace, path)
+	}
+	normalized := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(normalized); err == nil {
+		normalized = resolved
+	}
+	workspace = filepath.Clean(workspace)
+	if resolved, err := filepath.EvalSymlinks(workspace); err == nil {
+		workspace = resolved
+	}
+	if normalized == workspace || strings.HasPrefix(normalized, workspace+string(filepath.Separator)) {
+		return "", false
+	}
+	return normalized, true
+}
+
+func normalizeNakedExternalPaths(workspace string, paths []string) []string {
+	var normalized []string
+	for _, path := range paths {
+		if p, ok := normalizeNakedPath(workspace, path); ok {
+			normalized = append(normalized, p)
+		}
+	}
+	return uniqueSortedStrings(normalized)
+}
+
+func uniqueSortedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(values))
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }

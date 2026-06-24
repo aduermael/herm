@@ -601,6 +601,55 @@ const toolGroupShowEdge = 3
 
 // subAgent display state, spinner, and line formatting live in render_subagent.go.
 
+type renderApprovalCodeRowsOptions struct {
+	text  string
+	width int
+}
+
+func renderApprovalCodeRows(opts renderApprovalCodeRowsOptions) []string {
+	width := opts.width
+	if width <= 0 {
+		width = 80
+	}
+	lines := strings.Split(strings.ReplaceAll(opts.text, "\r", ""), "\n")
+	var rows []string
+	for _, line := range lines {
+		if line == "" {
+			line = " "
+		}
+		wrapped := wrapString(wrapStringOptions{s: codeStyle + line, w: width})
+		for i := range wrapped {
+			rows = append(rows, padCodeBlockRow(padCodeBlockRowOptions{row: wrapped[i], width: width}))
+		}
+	}
+	return rows
+}
+
+type renderApprovalOptionsRowOptions struct {
+	selected int
+	width    int
+}
+
+func renderApprovalOptionsRow(opts renderApprovalOptionsRowOptions) string {
+	labels := []string{"Accept once [y]", "Always accept [cmd+y]", "Deny [n]"}
+	parts := make([]string, 0, len(labels))
+	for i, label := range labels {
+		if i == opts.selected {
+			parts = append(parts, "\033[7m "+label+" \033[0m")
+		} else {
+			parts = append(parts, " "+label+" ")
+		}
+	}
+	row := strings.Join(parts, "  ")
+	if visibleWidth(row) > opts.width && opts.width > 0 {
+		row = strings.Join([]string{"[y] once", "[cmd+y] always", "[n] deny"}, "  ")
+	}
+	if opts.width > 0 && visibleWidth(row) < opts.width {
+		row = strings.Repeat(" ", (opts.width-visibleWidth(row))/2) + row
+	}
+	return row
+}
+
 func (a *App) buildInputRows() []string {
 	sep := strings.Repeat("─", a.width)
 
@@ -608,7 +657,7 @@ func (a *App) buildInputRows() []string {
 	if a.awaitingApproval {
 		t := time.Since(a.approvalPauseStart)
 		color := approvalGradientColor(t)
-		shortMsg := fmt.Sprintf("Allow %s? [y/n]", a.approvalSummary)
+		shortMsg := fmt.Sprintf("Allow %s?", a.approvalSummary)
 		if visibleWidth(shortMsg) > a.width {
 			shortMsg = truncateVisual(truncateVisualOptions{s: shortMsg, maxCols: a.width})
 		}
@@ -623,15 +672,9 @@ func (a *App) buildInputRows() []string {
 		approvalRows := []string{sep}
 		approvalRows = append(approvalRows, fmt.Sprintf("%s%s%s[0m", color, strings.Repeat(" ", shortPad), shortMsg))
 		if detail != "" {
-			if visibleWidth(detail) > a.width {
-				detail = truncateVisual(truncateVisualOptions{s: detail, maxCols: a.width})
-			}
-			detailPad := (a.width - visibleWidth(detail)) / 2
-			if detailPad < 0 {
-				detailPad = 0
-			}
-			approvalRows = append(approvalRows, fmt.Sprintf("[2m%s%s[0m", strings.Repeat(" ", detailPad), detail))
+			approvalRows = append(approvalRows, renderApprovalCodeRows(renderApprovalCodeRowsOptions{text: detail, width: a.width})...)
 		}
+		approvalRows = append(approvalRows, renderApprovalOptionsRow(renderApprovalOptionsRowOptions{selected: a.approvalSelected, width: a.width}))
 		approvalRows = append(approvalRows, sep)
 		return approvalRows
 	}
