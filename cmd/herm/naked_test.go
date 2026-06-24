@@ -258,8 +258,11 @@ func TestDarwinNakedSandboxCommandUsesWorkspaceWriteProfile(t *testing.T) {
 	if name != "/usr/bin/sandbox-exec" {
 		t.Fatalf("name = %q, want /usr/bin/sandbox-exec", name)
 	}
-	if len(args) < 5 || args[0] != "-p" || args[len(args)-3] != "bash" || args[len(args)-2] != "-lc" || args[len(args)-1] != "go test ./..." {
+	if len(args) < 5 || args[0] != "-p" || args[len(args)-3] != "/bin/bash" || args[len(args)-2] != "-lc" || args[len(args)-1] != "go test ./..." {
 		t.Fatalf("sandbox-exec args = %#v", args)
+	}
+	if !strings.Contains(args[1], "(allow file-read*)") {
+		t.Fatalf("profile = %q, want broad file reads for macOS command startup", args[1])
 	}
 	if !strings.Contains(args[1], `(allow file-write* (subpath "`+workspace+`"))`) {
 		t.Fatalf("profile = %q, want workspace write allowance", args[1])

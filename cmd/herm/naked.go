@@ -233,7 +233,7 @@ func darwinNakedSandboxCommand(workspace, command string, extraPaths []string) (
 		"XDG_CACHE_HOME=" + filepath.Join(workspace, configDir, "cache"),
 		"TMPDIR=" + filepath.Join(workspace, configDir, "tmp"),
 	}
-	return sandboxExecPath, []string{"-p", profile, "bash", "-lc", command}, env, nil
+	return sandboxExecPath, []string{"-p", profile, "/bin/bash", "-lc", command}, env, nil
 }
 
 func darwinNakedSandboxProfile(workspace string, extraPaths []string) string {
@@ -251,17 +251,9 @@ func darwinNakedSandboxProfile(workspace string, extraPaths []string) string {
 (allow sysctl-read)
 (allow mach-lookup)
 (allow network*)
-(allow file-read*
-  (subpath "/bin")
-  (subpath "/sbin")
-  (subpath "/usr")
-  (subpath "/System")
-  (subpath "/Library")
-  (subpath "/private/etc")
-  (subpath "/etc")
-  (subpath %s))
+(allow file-read*)
 (allow file-write* (subpath %s))
-%s`, quoted, quoted, b.String())
+%s`, quoted, b.String())
 }
 
 func sandboxProfileQuote(s string) string {
