@@ -102,7 +102,7 @@ Accessible in chat mode using `/` prefix with autocomplete.
 **`/model`**
 - Quick jump to model selection screen
 - Auto-opens project config tab if in a repo, else global
-- Cursor starts on "Active Model" field
+- Cursor starts on "Model" field
 
 **`/worktrees`**
 - Manage git worktrees in current project

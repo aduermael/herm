@@ -910,7 +910,7 @@ func TestProjectModelCatalogRefreshUpdatesResolvedProjectModelDisplay(t *testing
 	app.handleResult(catalogMsg{catalog: catalog})
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(rows, "Using active: openai/canonical-refresh") {
+	if !strings.Contains(rows, "Model: canonical-refresh") {
 		t.Fatalf("catalog refresh did not update resolved project model display:\n%s", rows)
 	}
 	if strings.Contains(rows, `active_model "openai/canonical-refresh" is unknown`) {
@@ -978,7 +978,7 @@ func TestProjectModelOllamaOfflineWarningDedupesWhenExplorationRefreshes(t *test
 	if count := strings.Count(rows, "Ollama unreachable"); count != 1 {
 		t.Fatalf("Ollama offline warning count = %d, want 1 after exploration refresh:\n%s", count, rows)
 	}
-	if !strings.Contains(rows, ", exploration: vendor/fast-model") {
+	if !strings.Contains(rows, "Exploration: fast-model") {
 		t.Fatalf("exploration refresh did not update model display:\n%s", rows)
 	}
 }
@@ -1003,7 +1003,7 @@ func TestProjectModelDynamicModelsRefreshStartupModelDisplay(t *testing.T) {
 	if strings.Contains(startup, `active_model "vendor/new-model" is unknown`) {
 		t.Fatalf("OpenRouter should trust configured native model IDs not in embedded catalog:\n%s", startup)
 	}
-	if !strings.Contains(startup, "Using active: vendor/new-model") {
+	if !strings.Contains(startup, "Model: new-model") {
 		t.Fatalf("startup should use configured OpenRouter model:\n%s", startup)
 	}
 
@@ -1022,7 +1022,7 @@ func TestProjectModelDynamicModelsRefreshStartupModelDisplay(t *testing.T) {
 	}}})
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(rows, "Using active: vendor/new-model") {
+	if !strings.Contains(rows, "Model: new-model") {
 		t.Fatalf("dynamic model refresh did not update model display:\n%s", rows)
 	}
 }
@@ -1047,7 +1047,7 @@ func TestProjectModelOpenRouterTrustsUncataloguedNativeModel(t *testing.T) {
 	if strings.Contains(startup, `active_model "vendor/missing-model" is unknown`) {
 		t.Fatalf("OpenRouter should trust configured native model IDs not in embedded catalog:\n%s", startup)
 	}
-	if !strings.Contains(startup, "Using active: vendor/missing-model") {
+	if !strings.Contains(startup, "Model: missing-model") {
 		t.Fatalf("startup should use configured OpenRouter model:\n%s", startup)
 	}
 
@@ -1088,10 +1088,10 @@ func TestRefreshResolvedModelDisplayExplorationOnly(t *testing.T) {
 
 	app.refreshResolvedModelDisplay()
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(rows, "Using exploration: openrouter/owl-alpha (project)") {
+	if !strings.Contains(rows, "Exploration: owl-alpha (project)") {
 		t.Fatalf("refresh should show exploration-only line:\n%s", rows)
 	}
-	if strings.Contains(rows, "Using active:") {
+	if strings.Contains(rows, "Model:") {
 		t.Fatalf("exploration-only display should not include active line:\n%s", rows)
 	}
 }
@@ -1123,7 +1123,7 @@ func TestProjectModelDynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 
 	app.maybeShowInitialModels()
 	startup := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(startup, "Using active: openai/gpt-4.1-2025-04-14 (global), exploration: vendor/fast-model (project)") {
+	if !strings.Contains(startup, "Model: gpt-4.1-2025-04-14 (global) Exploration: fast-model (project)") {
 		t.Fatalf("startup should trust configured OpenRouter exploration model:\n%s", startup)
 	}
 
@@ -1140,7 +1140,7 @@ func TestProjectModelDynamicModelsRefreshExplorationOnlyDisplay(t *testing.T) {
 	app.refreshResolvedModelDisplay()
 
 	rows := strings.Join(chatMessageContents(app.messages), "\n")
-	if !strings.Contains(rows, "Using active: openai/gpt-4.1-2025-04-14 (global), exploration: vendor/fast-model (project)") {
+	if !strings.Contains(rows, "Model: gpt-4.1-2025-04-14 (global) Exploration: fast-model (project)") {
 		t.Fatalf("dynamic model refresh did not update exploration display:\n%s", rows)
 	}
 }

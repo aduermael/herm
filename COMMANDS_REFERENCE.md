@@ -62,7 +62,7 @@ Quick lookup table for all interactive slash commands available in chat mode.
 - Opens `/config` directly to model selection
 - If in repo: Opens Project tab (priority)
 - If standalone: Opens Global tab
-- Cursor pre-positioned on "Active Model"
+- Cursor pre-positioned on "Model"
 - Best for: One-off model changes without full config editor
 
 ### `/worktrees`

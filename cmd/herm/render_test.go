@@ -647,8 +647,8 @@ func TestLayoutInlineBlocks(t *testing.T) {
 	}
 
 	t.Run("wraps only between blocks", func(t *testing.T) {
-		first := "Using active: openai/gpt-5.5-2026-04-23"
-		second := ", exploration: anthropic/claude-haiku-4-5"
+		first := "Model: gpt-5.5-2026-04-23"
+		second := "Exploration: claude-haiku-4-5"
 		width := max(visibleWidth(first), visibleWidth(second))
 		rows := layoutInlineBlocks(layoutInlineBlocksOptions{
 			blocks: []inlineBlock{
@@ -682,7 +682,7 @@ func TestLayoutInlineBlocks(t *testing.T) {
 
 	t.Run("ellipsizes overwide block on its own row", func(t *testing.T) {
 		rows := layoutInlineBlocks(layoutInlineBlocksOptions{
-			blocks: []inlineBlock{newInlineBlock("ok"), newInlineBlock(", exploration: anthropic/claude-haiku-4-5")},
+			blocks: []inlineBlock{newInlineBlock("ok"), newInlineBlock("Exploration: claude-haiku-4-5")},
 			width:  18,
 		})
 		plain := strip(rows)
@@ -721,7 +721,7 @@ func TestModelDisplayLineUsesInlineBlocks(t *testing.T) {
 	model := "openai/gpt-5.5-2026-04-23"
 	exploration := "anthropic/claude-haiku-4-5"
 	content, blocks := modelDisplayLine(modelDisplayLineOptions{activeID: model, explorationID: exploration})
-	if content != "Using active: "+model+", exploration: "+exploration {
+	if content != "Model: "+bareModelID(model)+" Exploration: "+bareModelID(exploration) {
 		t.Fatalf("content = %q", content)
 	}
 
@@ -729,8 +729,8 @@ func TestModelDisplayLineUsesInlineBlocks(t *testing.T) {
 		t.Fatalf("blocks = %d, want active and exploration", len(blocks))
 	}
 
-	first := "Using active: " + model
-	second := ", exploration: " + exploration
+	first := "Model: " + bareModelID(model)
+	second := "Exploration: " + bareModelID(exploration)
 	width := max(visibleWidth(first), visibleWidth(second))
 	rows := layoutInlineBlocks(layoutInlineBlocksOptions{blocks: blocks, width: width})
 	if len(rows) != 2 {
@@ -751,7 +751,7 @@ func TestModelDisplayLineUsesInlineBlocks(t *testing.T) {
 func TestModelDisplayLineExplorationOnly(t *testing.T) {
 	exploration := "openrouter/owl-alpha"
 	content, blocks := modelDisplayLine(modelDisplayLineOptions{explorationID: exploration, explorationScope: "project"})
-	if content != "Using exploration: "+exploration+" (project)" {
+	if content != "Exploration: "+bareModelID(exploration)+" (project)" {
 		t.Fatalf("content = %q", content)
 	}
 	if len(blocks) != 1 {
@@ -769,7 +769,7 @@ func TestModelDisplayLineShowsMixedScopes(t *testing.T) {
 		activeScope:      "global",
 		explorationScope: "project",
 	})
-	want := "Using active: openai/gpt-4.1 (global), exploration: openrouter/owl-alpha (project)"
+	want := "Model: gpt-4.1 (global) Exploration: owl-alpha (project)"
 	if content != want {
 		t.Fatalf("content = %q, want %q", content, want)
 	}
@@ -837,8 +837,8 @@ func TestBuildBlockRowsRendersInlineMessageBlocks(t *testing.T) {
 	model := "openai/gpt-5.5-2026-04-23"
 	exploration := "anthropic/claude-haiku-4-5"
 	content, blocks := modelDisplayLine(modelDisplayLineOptions{activeID: model, explorationID: exploration})
-	first := "Using active: " + model
-	second := ", exploration: " + exploration
+	first := "Model: " + bareModelID(model)
+	second := "Exploration: " + bareModelID(exploration)
 	app := &App{
 		width: max(visibleWidth(first), visibleWidth(second)),
 		messages: []chatMessage{{

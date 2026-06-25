@@ -8,10 +8,10 @@ import (
 
 // Config field labels shown in the config editor and save notices.
 const (
-	uiConfigLabelActiveModel             = "Active Model"
-	uiConfigLabelExplorationModel        = "Exploration Model"
-	uiConfigLabelProjectActiveModel      = "Project Active Model"
-	uiConfigLabelProjectExplorationModel = "Project Exploration Model"
+	uiConfigLabelActiveModel             = "Model"
+	uiConfigLabelExplorationModel        = "Exploration"
+	uiConfigLabelProjectActiveModel      = "Project Model"
+	uiConfigLabelProjectExplorationModel = "Project Exploration"
 )
 
 const uiConfigLabelAPIKeySubstring = "API Key"
@@ -40,9 +40,9 @@ const (
 
 // Model status line copy.
 const (
-	uiModelDisplayActivePrefix      = "Using active: "
-	uiModelDisplayExplorationPrefix = "Using exploration: "
-	uiModelDisplayExplorationJoin   = ", exploration: "
+	uiModelDisplayActivePrefix      = "Model: "
+	uiModelDisplayExplorationPrefix = "Exploration: "
+	uiModelDisplayExplorationJoin   = "Exploration: "
 	uiModelDisplayOffline           = " (offline)"
 )
 
@@ -50,7 +50,7 @@ const (
 const (
 	configMissingAPIKeyMessage   = "No API keys configured. Use /config to add a key first."
 	configMissingModelMessage    = "No model configured. Use /model to select one first."
-	configSelectModelHintMessage = "Select Active Model (/model)."
+	configSelectModelHintMessage = "Select Model (/model)."
 )
 
 type configFieldNoticeContentOptions struct {

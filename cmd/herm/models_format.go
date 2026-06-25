@@ -137,6 +137,24 @@ func modelDisplayProvider(m ModelDef) string {
 	return m.Provider
 }
 
+func bareModelID(id string) string {
+	_, model, ok := strings.Cut(id, "/")
+	if !ok || model == "" {
+		return id
+	}
+	return model
+}
+
+func modelMenuDisplayName(m ModelDef) string {
+	if m.Label != "" {
+		if strings.HasPrefix(m.Label, m.ID) {
+			return bareModelID(m.ID) + strings.TrimPrefix(m.Label, m.ID)
+		}
+		return m.Label
+	}
+	return bareModelID(m.ID)
+}
+
 // formatContextWindow formats a token count for display.
 // Examples: 128000 → "128k", 200000 → "200k", 1048576 → "1.0m".
 func formatContextWindow(tokens int) string {
@@ -180,10 +198,7 @@ func formatModelMenuLines(opts formatModelMenuLinesOptions) (string, []string) {
 	}
 	entries := make([]entry, len(models))
 	for i, m := range models {
-		displayName := m.ID
-		if m.Label != "" {
-			displayName = m.Label
-		}
+		displayName := modelMenuDisplayName(m)
 		e := entry{
 			name:   displayName,
 			prov:   modelDisplayProvider(m),

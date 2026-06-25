@@ -122,14 +122,14 @@ func (a *App) handleCommand(input string) {
 
 	case "/model":
 		// Open config at the model fields tab. If in a repo, go to Project tab;
-		// otherwise Global tab. Cursor starts on Active Model.
+		// otherwise Global tab. Cursor starts on Model.
 		a.enterConfigMode()
 		if a.projectConfigRoot() != "" {
 			a.cfgTab = cfgTabProject
 		} else {
 			a.cfgTab = cfgTabGlobal
 		}
-		a.cfgCursor = 0 // Active Model is the first field
+		a.cfgCursor = 0 // Model is the first field
 		a.renderInput()
 
 	case "/branches":

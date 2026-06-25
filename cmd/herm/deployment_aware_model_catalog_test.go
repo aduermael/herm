@@ -79,7 +79,7 @@ func TestCatalogCanonicalCatalogRowsAndRoutePriceRange(t *testing.T) {
 		t.Fatal("native model ID should resolve to the canonical row for old-node fallback")
 	}
 	_, lines := formatModelMenuLines(formatModelMenuLinesOptions{models: []ModelDef{*model}, activeID: model.ID})
-	if len(lines) != 1 || !strings.Contains(lines[0], "openai/gpt-route-priced") || !strings.Contains(lines[0], "$2-$3/$8-$15/M") {
+	if len(lines) != 1 || !strings.Contains(lines[0], "gpt-route-priced") || !strings.Contains(lines[0], "$2-$3/$8-$15/M") {
 		t.Fatalf("picker line does not show canonical row and route range: %q", lines)
 	}
 }

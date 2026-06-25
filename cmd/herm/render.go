@@ -827,9 +827,8 @@ func (a *App) positionCursor(buf *strings.Builder) {
 	if a.cfgActive {
 		if a.cfgEditing {
 			// Position cursor in the edit field:
-			// separator + tab bar (1) + any tab-specific intro rows + cursor row
-			extraRows := a.configRowsBeforeFields()
-			fieldRow := a.sepRow + 1 + extraRows + a.cfgCursor + 1 // +1 for tab bar row
+			// separator + rendered config rows before the selected field
+			fieldRow := a.sepRow + 1 + a.configRowsBeforeFieldIndex(a.cfgCursor)
 			fields := a.cfgCurrentFields()
 			col := 0
 			if a.cfgCursor < len(fields) {

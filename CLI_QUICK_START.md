@@ -369,7 +369,7 @@ Look for `# Tools:` section in agent response
 ```
 /config
 → Tab to "Project" tab
-→ Change "Active Model"
+→ Change "Model"
 ```
 
 ---
@@ -433,11 +433,11 @@ Conversations auto-save with unique session IDs.
 ## Model Selection Priority
 
 ```
-Active Model (from config)
+Model (from config)
     ↓
-Exploration Model (cheaper, for /compact)
+Exploration (cheaper, for /compact)
     ↓
-Falls back to Active Model if not set
+Falls back to Model if not set
 ```
 
 ---

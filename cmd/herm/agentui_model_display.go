@@ -174,19 +174,21 @@ type modelDisplayLineOptions struct {
 
 func modelDisplayLine(opts modelDisplayLineOptions) (string, []inlineBlock) {
 	activeID, explorationID, offline := opts.activeID, opts.explorationID, opts.offline
+	activeDisplayID := bareModelID(activeID)
+	explorationDisplayID := bareModelID(explorationID)
 	activeScopeSuffix := modelScopeSuffix(opts.activeScope)
 	explorationScopeSuffix := modelScopeSuffix(opts.explorationScope)
 	if activeID != "" {
-		content := uiModelDisplayActivePrefix + activeID + activeScopeSuffix
-		activeText := styleChatCyan + uiModelDisplayActivePrefix + activeID + styleChatMuted + activeScopeSuffix
+		content := uiModelDisplayActivePrefix + activeDisplayID + activeScopeSuffix
+		activeText := styleChatCyan + uiModelDisplayActivePrefix + activeDisplayID + styleChatMuted + activeScopeSuffix
 		if offline {
 			content += uiModelDisplayOffline
 			activeText += " \033[33m(offline)"
 		}
 		blocks := []inlineBlock{newInlineBlock(activeText)}
 		if explorationID != "" && explorationID != activeID {
-			content += uiModelDisplayExplorationJoin + explorationID + explorationScopeSuffix
-			explorePart := uiModelDisplayExplorationJoin + explorationID + styleChatMuted + explorationScopeSuffix
+			content += " " + uiModelDisplayExplorationJoin + explorationDisplayID + explorationScopeSuffix
+			explorePart := uiModelDisplayExplorationJoin + explorationDisplayID + styleChatMuted + explorationScopeSuffix
 			blocks = append(blocks, styledInlineBlock(styledInlineBlockOptions{style: styleChatMagenta, text: explorePart}))
 		}
 		return content, blocks
@@ -194,8 +196,8 @@ func modelDisplayLine(opts modelDisplayLineOptions) (string, []inlineBlock) {
 	if explorationID == "" {
 		return "", nil
 	}
-	content := uiModelDisplayExplorationPrefix + explorationID + explorationScopeSuffix
-	exploreText := styleChatMagenta + uiModelDisplayExplorationPrefix + explorationID + styleChatMuted + explorationScopeSuffix
+	content := uiModelDisplayExplorationPrefix + explorationDisplayID + explorationScopeSuffix
+	exploreText := styleChatMagenta + uiModelDisplayExplorationPrefix + explorationDisplayID + styleChatMuted + explorationScopeSuffix
 	if offline {
 		content += uiModelDisplayOffline
 		exploreText += " \033[33m(offline)"

@@ -435,7 +435,7 @@ func TestCfgTabNamesStructure(t *testing.T) {
 func TestProjectTabFieldLabels(t *testing.T) {
 	a := &App{}
 	fields := a.projectTabFields()
-	wantLabels := []string{"Active Model", "Exploration Model", "Personality", "Sub-Agent Max Turns", "Thinking"}
+	wantLabels := []string{"Model", "Exploration", "Personality", "Sub-Agent Max Turns", "Thinking"}
 	if len(fields) != len(wantLabels) {
 		t.Fatalf("projectTabFields returned %d fields, want %d", len(fields), len(wantLabels))
 	}
@@ -810,13 +810,44 @@ func TestBuildConfigRowsGlobalHint(t *testing.T) {
 		}
 	}
 	if !foundModel {
-		t.Error("expected '(global: global-model)' hint for unoverridden Active Model")
+		t.Error("expected '(global: global-model)' hint for unoverridden Model")
 	}
 	if !foundPersonality {
 		t.Error("expected '(global: friendly)' hint for unoverridden Personality")
 	}
 	if !rowsContain(rows, "Overriding global config for current project (/some/repo).") {
 		t.Fatalf("project rows missing project path intro: %v", rows)
+	}
+}
+
+func TestBuildConfigRowsProjectNarrowWrapsRows(t *testing.T) {
+	thinking := false
+	a := &App{
+		cfgTab:   cfgTabProject,
+		repoRoot: "/Users/aduermael/Documents/repos/herm",
+		width:    42,
+		cfgDraft: Config{
+			Deployments:      map[string]DeploymentConfig{"anthropic": {APIKey: "sk-test"}},
+			ActiveModel:      "anthropic/claude-opus-4-8",
+			ExplorationModel: "anthropic/claude-haiku-4-5-20251001",
+			SubAgentMaxTurns: 20,
+			Thinking:         &thinking,
+		},
+		cfgProjectDraft: ProjectConfig{Personality: ""},
+		cfgCursor:       2,
+	}
+	rows := a.buildConfigRows()
+	for _, row := range rows {
+		if got := visibleWidth(row); got > a.width {
+			t.Fatalf("row width = %d, want <= %d: %q\nrows:\n%s", got, a.width, ansiEscRe.ReplaceAllString(row, ""), strings.Join(rows, "\n"))
+		}
+	}
+	plain := ansiEscRe.ReplaceAllString(strings.Join(rows, "\n"), "")
+	if strings.Contains(plain, ").Model:") || strings.Contains(plain, ").Anthropic") {
+		t.Fatalf("project intro was not separated from following rows:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Model:") || !strings.Contains(plain, "Exploration:") {
+		t.Fatalf("expected model rows in narrow config:\n%s", plain)
 	}
 }
 
@@ -877,11 +908,18 @@ func TestBuildConfigRowsDeploymentValueStyling(t *testing.T) {
 	if !strings.Contains(joined, "\033[2m(not set)\033[0m") {
 		t.Fatalf("unset deployment values should be dimmed, got:\n%s", joined)
 	}
-	if !strings.Contains(joined, "OpenAI API Key: \033[1;33msk-o...cret\033[0m") {
+	openAISecretRow := ""
+	for _, row := range rows {
+		if strings.Contains(row, "OpenAI API Key:") && strings.Contains(row, "sk-o...cret") {
+			openAISecretRow = row
+			break
+		}
+	}
+	if openAISecretRow == "" || !strings.Contains(openAISecretRow, "\033[1;33msk-o...cret\033[0m") {
 		t.Fatalf("configured secret values should be emphasized more than labels, got:\n%s", joined)
 	}
-	if strings.Contains(joined, "\033[2mOpenAI API Key:") {
-		t.Fatalf("configured field labels should not be dimmed, got:\n%s", joined)
+	if strings.Contains(openAISecretRow, "\033[2mOpenAI API Key:") {
+		t.Fatalf("configured field labels should not be dimmed, got:\n%s", openAISecretRow)
 	}
 	if !strings.Contains(joined, "\033[2m(optional)\033[0m") {
 		t.Fatalf("optional deployment values should render as optional, got:\n%s", joined)
@@ -1030,7 +1068,7 @@ func TestEnterConfigModeClearsStaleProjectModelsWhenNoProviders(t *testing.T) {
 		t.Fatalf("saved Personality = %q, want preserved", app.projectConfig.Personality)
 	}
 	if modelsReadyForAgent(app.projectModelConfig()) {
-		t.Fatal("modelsReadyForAgent should be false so user gets Select Active Model hint")
+		t.Fatal("modelsReadyForAgent should be false so user gets Select Model hint")
 	}
 	if !configNeedsModelSelection(app.projectModelConfig()) {
 		t.Fatal("configNeedsModelSelection should be true after adding provider without explicit model")
@@ -1653,9 +1691,9 @@ func TestConfigThinkingRoundTrip(t *testing.T) {
 
 func TestConfigSavedMessagesUseDistinctModelAndAPIKeyNotices(t *testing.T) {
 	msgs := configSavedMessages(map[string]string{
-		"Project Active Model":      "updated",
-		"Project Exploration Model": "saved",
-		"OpenRouter API Key":        "saved",
+		"Project Model":       "updated",
+		"Project Exploration": "saved",
+		"OpenRouter API Key":  "saved",
 	})
 
 	if len(msgs) != 3 {
@@ -1673,15 +1711,15 @@ func TestConfigSavedMessagesUseDistinctModelAndAPIKeyNotices(t *testing.T) {
 	if contents[0] != "OpenRouter API Key saved." {
 		t.Fatalf("first message = %q, want API key notice first (sorted)", contents[0])
 	}
-	if contents[1] != "Project Active Model updated." {
-		t.Fatalf("active model message = %q", contents[1])
+	if contents[1] != "Project Exploration saved." {
+		t.Fatalf("exploration model message = %q", contents[1])
 	}
-	if contents[2] != "Project Exploration Model saved." {
-		t.Fatalf("exploration model message = %q", contents[2])
+	if contents[2] != "Project Model updated." {
+		t.Fatalf("active model message = %q", contents[2])
 	}
 
-	activeStyle := msgs[1].inlineBlocks[0].text
-	exploreStyle := msgs[2].inlineBlocks[0].text
+	exploreStyle := msgs[1].inlineBlocks[0].text
+	activeStyle := msgs[2].inlineBlocks[0].text
 	apiStyle := msgs[0].inlineBlocks[0].text
 
 	if activeStyle == exploreStyle || activeStyle == apiStyle || exploreStyle == apiStyle {
@@ -1703,12 +1741,12 @@ func TestConfigSavedMessagesUseProjectThemeOpacity(t *testing.T) {
 		label     string
 		direction string
 	}{
-		{"Active Model", "saved"},
-		{"Active Model", "updated"},
-		{"Active Model", "removed"},
-		{"Exploration Model", "saved"},
-		{"Exploration Model", "updated"},
-		{"Exploration Model", "removed"},
+		{"Model", "saved"},
+		{"Model", "updated"},
+		{"Model", "removed"},
+		{"Exploration", "saved"},
+		{"Exploration", "updated"},
+		{"Exploration", "removed"},
 		{"OpenRouter API Key", "saved"},
 		{"OpenRouter API Key", "updated"},
 		{"OpenRouter API Key", "removed"},
@@ -1763,10 +1801,10 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 		direction string
 		wantStyle string
 	}{
-		{"Active Model", "saved", styleChatDimGreen},
-		{"Active Model", "updated", styleChatDimYellow},
-		{"Exploration Model", "saved", styleChatDimGreen},
-		{"Exploration Model", "updated", styleChatDimYellow},
+		{"Model", "saved", styleChatDimGreen},
+		{"Model", "updated", styleChatDimYellow},
+		{"Exploration", "saved", styleChatDimGreen},
+		{"Exploration", "updated", styleChatDimYellow},
 		{"OpenRouter API Key", "saved", styleChatGreen},
 		{"OpenRouter API Key", "updated", styleChatDimYellow},
 		{"Personality", "saved", styleChatBlue},
@@ -1778,7 +1816,7 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 			t.Errorf("%s %s style = %q, want %q", tc.label, tc.direction, notice.style, tc.wantStyle)
 		}
 	}
-	for _, label := range []string{"Active Model", "Exploration Model"} {
+	for _, label := range []string{"Model", "Exploration"} {
 		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: label, direction: "removed"})
 		if notice.style != styleChatDimRed {
 			t.Errorf("%s unset style = %q, want dim red on full notice", label, notice.style)
@@ -1794,9 +1832,9 @@ func TestConfigSavedMessagesEachPurposeUsesDistinctColors(t *testing.T) {
 		label   string
 		content string
 	}{
-		{"Active Model", "Active Model unset."},
-		{"Exploration Model", "Exploration Model unset."},
-		{"Project Exploration Model", "Project Exploration Model unset."},
+		{"Model", "Model unset."},
+		{"Exploration", "Exploration unset."},
+		{"Project Exploration", "Project Exploration unset."},
 	} {
 		notice := configChangeNoticeFor(configChangeNoticeForOptions{label: tc.label, direction: uiConfigChangeRemoved})
 		if notice.content != tc.content {
@@ -2182,7 +2220,7 @@ func TestShowResolvedModelDisplayShowsConfiguredIDBeforeCatalogLoads(t *testing.
 	if len(app.messages) != 1 {
 		t.Fatalf("message count = %d, want model display before catalog loads", len(app.messages))
 	}
-	want := "Using active: poolside/laguna-xs.2:free (project)"
+	want := "Model: laguna-xs.2:free (project)"
 	if app.messages[0].content != want {
 		t.Fatalf("display = %q, want %q", app.messages[0].content, want)
 	}
@@ -2201,7 +2239,7 @@ func TestShowResolvedModelDisplayClearsWhenNoExplicitModel(t *testing.T) {
 	}
 	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
 	app.showResolvedModelDisplay()
-	if len(app.messages) != 1 || !strings.Contains(app.messages[0].content, "Using active:") {
+	if len(app.messages) != 1 || !strings.Contains(app.messages[0].content, "Model:") {
 		t.Fatalf("initial display = %v", chatMessageContents(app.messages))
 	}
 
@@ -2257,18 +2295,18 @@ func TestExitConfigModeModelDisplayPreservesHistoryOnUpdate(t *testing.T) {
 
 	saveModel(uiConfigChangeSaved, "poolside/laguna-xs.2:free")
 	afterSave := chatMessageContents(app.messages)
-	if len(afterSave) != 2 || afterSave[0] != "Project Active Model saved." ||
-		afterSave[1] != "Using active: poolside/laguna-xs.2:free (project)" {
+	if len(afterSave) != 2 || afterSave[0] != "Project Model saved." ||
+		afterSave[1] != "Model: laguna-xs.2:free (project)" {
 		t.Fatalf("after save:\n%s", strings.Join(afterSave, "\n"))
 	}
 
 	saveModel(uiConfigChangeUpdated, "openrouter/bodybuilder")
 	afterUpdate := chatMessageContents(app.messages)
 	want := []string{
-		"Project Active Model saved.",
-		"Using active: poolside/laguna-xs.2:free (project)",
-		"Project Active Model updated.",
-		"Using active: openrouter/bodybuilder (project)",
+		"Project Model saved.",
+		"Model: laguna-xs.2:free (project)",
+		"Project Model updated.",
+		"Model: bodybuilder (project)",
 	}
 	if len(afterUpdate) != len(want) {
 		t.Fatalf("after update:\n%s", strings.Join(afterUpdate, "\n"))
@@ -2294,7 +2332,7 @@ func TestShowResolvedModelDisplayUpdatesProjectActiveModel(t *testing.T) {
 	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
 
 	app.showResolvedModelDisplay()
-	wantFirst := "Using active: openrouter/pareto-code (project)"
+	wantFirst := "Model: pareto-code (project)"
 	if len(app.messages) != 1 || app.messages[0].content != wantFirst {
 		t.Fatalf("first display = %v", chatMessageContents(app.messages))
 	}
@@ -2306,7 +2344,7 @@ func TestShowResolvedModelDisplayUpdatesProjectActiveModel(t *testing.T) {
 	if len(app.messages) != 1 {
 		t.Fatalf("message count = %d, want single model display line", len(app.messages))
 	}
-	wantSecond := "Using active: openrouter/other-model (project)"
+	wantSecond := "Model: other-model (project)"
 	if app.messages[0].content != wantSecond {
 		t.Fatalf("updated display = %q, want %q", app.messages[0].content, wantSecond)
 	}
@@ -2329,7 +2367,7 @@ func TestShowResolvedModelDisplayUpdatesWhenExplorationAdded(t *testing.T) {
 	app.config = mergeConfigs(mergeConfigsOptions{global: app.globalConfig, project: app.projectConfig})
 
 	app.showResolvedModelDisplay()
-	if len(app.messages) != 1 || !strings.Contains(app.messages[0].content, "Using active: openrouter/active") {
+	if len(app.messages) != 1 || !strings.Contains(app.messages[0].content, "Model: active") {
 		t.Fatalf("first display = %v", chatMessageContents(app.messages))
 	}
 
@@ -2340,7 +2378,7 @@ func TestShowResolvedModelDisplayUpdatesWhenExplorationAdded(t *testing.T) {
 	if len(app.messages) != 1 {
 		t.Fatalf("message count = %d, want replaced single display line", len(app.messages))
 	}
-	want := "Using active: openrouter/active (global), exploration: openrouter/explore (global)"
+	want := "Model: active (global) Exploration: explore (global)"
 	if app.messages[0].content != want {
 		t.Fatalf("updated display = %q, want %q", app.messages[0].content, want)
 	}

@@ -672,6 +672,24 @@ func TestSortColFromName(t *testing.T) {
 	}
 }
 
+func TestModelMenuDisplayNameStripsProviderPrefix(t *testing.T) {
+	model := ModelDef{
+		Provider: ProviderOpenRouter,
+		ID:       "z-ai/missing-openrouter-model",
+		Label:    "z-ai/missing-openrouter-model \033[33m(unavailable)\033[0m",
+	}
+	got := modelMenuDisplayName(model)
+	want := "missing-openrouter-model \033[33m(unavailable)\033[0m"
+	if got != want {
+		t.Fatalf("modelMenuDisplayName = %q, want %q", got, want)
+	}
+
+	named := ModelDef{Provider: ProviderApple, ID: "apple/system", Label: "Apple system"}
+	if got := modelMenuDisplayName(named); got != "Apple system" {
+		t.Fatalf("named modelMenuDisplayName = %q, want Apple system", got)
+	}
+}
+
 // --- formatTokenCount tests ---
 
 func TestFormatTokenCountSmall(t *testing.T) {

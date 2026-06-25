@@ -219,8 +219,8 @@ handleEnter() [main.go]
 ```
 Global Config (~/.herm/config.json)
 ├─ API Keys
-├─ Default Model
-├─ Exploration Model
+├─ Model
+├─ Exploration
 ├─ Tool Config
 └─ UI Preferences
 

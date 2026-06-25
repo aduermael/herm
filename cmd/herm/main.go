@@ -45,7 +45,7 @@ type chatMessage struct {
 	content         string
 	inlineBlocks    []inlineBlock // optional atomic one-line UI blocks for terminal layout
 	modelDiagnostic bool          // true for active/exploration model fallback warnings
-	modelDisplay    bool          // true for the "Using active/exploration" status line
+	modelDisplay    bool          // true for the model status line
 	isError         bool          // for tool results
 	duration        time.Duration // tool execution duration
 	leadBlank       bool          // blank line before this message
