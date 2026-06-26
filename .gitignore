@@ -17,6 +17,7 @@ tools/edit-file/edit-file
 .herm/
 .herm-lock
 .herm-cpsl/
+.herm-apple/
 .agents/
 
 # OS

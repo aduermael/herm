@@ -163,6 +163,55 @@ path is defined.
 For an iOS-only output under `.herm-cpsl/artifacts/ios/`, the narrower
 `scripts/build-cpsl-ios-xcframework.sh` helper remains available.
 
+## macOS App From Terminal
+
+Use the macOS dev launcher when you want to build and run the SwiftUI app
+without opening Xcode:
+
+```sh
+scripts/dev-apple-macos.sh
+```
+
+The launcher must run from a macOS host shell with full Xcode selected.
+Command Line Tools alone, usually selected as `/Library/Developer/CommandLineTools`,
+is not enough for this Xcode project flow. It builds the CPSL XCFramework if
+missing, builds the `herm` app target for macOS, clears local extended
+attributes from the finished bundle, ad-hoc signs it, then runs the app
+executable directly so stdout and stderr stay attached to the terminal.
+
+If Xcode is installed but Command Line Tools is selected, either select and
+initialize Xcode globally:
+
+```sh
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -runFirstLaunch
+```
+
+Or use Xcode only for one launch:
+
+```sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer scripts/dev-apple-macos.sh
+```
+
+For an LLDB session:
+
+```sh
+scripts/dev-apple-macos.sh --debug
+```
+
+For a build-only check:
+
+```sh
+scripts/dev-apple-macos.sh --build-only
+```
+
+By default, the launcher builds only the host Mac architecture's macOS CPSL
+slice because that is enough for local app launch and avoids requiring the
+opposite Rust macOS target. Use `--universal-cpsl` when you want both arm64 and
+x86_64 macOS slices. Use `--full-cpsl` when you also want iOS slices in
+`.herm-cpsl/artifacts/apple/cpsl.xcframework`. Use `--project-signing` if you
+want Xcode's configured team/signing settings instead of local ad hoc signing.
+
 ## Options
 
 ```sh
