@@ -132,6 +132,8 @@ else
 	cpsl_root=$(CDPATH= cd "$managed_cpsl_root" && pwd -P)
 fi
 
+sh "$herm_root/scripts/apply-cpsl-patches.sh" "$cpsl_root"
+
 [ -f "$cpsl_root/Cargo.toml" ] || die "missing CPSL Cargo.toml at $cpsl_root"
 [ -f "$cpsl_root/ffi/Cargo.toml" ] || die "missing CPSL FFI crate at $cpsl_root/ffi"
 [ -f "$cpsl_root/ffi/include/cpsl.h" ] || die "missing CPSL FFI header at $cpsl_root/ffi/include/cpsl.h"

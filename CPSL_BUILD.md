@@ -61,6 +61,11 @@ CPSL_REF=main scripts/build-cpsl-image.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 ```
 
+Before compiling CPSL, Herm applies tracked integration patches from
+`scripts/cpsl-patches/` to the selected checkout. These patches keep the pinned
+CPSL dependency aligned with Herm's app/runtime integration without committing
+the ignored `.herm-cpsl/` checkout.
+
 The default build is the minimum Herm CPSL profile. It compiles `fs`, `json`,
 `csv`, `http`, and `grep`.
 

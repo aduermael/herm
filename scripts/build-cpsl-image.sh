@@ -129,6 +129,8 @@ else
 	cpsl_root=$(CDPATH= cd "$managed_cpsl_root" && pwd -P)
 fi
 
+sh "$herm_root/scripts/apply-cpsl-patches.sh" "$cpsl_root"
+
 go_version=$(go env GOVERSION 2>/dev/null || true)
 case "$go_version" in
 go1.*)

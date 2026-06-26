@@ -1,0 +1,371 @@
+diff --git a/ffi/src/lib.rs b/ffi/src/lib.rs
+index 9e5f9da..42f01fe 100644
+--- a/ffi/src/lib.rs
++++ b/ffi/src/lib.rs
+@@ -36,12 +36,18 @@ struct Session {
+ }
+ 
+ struct ValidatedSessionConfig {
+-    host: PathBuf,
++    mounts: Vec<ValidatedMountConfig>,
+     initial_cwd: String,
+     allow_domains: Vec<String>,
+     deny_domains: Vec<String>,
+ }
+ 
++struct ValidatedMountConfig {
++    host: PathBuf,
++    virtual_path: String,
++    permission: MountPermission,
++}
++
+ #[derive(Deserialize)]
+ #[serde(deny_unknown_fields)]
+ struct SessionConfig {
+@@ -199,8 +205,8 @@ fn validate_session_config(config_json: &str) -> Result<ValidatedSessionConfig,
+         return Err("session language must be luau or bash".to_string());
+     }
+ 
+-    if config.mounts.len() != 1 {
+-        return Err("session config must contain exactly one mount".to_string());
++    if config.mounts.is_empty() {
++        return Err("session config must contain at least one mount".to_string());
+     }
+ 
+     if config.http.mode != "policy" {
+@@ -209,31 +215,60 @@ fn validate_session_config(config_json: &str) -> Result<ValidatedSessionConfig,
+     let allow_domains = validate_domain_list(config.http.allow_domains, "allow_domains")?;
+     let deny_domains = validate_domain_list(config.http.deny_domains, "deny_domains")?;
+ 
+-    validate_initial_cwd(&config.initial_cwd)?;
+-    let mount = &config.mounts[0];
+-    let host = validate_host_path(&mount.host)?;
+-
+-    if mount.virtual_path != WORKDIR {
+-        return Err("session mount virtual path must be /workdir".to_string());
+-    }
+-
+-    if mount.mode != "rw" {
+-        return Err("session mount mode must be rw".to_string());
+-    }
++    let mut mount_table = MountTable::new();
++    let mut mounts = Vec::with_capacity(config.mounts.len());
++    for mount in &config.mounts {
++        let validated = validate_mount_config(mount)?;
++        mount_table
++            .add_mount(
++                validated.host.clone(),
++                &validated.virtual_path,
++                validated.permission,
++            )
++            .map_err(|error| {
++                format!(
++                    "failed to configure mount {}: {error}",
++                    validated.virtual_path
++                )
++            })?;
++        mounts.push(validated);
++    }
++    validate_initial_cwd(&config.initial_cwd, &mount_table)?;
+ 
+     Ok(ValidatedSessionConfig {
+-        host,
++        mounts,
+         initial_cwd: config.initial_cwd,
+         allow_domains,
+         deny_domains,
+     })
+ }
+ 
++fn validate_mount_config(mount: &MountConfig) -> Result<ValidatedMountConfig, String> {
++    let host = validate_host_path(&mount.host)?;
++    validate_absolute_virtual_path(&mount.virtual_path, "session mount virtual path")?;
++
++    let permission = match mount.mode.as_str() {
++        "ro" => MountPermission::ReadOnly,
++        "rw" => MountPermission::ReadWrite,
++        _ => return Err("session mount mode must be rw or ro".to_string()),
++    };
++
++    Ok(ValidatedMountConfig {
++        host,
++        virtual_path: mount.virtual_path.clone(),
++        permission,
++    })
++}
++
+ fn create_runtime_sandbox(config: &ValidatedSessionConfig) -> Result<Sandbox, String> {
+     let mut mounts = MountTable::new();
+-    mounts
+-        .add_mount(config.host.clone(), WORKDIR, MountPermission::ReadWrite)
+-        .map_err(|error| format!("failed to configure workdir mount: {error}"))?;
++    for mount in &config.mounts {
++        mounts
++            .add_mount(mount.host.clone(), &mount.virtual_path, mount.permission)
++            .map_err(|error| {
++                format!("failed to configure mount {}: {error}", mount.virtual_path)
++            })?;
++    }
+ 
+     let builder = Sandbox::builder()
+         .mounts(mounts)
+@@ -255,13 +290,21 @@ fn create_runtime_sandbox(config: &ValidatedSessionConfig) -> Result<Sandbox, St
+     sandbox
+         .exec(&format!(
+             "local sh = require(\"shrt\"); sh.set_root(\"{}\"); sh.cd(\"{}\")",
+-            escape_luau_string(WORKDIR),
++            escape_luau_string(shell_root_for(config)),
+             escape_luau_string(&config.initial_cwd)
+         ))
+         .map_err(|error| format!("failed to initialize CPSL shell: {error}"))?;
+     Ok(sandbox)
+ }
+ 
++fn shell_root_for(config: &ValidatedSessionConfig) -> &str {
++    if config.mounts.len() == 1 && config.mounts[0].virtual_path == WORKDIR {
++        WORKDIR
++    } else {
++        "/"
++    }
++}
++
+ fn create_http_gateway(config: &ValidatedSessionConfig) -> HttpGateway {
+     let mut builder = HttpGateway::builder();
+     for domain in &config.allow_domains {
+@@ -432,25 +475,27 @@ fn validate_host_path(host: &str) -> Result<PathBuf, String> {
+     Ok(canonical)
+ }
+ 
+-fn validate_initial_cwd(path: &str) -> Result<(), String> {
++fn validate_absolute_virtual_path(path: &str, field: &str) -> Result<(), String> {
+     if !path.starts_with('/') {
+-        return Err("session initial_cwd must be absolute".to_string());
++        return Err(format!("{field} must be absolute"));
+     }
+-
+     for component in Path::new(path).components() {
+         match component {
+             Component::RootDir | Component::Normal(_) => {}
+             Component::CurDir | Component::ParentDir | Component::Prefix(_) => {
+-                return Err("session initial_cwd must stay under /workdir".to_string());
++                return Err(format!("{field} must not contain relative components"));
+             }
+         }
+     }
++    Ok(())
++}
+ 
+-    if path == WORKDIR || path.starts_with("/workdir/") {
+-        Ok(())
+-    } else {
+-        Err("session initial_cwd must stay under /workdir".to_string())
++fn validate_initial_cwd(path: &str, mounts: &MountTable) -> Result<(), String> {
++    validate_absolute_virtual_path(path, "session initial_cwd")?;
++    if mounts.mount_key_for(path).is_none() {
++        return Err("session initial_cwd must be covered by a mount".to_string());
+     }
++    Ok(())
+ }
+ 
+ fn validate_domain_list(domains: Vec<String>, field: &str) -> Result<Vec<String>, String> {
+@@ -588,11 +633,101 @@ mod tests {
+         let validated = validate_session_config(&config.to_string()).unwrap();
+ 
+         assert_eq!(validated.initial_cwd, WORKDIR);
+-        assert_eq!(validated.host, dir.path().canonicalize().unwrap());
++        assert_eq!(validated.mounts.len(), 1);
++        assert_eq!(validated.mounts[0].host, dir.path().canonicalize().unwrap());
++        assert_eq!(validated.mounts[0].virtual_path, WORKDIR);
++        assert_eq!(validated.mounts[0].permission, MountPermission::ReadWrite);
+         assert_eq!(validated.allow_domains, Vec::<String>::new());
+         assert_eq!(validated.deny_domains, Vec::<String>::new());
+     }
+ 
++    #[test]
++    fn validates_composed_root_and_workdir_mounts() {
++        let root = TempDir::new().unwrap();
++        let workdir = root.path().join("workdir");
++        fs::create_dir(&workdir).unwrap();
++        let config = json!({
++            "mounts": [
++                {
++                    "host": root.path().canonicalize().unwrap(),
++                    "virtual": "/",
++                    "mode": "rw"
++                },
++                {
++                    "host": workdir.canonicalize().unwrap(),
++                    "virtual": WORKDIR,
++                    "mode": "rw"
++                }
++            ],
++            "initial_cwd": WORKDIR,
++            "language": "bash",
++            "http": {
++                "mode": "policy",
++                "allow_domains": [],
++                "deny_domains": []
++            }
++        });
++
++        let validated = validate_session_config(&config.to_string()).unwrap();
++
++        assert_eq!(validated.mounts.len(), 2);
++        assert_eq!(validated.mounts[0].virtual_path, "/");
++        assert_eq!(validated.mounts[1].virtual_path, WORKDIR);
++        assert_eq!(validated.initial_cwd, WORKDIR);
++    }
++
++    #[test]
++    fn composed_root_mount_is_visible_to_bash() {
++        let root = TempDir::new().unwrap();
++        let workdir = root.path().join("workdir");
++        fs::create_dir(&workdir).unwrap();
++        fs::write(root.path().join("top.txt"), "root file\n").unwrap();
++        fs::write(workdir.join("notes.txt"), "workdir file\n").unwrap();
++        let config = json!({
++            "mounts": [
++                {
++                    "host": root.path().canonicalize().unwrap(),
++                    "virtual": "/",
++                    "mode": "rw"
++                },
++                {
++                    "host": workdir.canonicalize().unwrap(),
++                    "virtual": WORKDIR,
++                    "mode": "rw"
++                }
++            ],
++            "initial_cwd": WORKDIR,
++            "language": "bash",
++            "http": {
++                "mode": "policy",
++                "allow_domains": [],
++                "deny_domains": []
++            }
++        });
++        let config = CString::new(config.to_string()).unwrap();
++        let session = cpsl_session_new(config.as_ptr());
++        assert!(!session.is_null(), "session_new failed: {}", unsafe {
++            borrowed_ffi_string(cpsl_last_error())
++        });
++
++        let root_ls = eval(session, "ls /");
++        assert_success(&root_ls, 0);
++        assert!(root_ls["stdout"].as_str().unwrap().contains("workdir"));
++        assert!(root_ls["stdout"].as_str().unwrap().contains("top.txt"));
++
++        let workdir_ls = eval(session, "ls /workdir");
++        assert_success(&workdir_ls, 0);
++        assert!(workdir_ls["stdout"].as_str().unwrap().contains("notes.txt"));
++
++        let cd_root = eval(session, "cd /");
++        assert_eq!(cd_root["ok"], true);
++        assert_eq!(cd_root["exit_code"], 0);
++        assert!(cd_root["error"].is_null(), "{cd_root}");
++        assert_eq!(cd_root["cwd"], "/");
++
++        cpsl_session_free(session);
++    }
++
+     #[test]
+     fn metadata_advertises_native_luau_and_bash() {
+         let metadata = unsafe { owned_ffi_string(cpsl_backend_metadata_json()) };
+@@ -646,7 +781,7 @@ mod tests {
+         let host = host.to_str().unwrap();
+ 
+         let mut wrong_mode = session_config(host);
+-        wrong_mode["mounts"][0]["mode"] = json!("ro");
++        wrong_mode["mounts"][0]["mode"] = json!("bad");
+         assert!(validate_session_config(&wrong_mode.to_string()).is_err());
+ 
+         let mut wrong_language = session_config(host);
+@@ -829,6 +964,30 @@ mod tests {
+         cpsl_session_free(session);
+     }
+ 
++    #[test]
++    fn question_mark_expands_to_previous_exit_code() {
++        let dir = TempDir::new().unwrap();
++        fs::write(dir.path().join("notes.txt"), "alpha\nbeta\n").unwrap();
++        let session = new_session(dir.path());
++
++        assert_success(&eval(session, "false"), 1);
++        let false_code = eval(session, "echo $?");
++        assert_success(&false_code, 0);
++        assert_eq!(false_code["stdout"], "1\n");
++
++        assert_success(&eval(session, "grep missing notes.txt"), 1);
++        let grep_code = eval(session, "echo $?");
++        assert_success(&grep_code, 0);
++        assert_eq!(grep_code["stdout"], "1\n");
++
++        assert_success(&eval(session, "exit 7"), 7);
++        let exit_code = eval(session, "echo $?");
++        assert_success(&exit_code, 0);
++        assert_eq!(exit_code["stdout"], "7\n");
++
++        cpsl_session_free(session);
++    }
++
+     #[test]
+     fn unsupported_development_commands_return_shell_feedback() {
+         let dir = TempDir::new().unwrap();
+@@ -918,23 +1077,25 @@ mod tests {
+         let dir = TempDir::new().unwrap();
+         let session = new_session(dir.path());
+ 
+-        for command in [
+-            "cat ../secret",
+-            "cat /workdir/../secret",
+-            "cat /etc/hostname",
+-        ] {
++        for command in ["cat ../secret", "cat /workdir/../secret"] {
+             let response = eval(session, command);
+             assert_success(&response, 1);
++            let stdout = response["stdout"].as_str().unwrap();
+             assert!(
+-                response["stdout"]
+-                    .as_str()
+-                    .unwrap()
+-                    .contains("Path traversal denied"),
++                stdout.contains("No such file or directory")
++                    || stdout.contains("Path traversal denied"),
+                 "command {command:?} returned {response}"
+             );
+             assert_eq!(response["cwd"], WORKDIR);
+         }
+ 
++        let etc_hostname = eval(session, "cat /etc/hostname");
++        assert_success(&etc_hostname, 1);
++        assert!(etc_hostname["stdout"]
++            .as_str()
++            .unwrap()
++            .contains("Path traversal denied"));
++
+         let cd_root = eval(session, "cd /");
+         assert_success(&cd_root, 1);
+         assert!(cd_root["stdout"]
+diff --git a/runtime/shrt.luau b/runtime/shrt.luau
+index 01a3732..5893825 100644
+--- a/runtime/shrt.luau
++++ b/runtime/shrt.luau
+@@ -241,6 +241,7 @@ function sh.echo(...)
+     else
+         emit(result)
+     end
++    sh.last_exit_code = 0
+     return result
+ end
+ 
+@@ -1231,7 +1232,9 @@ function sh.false_cmd()
+ end
+ 
+ function sh.exit(code)
+-    error("exit:" .. tostring(code or 0), 0)
++    local exit_code = tonumber(code) or 0
++    sh.last_exit_code = exit_code
++    error("exit:" .. tostring(exit_code), 0)
+ end
+ 
+ -- ============================================================

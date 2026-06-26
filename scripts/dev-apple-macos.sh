@@ -205,9 +205,19 @@ if [ -z "$cpsl_macos_targets" ]; then
 	esac
 fi
 
+cpsl_patches_newer=0
+xcframework_info="$xcframework_path/Info.plist"
+if [ -d "$xcframework_path" ] && [ -d "$root/scripts/cpsl-patches" ]; then
+	if [ ! -f "$xcframework_info" ]; then
+		cpsl_patches_newer=1
+	elif find "$root/scripts/cpsl-patches" -type f -newer "$xcframework_info" | grep -q .; then
+		cpsl_patches_newer=1
+	fi
+fi
+
 if [ "$cpsl_mode" = skip ]; then
 	[ -d "$xcframework_path" ] || die "missing $xcframework_path; rerun without --skip-cpsl"
-elif [ "$cpsl_mode" = rebuild ] || [ ! -d "$xcframework_path" ]; then
+elif [ "$cpsl_mode" = rebuild ] || [ ! -d "$xcframework_path" ] || [ "$cpsl_patches_newer" -eq 1 ]; then
 	printf 'Building CPSL Apple XCFramework for: %s\n' "$cpsl_platforms"
 	APPLE_PLATFORMS="$cpsl_platforms" \
 		MACOS_TARGETS="$cpsl_macos_targets" \

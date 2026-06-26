@@ -11,9 +11,15 @@ import Combine
 import SwiftUI
 import CPSL
 
+#if os(macOS)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
+
 struct ContentView: View {
     var body: some View {
-        CPSLDebugReplView()
+        CPSLTerminalView()
     }
 }
 
@@ -21,7 +27,8 @@ private typealias CPSLBootstrapResult = (
     abiVersion: UInt32,
     metadataJSON: String?,
     metadataError: String?,
-    workspacePath: String?,
+    rootPath: String?,
+    workdirPath: String?,
     sessionError: String?
 )
 
@@ -103,211 +110,69 @@ private nonisolated final class CPSLProcessPoisonState: @unchecked Sendable {
     }
 }
 
-private struct CPSLConsoleRow: Identifiable {
-    enum Kind {
-        case command
-        case stdout
-        case stderr
-        case status
-        case warning
-        case error
-        case metadata
-        case raw
-
-        var label: String {
-            switch self {
-            case .command:
-                return "$"
-            case .stdout:
-                return "out"
-            case .stderr:
-                return "err"
-            case .status:
-                return "status"
-            case .warning:
-                return "warn"
-            case .error:
-                return "error"
-            case .metadata:
-                return "meta"
-            case .raw:
-                return "raw"
-            }
-        }
-
-        var tint: Color {
-            switch self {
-            case .command:
-                return .accentColor
-            case .stdout:
-                return .primary
-            case .stderr:
-                return .orange
-            case .status:
-                return .secondary
-            case .warning:
-                return .yellow
-            case .error:
-                return .red
-            case .metadata:
-                return .blue
-            case .raw:
-                return .purple
-            }
-        }
-    }
-
-    let id = UUID()
-    let kind: Kind
-    let text: String
+private struct CPSLSandboxURLs {
+    let root: URL
+    let workdir: URL
 }
 
-private struct CPSLDebugReplView: View {
-    @StateObject private var model = CPSLDebugReplModel()
+private struct CPSLTerminalView: View {
+    @StateObject private var model = CPSLTerminalModel()
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            CPSLTerminalTextArea(
+                text: Binding(
+                    get: { model.terminalText },
+                    set: { model.handleTerminalTextChange($0) }
+                ),
+                editableStartUTF16: model.editableStartUTF16,
+                isEditable: model.canEdit,
+                onReturnKey: {
+                    model.handleReturnKey()
+                },
+                onClear: {
+                    model.clearTerminal()
+                }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
             Divider()
-            console
-            Divider()
-            inputArea
+
+            HStack {
+                Spacer()
+                Button {
+                    model.clearTerminal()
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .keyboardShortcut("k", modifiers: [.command])
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
+        .cpslTerminalBackground()
         .cpslDebugWindowFrame()
         .task {
             await model.start()
         }
     }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("CPSL Debug REPL")
-                    .font(.headline)
-                Spacer(minLength: 12)
-                Text(model.status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            if let workspacePath = model.workspacePath {
-                Text("mount \(workspacePath) -> /workdir")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            if let terminalError = model.terminalError {
-                Text(terminalError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 10)
-    }
-
-    private var console: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(model.rows) { row in
-                        CPSLConsoleRowView(row: row)
-                            .id(row.id)
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .onChange(of: model.rows.count) { _ in
-                guard let lastID = model.rows.last?.id else {
-                    return
-                }
-                withAnimation(.easeOut(duration: 0.16)) {
-                    proxy.scrollTo(lastID, anchor: .bottom)
-                }
-            }
-        }
-    }
-
-    private var inputArea: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextEditor(text: $model.command)
-                .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 88, maxHeight: 140)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.secondary.opacity(0.25))
-                }
-
-            HStack {
-                Button {
-                    model.clearRows()
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
-                .buttonStyle(.bordered)
-
-                Spacer()
-
-                Button {
-                    model.runCommand()
-                } label: {
-                    if model.isRunning {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Run", systemImage: "play.fill")
-                    }
-                }
-                .frame(minWidth: 82)
-                .buttonStyle(.borderedProminent)
-                .disabled(!model.canRun)
-                .keyboardShortcut(.return, modifiers: [.command])
-            }
-        }
-        .padding(16)
-    }
-}
-
-private struct CPSLConsoleRowView: View {
-    let row: CPSLConsoleRow
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text(row.kind.label)
-                .font(.caption2.monospaced())
-                .foregroundStyle(row.kind.tint)
-                .frame(width: 46, alignment: .leading)
-
-            Text(row.text.isEmpty ? "(empty)" : row.text)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 }
 
 @MainActor
-private final class CPSLDebugReplModel: ObservableObject {
-    @Published var command = "pwd"
-    @Published private(set) var rows: [CPSLConsoleRow] = [
-        CPSLConsoleRow(kind: .status, text: "Starting CPSL...")
-    ]
-    @Published private(set) var status = "Initializing"
+private final class CPSLTerminalModel: ObservableObject {
+    @Published var terminalText = "Starting CPSL...\n"
+    @Published private(set) var editableStartUTF16 = ("Starting CPSL...\n" as NSString).length
     @Published private(set) var isRunning = false
-    @Published private(set) var workspacePath: String?
-    @Published private(set) var terminalError: String?
 
     private let service = CPSLDebugService()
     private var didStart = false
+    private var sessionReady = false
+    private var terminalError: String?
+    private var currentCWD = "/workdir"
 
-    var canRun: Bool {
-        terminalError == nil && !isRunning && !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    var canEdit: Bool {
+        sessionReady && terminalError == nil && !isRunning
     }
 
     func start() async {
@@ -317,104 +182,173 @@ private final class CPSLDebugReplModel: ObservableObject {
         didStart = true
 
         let result = await service.bootstrap()
-        workspacePath = result.workspacePath
         if result.abiVersion > 0 {
-            rows.append(CPSLConsoleRow(kind: .status, text: "CPSL ABI \(result.abiVersion)"))
+            appendLogLine("CPSL ABI \(result.abiVersion)")
         }
-
+        if let rootPath = result.rootPath {
+            appendLogLine("mount \(rootPath) -> /")
+        }
+        if let workdirPath = result.workdirPath {
+            appendLogLine("mount \(workdirPath) -> /workdir")
+        }
         if let metadataJSON = result.metadataJSON {
-            rows.append(CPSLConsoleRow(kind: .metadata, text: prettyJSON(metadataJSON)))
+            appendLogBlock("metadata", prettyJSON(metadataJSON))
         }
         if let metadataError = result.metadataError {
-            rows.append(CPSLConsoleRow(kind: .error, text: "Metadata: \(metadataError)"))
+            appendLogLine("error: Metadata: \(metadataError)")
         }
         if let sessionError = result.sessionError {
             if sessionError == CPSLDebugMessages.timedOutRestart {
                 terminalError = sessionError
-                status = "Restart required"
-            } else {
-                status = "Session failed"
             }
-            rows.append(CPSLConsoleRow(kind: .error, text: "Session init: \(sessionError)"))
-        } else {
-            status = "Ready"
-            rows.append(CPSLConsoleRow(kind: .status, text: "Session ready"))
-        }
-    }
-
-    func runCommand() {
-        let input = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty, terminalError == nil, !isRunning else {
+            appendLogLine("error: Session init: \(sessionError)")
             return
         }
 
-        rows.append(CPSLConsoleRow(kind: .command, text: input))
+        sessionReady = true
+        appendLogLine("Session ready")
+        appendPrompt()
+    }
+
+    func handleTerminalTextChange(_ newText: String) {
+        guard canEdit else {
+            return
+        }
+
+        let lockedPrefix = (terminalText as NSString).substring(
+            to: min(editableStartUTF16, (terminalText as NSString).length)
+        )
+        guard newText.hasPrefix(lockedPrefix) else {
+            return
+        }
+
+        terminalText = newText
+    }
+
+    func handleReturnKey() {
+        guard canEdit else {
+            return
+        }
+
+        if currentInput().hasSuffix("\\") {
+            removeTrailingBackslash()
+            terminalText.append("\n")
+            return
+        }
+
+        runCurrentCommand()
+    }
+
+    func clearTerminal() {
+        terminalText = ""
+        editableStartUTF16 = 0
+        if canEdit {
+            appendPrompt()
+        }
+    }
+
+    private func runCurrentCommand() {
+        let input = currentInput()
+        terminalText.append("\n")
+        editableStartUTF16 = terminalTextUTF16Length
+
+        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            appendPrompt()
+            return
+        }
+
         isRunning = true
-        status = "Running"
 
         Task {
             let result = await service.evaluate(input)
             applyEvalResult(result)
             isRunning = false
+            if terminalError == nil {
+                appendPrompt()
+            }
         }
     }
 
-    func clearRows() {
-        rows.removeAll()
+    private func currentInput() -> String {
+        let text = terminalText as NSString
+        guard editableStartUTF16 < text.length else {
+            return ""
+        }
+        return text.substring(from: editableStartUTF16)
+    }
+
+    private func removeTrailingBackslash() {
+        let text = terminalText as NSString
+        guard text.length > editableStartUTF16 else {
+            return
+        }
+
+        let mutable = NSMutableString(string: terminalText)
+        mutable.deleteCharacters(in: NSRange(location: text.length - 1, length: 1))
+        terminalText = mutable as String
     }
 
     private func applyEvalResult(_ result: CPSLEvalServiceResult) {
+        if let cwd = result.cwd, !cwd.isEmpty {
+            currentCWD = cwd
+        }
         if result.errorCode == "timeout" {
             terminalError = CPSLDebugMessages.timedOutRestart
         }
 
         if let ffiError = result.ffiError {
-            status = "Eval failed"
-            rows.append(CPSLConsoleRow(kind: .error, text: ffiError))
+            appendLogLine("error: \(ffiError)")
             return
         }
 
         for warning in result.warnings {
-            rows.append(CPSLConsoleRow(kind: .warning, text: warning))
+            appendLogLine("warn: \(warning)")
         }
         if !result.stdout.isEmpty {
-            rows.append(CPSLConsoleRow(kind: .stdout, text: result.stdout))
+            terminalText.append(result.stdout)
         }
         if !result.stderr.isEmpty {
-            rows.append(CPSLConsoleRow(kind: .stderr, text: result.stderr))
+            terminalText.append(result.stderr)
         }
         if let errorMessage = result.errorMessage {
-            let prefix = result.errorCode.map { "[\($0)] " } ?? ""
-            rows.append(CPSLConsoleRow(kind: .error, text: "\(prefix)\(errorMessage)"))
+            let prefix = result.errorCode.map { "error[\($0)]: " } ?? "error: "
+            appendLogLine("\(prefix)\(errorMessage)")
         }
         if result.errorCode == "invalid_response", let rawJSON = result.rawJSON {
-            rows.append(CPSLConsoleRow(kind: .raw, text: rawJSON))
+            appendLogBlock("raw", rawJSON)
         }
 
-        let summary = statusSummary(for: result)
-        status = summary
-        rows.append(CPSLConsoleRow(kind: .status, text: summary))
     }
 
-    private func statusSummary(for result: CPSLEvalServiceResult) -> String {
-        if result.errorCode == "timeout" {
-            return "Restart required"
-        }
+    private func appendPrompt() {
+        ensureTerminalEndsWithNewline()
+        terminalText.append("sandbox:\(currentCWD)$ ")
+        editableStartUTF16 = terminalTextUTF16Length
+    }
 
-        var parts: [String] = []
-        if let ok = result.ok {
-            parts.append(ok ? "ok" : "failed")
+    private func appendLogLine(_ line: String) {
+        ensureTerminalEndsWithNewline()
+        terminalText.append(line)
+        terminalText.append("\n")
+        editableStartUTF16 = terminalTextUTF16Length
+    }
+
+    private func appendLogBlock(_ label: String, _ block: String) {
+        ensureTerminalEndsWithNewline()
+        terminalText.append("\(label):\n")
+        terminalText.append(block)
+        ensureTerminalEndsWithNewline()
+        editableStartUTF16 = terminalTextUTF16Length
+    }
+
+    private func ensureTerminalEndsWithNewline() {
+        if !terminalText.isEmpty && !terminalText.hasSuffix("\n") {
+            terminalText.append("\n")
         }
-        if let exitCode = result.exitCode {
-            parts.append("exit \(exitCode)")
-        }
-        if let cwd = result.cwd, !cwd.isEmpty {
-            parts.append("cwd \(cwd)")
-        }
-        if parts.isEmpty {
-            parts.append("completed")
-        }
-        return parts.joined(separator: " | ")
+    }
+
+    private var terminalTextUTF16Length: Int {
+        (terminalText as NSString).length
     }
 
     private func prettyJSON(_ raw: String) -> String {
@@ -434,6 +368,249 @@ private final class CPSLDebugReplModel: ObservableObject {
     }
 }
 
+#if os(macOS)
+private struct CPSLTerminalTextArea: NSViewRepresentable {
+    @Binding var text: String
+    let editableStartUTF16: Int
+    let isEditable: Bool
+    let onReturnKey: () -> Void
+    let onClear: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = false
+        scrollView.drawsBackground = false
+
+        let textView = CPSLTerminalNSTextView()
+        textView.terminalDelegate = context.coordinator
+        textView.delegate = context.coordinator
+        textView.string = text
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isAutomaticTextReplacementEnabled = false
+        textView.isContinuousSpellCheckingEnabled = false
+        textView.isEditable = isEditable
+        textView.isSelectable = true
+        textView.allowsUndo = true
+        textView.drawsBackground = false
+        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.textColor = .textColor
+        textView.backgroundColor = .clear
+        textView.insertionPointColor = .textColor
+        textView.textContainerInset = NSSize(width: 14, height: 14)
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: scrollView.contentSize.width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+
+        scrollView.documentView = textView
+
+        DispatchQueue.main.async {
+            textView.window?.makeFirstResponder(textView)
+            textView.scrollToEndOfDocument(nil)
+        }
+
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let textView = scrollView.documentView as? CPSLTerminalNSTextView else {
+            return
+        }
+
+        textView.isEditable = isEditable
+        if textView.string != text {
+            textView.string = text
+            textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+            textView.scrollToEndOfDocument(nil)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate, CPSLTerminalNSTextViewDelegate {
+        var parent: CPSLTerminalTextArea
+
+        init(_ parent: CPSLTerminalTextArea) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else {
+                return
+            }
+            parent.text = textView.string
+        }
+
+        func textView(
+            _ textView: NSTextView,
+            shouldChangeTextIn affectedCharRange: NSRange,
+            replacementString: String?
+        ) -> Bool {
+            parent.isEditable && affectedCharRange.location >= parent.editableStartUTF16
+        }
+
+        func terminalTextViewDidRequestReturn(_ textView: NSTextView) {
+            textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
+            parent.onReturnKey()
+        }
+
+        func terminalTextViewDidRequestClear(_ textView: NSTextView) {
+            parent.onClear()
+        }
+    }
+}
+
+private protocol CPSLTerminalNSTextViewDelegate: AnyObject {
+    func terminalTextViewDidRequestReturn(_ textView: NSTextView)
+    func terminalTextViewDidRequestClear(_ textView: NSTextView)
+}
+
+private final class CPSLTerminalNSTextView: NSTextView {
+    weak var terminalDelegate: CPSLTerminalNSTextViewDelegate?
+
+    override func keyDown(with event: NSEvent) {
+        if event.isCommandKey("k") {
+            terminalDelegate?.terminalTextViewDidRequestClear(self)
+            return
+        }
+
+        if event.isPlainReturn {
+            terminalDelegate?.terminalTextViewDidRequestReturn(self)
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+}
+
+private extension NSEvent {
+    var isPlainReturn: Bool {
+        let flags = modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad])
+        return flags.isEmpty && (keyCode == 36 || keyCode == 76)
+    }
+
+    func isCommandKey(_ key: String) -> Bool {
+        let flags = modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock])
+        return flags == .command && charactersIgnoringModifiers?.lowercased() == key
+    }
+}
+#elseif canImport(UIKit)
+private struct CPSLTerminalTextArea: UIViewRepresentable {
+    @Binding var text: String
+    let editableStartUTF16: Int
+    let isEditable: Bool
+    let onReturnKey: () -> Void
+    let onClear: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> CPSLTerminalUITextView {
+        let textView = CPSLTerminalUITextView()
+        textView.delegate = context.coordinator
+        textView.onClear = onClear
+        textView.text = text
+        textView.isEditable = isEditable
+        textView.isSelectable = true
+        textView.autocorrectionType = .no
+        textView.autocapitalizationType = .none
+        textView.spellCheckingType = .no
+        textView.smartDashesType = .no
+        textView.smartQuotesType = .no
+        textView.smartInsertDeleteType = .no
+        textView.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        textView.textColor = .label
+        textView.backgroundColor = .clear
+        textView.tintColor = .label
+        textView.alwaysBounceVertical = true
+        textView.keyboardDismissMode = .interactive
+        textView.textContainerInset = UIEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
+        textView.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+
+        DispatchQueue.main.async {
+            textView.becomeFirstResponder()
+        }
+
+        return textView
+    }
+
+    func updateUIView(_ textView: CPSLTerminalUITextView, context: Context) {
+        context.coordinator.parent = self
+        textView.onClear = onClear
+        textView.isEditable = isEditable
+        if textView.text != text {
+            textView.text = text
+            textView.selectedRange = NSRange(location: (text as NSString).length, length: 0)
+            textView.scrollRangeToVisible(textView.selectedRange)
+        }
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: CPSLTerminalTextArea
+
+        init(_ parent: CPSLTerminalTextArea) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText text: String
+        ) -> Bool {
+            if text == "\n" {
+                textView.selectedRange = NSRange(location: (textView.text as NSString).length, length: 0)
+                parent.onReturnKey()
+                return false
+            }
+            return parent.isEditable && range.location >= parent.editableStartUTF16
+        }
+    }
+}
+
+private final class CPSLTerminalUITextView: UITextView {
+    var onClear: (() -> Void)?
+
+    override var keyCommands: [UIKeyCommand]? {
+        [
+            UIKeyCommand(
+                input: "k",
+                modifierFlags: .command,
+                action: #selector(clearTerminal)
+            )
+        ]
+    }
+
+    @objc private func clearTerminal() {
+        onClear?()
+    }
+}
+#endif
+
 private actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 10_000
     private nonisolated static let poisonState = CPSLProcessPoisonState.shared
@@ -441,7 +618,7 @@ private actor CPSLDebugService {
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
     private var evaluatingSessionID: Int?
-    private var workspaceURL: URL?
+    private var sandboxURLs: CPSLSandboxURLs?
 
     deinit {
         if let session {
@@ -455,7 +632,8 @@ private actor CPSLDebugService {
                 abiVersion: 0,
                 metadataJSON: nil,
                 metadataError: nil,
-                workspacePath: nil,
+                rootPath: nil,
+                workdirPath: nil,
                 sessionError: CPSLDebugMessages.timedOutRestart
             )
         }
@@ -464,14 +642,15 @@ private actor CPSLDebugService {
         let metadata = loadMetadataJSON()
 
         do {
-            let workspaceURL = try ensureWorkspaceURL()
-            self.workspaceURL = workspaceURL
-            let sessionError = initializeSessionIfNeeded(workspaceURL: workspaceURL)
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            let sessionError = initializeSessionIfNeeded(sandboxURLs: sandboxURLs)
             return (
                 abiVersion: abiVersion,
                 metadataJSON: metadata.json,
                 metadataError: metadata.error,
-                workspacePath: workspaceURL.resolvingSymlinksInPath().path,
+                rootPath: sandboxURLs.root.resolvingSymlinksInPath().path,
+                workdirPath: sandboxURLs.workdir.resolvingSymlinksInPath().path,
                 sessionError: sessionError
             )
         } catch {
@@ -479,7 +658,8 @@ private actor CPSLDebugService {
                 abiVersion: abiVersion,
                 metadataJSON: metadata.json,
                 metadataError: metadata.error,
-                workspacePath: nil,
+                rootPath: nil,
+                workdirPath: nil,
                 sessionError: "Workspace setup failed: \(error.localizedDescription)"
             )
         }
@@ -490,15 +670,15 @@ private actor CPSLDebugService {
             return Self.poisonedFailure()
         }
 
-        let workspaceURL: URL
+        let sandboxURLs: CPSLSandboxURLs
         do {
-            workspaceURL = try ensureWorkspaceURL()
-            self.workspaceURL = workspaceURL
+            sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
         } catch {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
         }
 
-        if let sessionError = initializeSessionIfNeeded(workspaceURL: workspaceURL) {
+        if let sessionError = initializeSessionIfNeeded(sandboxURLs: sandboxURLs) {
             return Self.ffiFailure("Session init: \(sessionError)")
         }
 
@@ -545,11 +725,14 @@ private actor CPSLDebugService {
         return (String(cString: pointer), nil)
     }
 
-    private func initializeSessionIfNeeded(workspaceURL: URL) -> String? {
+    private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) -> String? {
         guard session == nil else {
             return nil
         }
-        guard let configJSON = makeSessionConfigJSON(hostPath: workspaceURL.resolvingSymlinksInPath().path) else {
+        guard let configJSON = makeSessionConfigJSON(
+            rootPath: sandboxURLs.root.resolvingSymlinksInPath().path,
+            workdirPath: sandboxURLs.workdir.resolvingSymlinksInPath().path
+        ) else {
             return "Could not encode session config JSON"
         }
 
@@ -565,9 +748,9 @@ private actor CPSLDebugService {
         return nil
     }
 
-    private func ensureWorkspaceURL() throws -> URL {
-        if let workspaceURL {
-            return workspaceURL
+    private func ensureSandboxURLs() throws -> CPSLSandboxURLs {
+        if let sandboxURLs {
+            return sandboxURLs
         }
 
         let fileManager = FileManager.default
@@ -579,16 +762,61 @@ private actor CPSLDebugService {
         )
         let bundleID = Bundle.main.bundleIdentifier ?? "herm"
         let appURL = supportURL.appendingPathComponent(bundleID, isDirectory: true)
-        let workspaceURL = appURL.appendingPathComponent("CPSLDebugWorkspace", isDirectory: true)
-        try fileManager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
-        return workspaceURL
+        let sandboxURL = appURL.appendingPathComponent("CPSLDebugSandbox", isDirectory: true)
+        let rootURL = sandboxURL.appendingPathComponent("root", isDirectory: true)
+        let workdirURL = sandboxURL.appendingPathComponent("workdir", isDirectory: true)
+        let sandboxURLs = CPSLSandboxURLs(root: rootURL, workdir: workdirURL)
+
+        try ensureSandboxScaffold(sandboxURLs)
+        return sandboxURLs
     }
 
-    private func makeSessionConfigJSON(hostPath: String) -> String? {
+    private func ensureSandboxScaffold(_ sandboxURLs: CPSLSandboxURLs) throws {
+        let fileManager = FileManager.default
+        let directoryNames = [
+            "",
+            "bin",
+            "etc",
+            "home",
+            "root",
+            "tmp",
+            "usr",
+            "var"
+        ]
+
+        for name in directoryNames {
+            let url = name.isEmpty ? sandboxURLs.root : sandboxURLs.root.appendingPathComponent(name, isDirectory: true)
+            try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try fileManager.createDirectory(at: sandboxURLs.workdir, withIntermediateDirectories: true)
+
+        try writeFileIfMissing(
+            sandboxURLs.root.appendingPathComponent("etc/hosts", isDirectory: false),
+            contents: "127.0.0.1 localhost\n"
+        )
+        try writeFileIfMissing(
+            sandboxURLs.root.appendingPathComponent("etc/passwd", isDirectory: false),
+            contents: "root:x:0:0:root:/root:/bin/sh\n"
+        )
+    }
+
+    private func writeFileIfMissing(_ url: URL, contents: String) throws {
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        try contents.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func makeSessionConfigJSON(rootPath: String, workdirPath: String) -> String? {
         let config: [String: Any] = [
             "mounts": [
                 [
-                    "host": hostPath,
+                    "host": rootPath,
+                    "virtual": "/",
+                    "mode": "rw"
+                ],
+                [
+                    "host": workdirPath,
                     "virtual": "/workdir",
                     "mode": "rw"
                 ]
@@ -706,7 +934,8 @@ private actor CPSLDebugService {
             ok: false,
             cwd: nil,
             errorCode: "timeout",
-            errorMessage: "Command timed out after \(evalTimeoutMilliseconds / 1_000)s. \(CPSLDebugMessages.timedOutRestart)",
+            errorMessage: "Command timed out after \(evalTimeoutMilliseconds / 1_000)s. "
+                + CPSLDebugMessages.timedOutRestart,
             warnings: [],
             ffiError: nil
         )
@@ -781,17 +1010,36 @@ private actor CPSLDebugService {
     }
 }
 
-#Preview {
-    ContentView()
-}
-
 private extension View {
-    @ViewBuilder
     func cpslDebugWindowFrame() -> some View {
         #if os(macOS)
-        frame(minWidth: 420, minHeight: 520)
+        frame(minWidth: 720, minHeight: 520)
         #else
         frame(maxWidth: .infinity, maxHeight: .infinity)
         #endif
     }
+
+    func cpslTerminalBackground() -> some View {
+        #if os(macOS)
+        background(Color(NSColor.cpslTerminalBackground))
+        #elseif canImport(UIKit)
+        background(Color(UIColor.cpslTerminalBackground))
+        #else
+        background(Color.clear)
+        #endif
+    }
 }
+
+#if os(macOS)
+private extension NSColor {
+    static var cpslTerminalBackground: NSColor {
+        NSColor.textBackgroundColor
+    }
+}
+#elseif canImport(UIKit)
+private extension UIColor {
+    static var cpslTerminalBackground: UIColor {
+        UIColor.systemBackground
+    }
+}
+#endif
