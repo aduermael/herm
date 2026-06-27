@@ -73,6 +73,7 @@ private struct CPSLSandboxURLs {
 
 private struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
+    @FocusState private var isPromptFocused: Bool
 
     var body: some View {
         ZStack {
@@ -80,6 +81,10 @@ private struct CPSLChatScreen: View {
 
             VStack(spacing: 0) {
                 CPSLHeaderView()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isPromptFocused = false
+                    }
 
                 Group {
                     if model.isFileBrowserOpen {
@@ -89,9 +94,17 @@ private struct CPSLChatScreen: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    isPromptFocused = false
+                }
 
                 CPSLToolStripView(model: model)
-                CPSLPromptComposerView(model: model)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isPromptFocused = false
+                    }
+                CPSLPromptComposerView(model: model, isPromptFocused: $isPromptFocused)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -137,8 +150,12 @@ private enum CPSLTheme {
     static let controlSize: CGFloat = 38
     static let fileIndent = Self.small + Self.medium
 
-    static let headerFont = Font.system(size: 22, weight: .semibold)
-    static let promptFont = Font.system(size: 16, weight: .regular)
+    static let normalTextSize: CGFloat = 16
+    static let largeTextSize: CGFloat = 22
+
+    static let headerFont = Font.system(size: Self.largeTextSize, weight: .semibold)
+    static let bodyFont = Font.system(size: Self.normalTextSize, weight: .regular)
+    static let monospacedBodyFont = Font.system(size: Self.normalTextSize, weight: .regular, design: .monospaced)
     static let controlFont = Font.system(size: 14, weight: .medium)
     static let rowTitleFont = Font.system(size: 13, weight: .regular)
 }
@@ -445,6 +462,7 @@ private struct CPSLChatTimelineView: View {
                     .padding(.horizontal, CPSLTheme.large)
                     .padding(.vertical, CPSLTheme.medium)
                 }
+                .scrollDismissesKeyboard(.interactively)
                 .opacity(model.messages.isEmpty ? 0 : 1)
                 .onChange(of: model.messages.count) { _ in
                     guard let lastID = model.messages.last?.id else {
@@ -490,7 +508,7 @@ private struct CPSLChatBubbleView: View {
                         .foregroundStyle(message.role.foreground.opacity(0.72))
                 }
                 Text(message.body)
-                    .font(message.role.usesMonospaceBody ? .system(.callout, design: .monospaced) : .callout)
+                    .font(message.role.usesMonospaceBody ? CPSLTheme.monospacedBodyFont : CPSLTheme.bodyFont)
                     .foregroundStyle(message.role.foreground)
                     .textSelection(.enabled)
             }
@@ -573,6 +591,7 @@ private struct CPSLFileBrowserView: View {
                 .padding(.horizontal, CPSLTheme.medium)
                 .padding(.bottom, CPSLTheme.medium)
             }
+            .scrollDismissesKeyboard(.interactively)
         }
         .background(CPSLTheme.surface)
         .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
@@ -722,23 +741,27 @@ private struct CPSLDisabledToolIcon: View {
 
 private struct CPSLPromptComposerView: View {
     @ObservedObject var model: CPSLChatModel
+    let isPromptFocused: FocusState<Bool>.Binding
+
+    private var hasPromptInput: Bool {
+        !model.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.medium) {
             TextField("Ask Anything", text: $model.promptText, axis: .vertical)
                 .textFieldStyle(.plain)
-                .submitLabel(.send)
-                .lineLimit(1...4)
-                .font(CPSLTheme.promptFont)
+                .submitLabel(.return)
+                .lineLimit(1...6)
+                .font(CPSLTheme.bodyFont)
                 .foregroundStyle(CPSLTheme.text)
                 .tint(CPSLTheme.text)
                 .disabled(model.isRunning)
-                .onSubmit {
-                    model.submitPrompt()
-                }
+                .focused(isPromptFocused)
 
             HStack(spacing: CPSLTheme.medium) {
                 Button {
+                    isPromptFocused.wrappedValue = false
                     model.showComingSoon("coming soon")
                 } label: {
                     Image(systemName: "plus")
@@ -755,6 +778,7 @@ private struct CPSLPromptComposerView: View {
                 Spacer()
 
                 Button {
+                    isPromptFocused.wrappedValue = false
                     model.showComingSoon("coming soon")
                 } label: {
                     Image(systemName: "mic.fill")
@@ -769,16 +793,29 @@ private struct CPSLPromptComposerView: View {
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
 
                 Button {
-                    model.showComingSoon("coming soon")
-                } label: {
-                    HStack(spacing: CPSLTheme.small) {
-                        Image(systemName: "waveform")
-                            .font(.system(size: 15, weight: .medium))
-                        Text("Speak")
-                            .font(CPSLTheme.controlFont)
+                    isPromptFocused.wrappedValue = false
+                    if hasPromptInput {
+                        model.submitPrompt()
+                    } else {
+                        model.showComingSoon("coming soon")
                     }
-                    .padding(.horizontal, CPSLTheme.medium)
-                    .frame(height: CPSLTheme.controlSize)
+                } label: {
+                    Group {
+                        if hasPromptInput {
+                            Image(systemName: "arrow.up")
+                                .font(.system(size: 17, weight: .semibold))
+                                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                        } else {
+                            HStack(spacing: CPSLTheme.small) {
+                                Image(systemName: "waveform")
+                                    .font(.system(size: 15, weight: .medium))
+                                Text("Speak")
+                                    .font(CPSLTheme.controlFont)
+                            }
+                            .padding(.horizontal, CPSLTheme.medium)
+                            .frame(height: CPSLTheme.controlSize)
+                        }
+                    }
                     .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
                 }
                 .buttonStyle(.plain)
