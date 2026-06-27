@@ -9,6 +9,9 @@ import Foundation
 import Dispatch
 import Combine
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
 import CPSL
 
 struct ContentView: View {
@@ -73,38 +76,62 @@ private struct CPSLSandboxURLs {
 
 private struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
-    @FocusState private var isPromptFocused: Bool
+    @State private var promptDismissRequest = 0
 
     var body: some View {
         ZStack {
             CPSLTheme.background.ignoresSafeArea()
 
+            Group {
+                if model.isFileBrowserOpen {
+                    CPSLFileBrowserView(model: model)
+                        .padding(.top, CPSLTheme.topChromeInset)
+                        .padding(.bottom, CPSLTheme.bottomChromeInset)
+                } else {
+                    CPSLChatTimelineView(
+                        model: model,
+                        topInset: CPSLTheme.topChromeInset,
+                        bottomInset: CPSLTheme.bottomChromeInset
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                promptDismissRequest += 1
+            }
+
+            CPSLScrollEdgeBlend(edge: .top, height: CPSLTheme.topBlendHeight)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(false)
+
+            CPSLScrollEdgeBlend(edge: .bottom, height: CPSLTheme.bottomBlendHeight)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .allowsHitTesting(false)
+
             VStack(spacing: 0) {
                 CPSLHeaderView()
                     .contentShape(Rectangle())
                     .onTapGesture {
-                        isPromptFocused = false
+                        promptDismissRequest += 1
                     }
 
-                Group {
-                    if model.isFileBrowserOpen {
-                        CPSLFileBrowserView(model: model)
-                    } else {
-                        CPSLChatTimelineView(model: model)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    isPromptFocused = false
-                }
+                Spacer()
 
-                CPSLToolStripView(model: model)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        isPromptFocused = false
+                VStack(spacing: 0) {
+                    CPSLToolStripView(model: model)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            promptDismissRequest += 1
+                        }
+
+                    CPSLPromptComposerView(
+                        model: model,
+                        dismissKeyboardRequest: promptDismissRequest
+                    ) {
+                        promptDismissRequest += 1
                     }
-                CPSLPromptComposerView(model: model, isPromptFocused: $isPromptFocused)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -149,6 +176,11 @@ private enum CPSLTheme {
 
     static let controlSize: CGFloat = 38
     static let fileIndent = Self.small + Self.medium
+    static let topChromeInset: CGFloat = 104
+    static let bottomChromeInset: CGFloat = 264
+    static let topBlendHeight: CGFloat = 128
+    static let bottomBlendHeight: CGFloat = 284
+    static let commandBlockMaxHeight: CGFloat = 320
 
     static let normalTextSize: CGFloat = 16
     static let largeTextSize: CGFloat = 22
@@ -167,7 +199,11 @@ private enum CPSLChatRole {
     case error
 
     var isTrailingAligned: Bool {
-        self == .user || self == .command
+        self == .user
+    }
+
+    var isFullWidth: Bool {
+        self == .command
     }
 
     var usesMonospaceBody: Bool {
@@ -193,10 +229,17 @@ private enum CPSLChatRole {
 }
 
 private struct CPSLChatMessage: Identifiable {
-    let id = UUID()
+    let id: UUID
     let role: CPSLChatRole
     let title: String?
     let body: String
+
+    init(id: UUID = UUID(), role: CPSLChatRole, title: String?, body: String) {
+        self.id = id
+        self.role = role
+        self.title = title
+        self.body = body
+    }
 }
 
 private struct CPSLFileEntry: Identifiable, Equatable, Sendable {
@@ -243,7 +286,7 @@ private final class CPSLChatModel: ObservableObject {
         if input.hasPrefix("!") {
             let command = String(input.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !command.isEmpty else {
-                appendErrorMessage(title: "bash", body: "Enter a command after !")
+                appendErrorMessage(title: nil, body: "Enter a command after !")
                 return
             }
             runCommand(command)
@@ -316,49 +359,62 @@ private final class CPSLChatModel: ObservableObject {
     }
 
     private func runCommand(_ command: String) {
-        messages.append(CPSLChatMessage(role: .command, title: "bash", body: "!\(command)"))
+        let message = CPSLChatMessage(role: .command, title: nil, body: commandBlockBody(command: command))
+        messages.append(message)
         isRunning = true
 
         Task {
             let result = await service.evaluate(command)
-            applyCommandResult(result)
+            applyCommandResult(result, command: command, messageID: message.id)
             isRunning = false
         }
     }
 
-    private func applyCommandResult(_ result: CPSLEvalServiceResult) {
-        if let ffiError = result.ffiError {
-            appendErrorMessage(title: "CPSL", body: ffiError)
+    private func applyCommandResult(_ result: CPSLEvalServiceResult, command: String, messageID: UUID) {
+        let body = commandBlockBody(command: command, result: result)
+        guard let index = messages.firstIndex(where: { $0.id == messageID }) else {
+            messages.append(CPSLChatMessage(role: .command, title: nil, body: body))
             return
         }
-
-        var sections: [String] = []
-        sections.append(contentsOf: result.warnings.map { "warning: \($0)" })
-        appendSection("stdout", result.stdout, to: &sections)
-        appendSection("stderr", result.stderr, to: &sections)
-
-        if let errorMessage = result.errorMessage {
-            let prefix = result.errorCode.map { "error[\($0)]" } ?? "error"
-            sections.append("\(prefix): \(errorMessage)")
-        }
-        if result.errorCode == "invalid_response", let rawJSON = result.rawJSON {
-            sections.append("raw:\n\(rawJSON)")
-        }
-        if sections.isEmpty {
-            let exit = result.exitCode.map { "exit \($0)" } ?? "done"
-            sections.append(exit)
-        }
-
-        let role: CPSLChatRole = result.ok == false || result.errorMessage != nil ? .error : .output
-        messages.append(CPSLChatMessage(role: role, title: "CPSL", body: sections.joined(separator: "\n\n")))
+        messages[index] = CPSLChatMessage(id: messageID, role: .command, title: nil, body: body)
     }
 
-    private func appendSection(_ label: String, _ text: String, to sections: inout [String]) {
+    private func commandBlockBody(command: String, result: CPSLEvalServiceResult? = nil) -> String {
+        var sections = ["!\(command)"]
+        guard let result else {
+            return sections.joined(separator: "\n\n")
+        }
+
+        var outputSections: [String] = []
+        outputSections.append(contentsOf: result.warnings.map { "warning: \($0)" })
+        appendTrimmed(result.stdout, to: &outputSections)
+        appendTrimmed(result.stderr, to: &outputSections)
+
+        if let ffiError = result.ffiError {
+            outputSections.append(ffiError)
+        }
+        if let errorMessage = result.errorMessage {
+            let prefix = result.errorCode.map { "error[\($0)]" } ?? "error"
+            outputSections.append("\(prefix): \(errorMessage)")
+        }
+        if result.errorCode == "invalid_response", let rawJSON = result.rawJSON {
+            outputSections.append(rawJSON)
+        }
+        if outputSections.isEmpty {
+            let exit = result.exitCode.map { "exit \($0)" } ?? "done"
+            outputSections.append(exit)
+        }
+
+        sections.append(outputSections.joined(separator: "\n\n"))
+        return sections.joined(separator: "\n\n")
+    }
+
+    private func appendTrimmed(_ text: String, to sections: inout [String]) {
         let trimmed = text.trimmingCharacters(in: .newlines)
         guard !trimmed.isEmpty else {
             return
         }
-        sections.append("\(label):\n\(trimmed)")
+        sections.append(trimmed)
     }
 
     private func loadDirectory(_ path: String, childOf parent: String?) async {
@@ -442,8 +498,33 @@ private struct CPSLHeaderView: View {
     }
 }
 
+private struct CPSLScrollEdgeBlend: View {
+    let edge: VerticalEdge
+    let height: CGFloat
+
+    var body: some View {
+        LinearGradient(
+            stops: stops,
+            startPoint: edge == .top ? .top : .bottom,
+            endPoint: edge == .top ? .bottom : .top
+        )
+        .frame(height: height)
+    }
+
+    private var stops: [Gradient.Stop] {
+        [
+            .init(color: CPSLTheme.background, location: 0),
+            .init(color: CPSLTheme.background.opacity(0.88), location: 0.30),
+            .init(color: CPSLTheme.background.opacity(0.45), location: 0.70),
+            .init(color: CPSLTheme.background.opacity(0), location: 1)
+        ]
+    }
+}
+
 private struct CPSLChatTimelineView: View {
     @ObservedObject var model: CPSLChatModel
+    let topInset: CGFloat
+    let bottomInset: CGFloat
 
     var body: some View {
         ZStack {
@@ -460,11 +541,20 @@ private struct CPSLChatTimelineView: View {
                         }
                     }
                     .padding(.horizontal, CPSLTheme.large)
-                    .padding(.vertical, CPSLTheme.medium)
+                    .padding(.top, topInset)
+                    .padding(.bottom, bottomInset)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .opacity(model.messages.isEmpty ? 0 : 1)
-                .onChange(of: model.messages.count) { _ in
+                .onChange(of: model.messages.count) { _, _ in
+                    guard let lastID = model.messages.last?.id else {
+                        return
+                    }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.messages.last?.body) { _, _ in
                     guard let lastID = model.messages.last?.id else {
                         return
                     }
@@ -497,7 +587,7 @@ private struct CPSLChatBubbleView: View {
 
     var body: some View {
         HStack {
-            if message.role.isTrailingAligned {
+            if message.role.isTrailingAligned && !message.role.isFullWidth {
                 Spacer(minLength: CPSLTheme.large * 2)
             }
 
@@ -507,20 +597,68 @@ private struct CPSLChatBubbleView: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(message.role.foreground.opacity(0.72))
                 }
-                Text(message.body)
-                    .font(message.role.usesMonospaceBody ? CPSLTheme.monospacedBodyFont : CPSLTheme.bodyFont)
-                    .foregroundStyle(message.role.foreground)
-                    .textSelection(.enabled)
+                messageBody
             }
             .padding(CPSLTheme.medium)
             .background(message.role.fill)
             .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-            .frame(maxWidth: 720, alignment: message.role.isTrailingAligned ? .trailing : .leading)
+            .frame(
+                maxWidth: message.role.isFullWidth ? .infinity : 720,
+                alignment: message.role.isTrailingAligned ? .trailing : .leading
+            )
 
-            if !message.role.isTrailingAligned {
+            if !message.role.isTrailingAligned && !message.role.isFullWidth {
                 Spacer(minLength: CPSLTheme.large * 2)
             }
         }
+        .frame(maxWidth: .infinity, alignment: message.role.isTrailingAligned ? .trailing : .leading)
+    }
+
+    @ViewBuilder
+    private var messageBody: some View {
+        if message.role == .command {
+            CPSLCommandBlockBody(text: message.body, foreground: message.role.foreground)
+        } else {
+            Text(message.body)
+                .font(message.role.usesMonospaceBody ? CPSLTheme.monospacedBodyFont : CPSLTheme.bodyFont)
+                .foregroundStyle(message.role.foreground)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+private struct CPSLCommandBlockBody: View {
+    let text: String
+    let foreground: Color
+
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView(.vertical, showsIndicators: contentHeight > CPSLTheme.commandBlockMaxHeight) {
+            Text(text)
+                .font(CPSLTheme.monospacedBodyFont)
+                .foregroundStyle(foreground)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: CPSLCommandBlockHeightKey.self, value: proxy.size.height)
+                    }
+                )
+        }
+        .frame(height: contentHeight > 0 ? min(contentHeight, CPSLTheme.commandBlockMaxHeight) : nil)
+        .scrollBounceBehavior(.basedOnSize)
+        .onPreferenceChange(CPSLCommandBlockHeightKey.self) { height in
+            contentHeight = height
+        }
+    }
+}
+
+private struct CPSLCommandBlockHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -739,29 +877,185 @@ private struct CPSLDisabledToolIcon: View {
     }
 }
 
+#if canImport(UIKit)
+private struct CPSLPromptTextView: UIViewRepresentable {
+    @Binding var text: String
+    let isCommandInput: Bool
+    let isDisabled: Bool
+    let maxHeight: CGFloat
+    let dismissKeyboardRequest: Int
+    let onHeightChange: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.textColor = UIColor(CPSLTheme.text)
+        textView.tintColor = UIColor(CPSLTheme.text)
+        textView.font = UIFont.systemFont(ofSize: CPSLTheme.normalTextSize, weight: .regular)
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.returnKeyType = .default
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        context.coordinator.dismissKeyboardRequest = dismissKeyboardRequest
+        applyInputTraits(to: textView)
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        context.coordinator.parent = self
+
+        if textView.text != text {
+            textView.text = text
+        }
+
+        let didChangeTraits = applyInputTraits(to: textView)
+        textView.isEditable = !isDisabled
+        textView.isSelectable = !isDisabled
+        textView.isScrollEnabled = textView.contentSize.height > maxHeight
+
+        if isDisabled && textView.isFirstResponder {
+            textView.resignFirstResponder()
+        } else if context.coordinator.dismissKeyboardRequest != dismissKeyboardRequest {
+            context.coordinator.dismissKeyboardRequest = dismissKeyboardRequest
+            textView.resignFirstResponder()
+        }
+
+        if didChangeTraits && textView.isFirstResponder {
+            textView.reloadInputViews()
+        }
+
+        context.coordinator.reportHeight(for: textView)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    @discardableResult
+    private func applyInputTraits(to textView: UITextView) -> Bool {
+        let keyboardType: UIKeyboardType = isCommandInput ? .asciiCapable : .default
+        let autocapitalizationType: UITextAutocapitalizationType = isCommandInput ? .none : .sentences
+        let autocorrectionType: UITextAutocorrectionType = isCommandInput ? .no : .yes
+        let spellCheckingType: UITextSpellCheckingType = isCommandInput ? .no : .default
+        let smartQuotesType: UITextSmartQuotesType = isCommandInput ? .no : .default
+        let smartDashesType: UITextSmartDashesType = isCommandInput ? .no : .default
+        let smartInsertDeleteType: UITextSmartInsertDeleteType = isCommandInput ? .no : .default
+
+        let didChange = textView.keyboardType != keyboardType ||
+            textView.autocapitalizationType != autocapitalizationType ||
+            textView.autocorrectionType != autocorrectionType ||
+            textView.spellCheckingType != spellCheckingType ||
+            textView.smartQuotesType != smartQuotesType ||
+            textView.smartDashesType != smartDashesType ||
+            textView.smartInsertDeleteType != smartInsertDeleteType
+
+        textView.keyboardType = keyboardType
+        textView.autocapitalizationType = autocapitalizationType
+        textView.autocorrectionType = autocorrectionType
+        textView.spellCheckingType = spellCheckingType
+        textView.smartQuotesType = smartQuotesType
+        textView.smartDashesType = smartDashesType
+        textView.smartInsertDeleteType = smartInsertDeleteType
+        return didChange
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: CPSLPromptTextView
+        var dismissKeyboardRequest = 0
+
+        init(parent: CPSLPromptTextView) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            parent.text = textView.text
+            reportHeight(for: textView)
+        }
+
+        func reportHeight(for textView: UITextView) {
+            let fittingSize = CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude)
+            let height = textView.sizeThatFits(fittingSize).height
+            DispatchQueue.main.async {
+                self.parent.onHeightChange(height)
+            }
+        }
+    }
+}
+#endif
+
 private struct CPSLPromptComposerView: View {
     @ObservedObject var model: CPSLChatModel
-    let isPromptFocused: FocusState<Bool>.Binding
+    let dismissKeyboardRequest: Int
+    let dismissKeyboard: () -> Void
+    @State private var promptContentHeight: CGFloat = 0
 
     private var hasPromptInput: Bool {
         !model.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var isCommandInput: Bool {
+        model.promptText.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("!")
+    }
+
+    private var promptLineHeight: CGFloat {
+#if canImport(UIKit)
+        ceil(UIFont.systemFont(ofSize: CPSLTheme.normalTextSize, weight: .regular).lineHeight)
+#else
+        ceil(CPSLTheme.normalTextSize * 1.25)
+#endif
+    }
+
+    private var promptTextHeight: CGFloat {
+        min(max(promptContentHeight, promptLineHeight), promptLineHeight * 6)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.medium) {
-            TextField("Ask Anything", text: $model.promptText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .submitLabel(.return)
-                .lineLimit(1...6)
-                .font(CPSLTheme.bodyFont)
-                .foregroundStyle(CPSLTheme.text)
-                .tint(CPSLTheme.text)
-                .disabled(model.isRunning)
-                .focused(isPromptFocused)
+            ZStack(alignment: .topLeading) {
+                if model.promptText.isEmpty {
+                    Text("Ask Anything")
+                        .font(CPSLTheme.bodyFont)
+                        .foregroundStyle(CPSLTheme.mutedText)
+                        .padding(.horizontal, CPSLTheme.medium)
+                        .padding(.vertical, CPSLTheme.small)
+                }
+
+#if canImport(UIKit)
+                CPSLPromptTextView(
+                    text: $model.promptText,
+                    isCommandInput: isCommandInput,
+                    isDisabled: model.isRunning,
+                    maxHeight: promptLineHeight * 6,
+                    dismissKeyboardRequest: dismissKeyboardRequest
+                ) { height in
+                    promptContentHeight = height
+                }
+                .frame(height: promptTextHeight)
+                .padding(.horizontal, CPSLTheme.medium)
+                .padding(.vertical, CPSLTheme.small)
+#else
+                TextField("", text: $model.promptText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .submitLabel(.return)
+                    .lineLimit(1...6)
+                    .font(CPSLTheme.bodyFont)
+                    .foregroundStyle(CPSLTheme.text)
+                    .tint(CPSLTheme.text)
+                    .disabled(model.isRunning)
+                    .padding(.horizontal, CPSLTheme.medium)
+                    .padding(.vertical, CPSLTheme.small)
+#endif
+            }
+            .background {
+                RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
+                    .fill(isCommandInput ? CPSLTheme.command.opacity(0.82) : Color.clear)
+            }
+            .animation(.easeOut(duration: 0.16), value: isCommandInput)
 
             HStack(spacing: CPSLTheme.medium) {
                 Button {
-                    isPromptFocused.wrappedValue = false
+                    dismissKeyboard()
                     model.showComingSoon("coming soon")
                 } label: {
                     Image(systemName: "plus")
@@ -778,7 +1072,7 @@ private struct CPSLPromptComposerView: View {
                 Spacer()
 
                 Button {
-                    isPromptFocused.wrappedValue = false
+                    dismissKeyboard()
                     model.showComingSoon("coming soon")
                 } label: {
                     Image(systemName: "mic.fill")
@@ -793,7 +1087,7 @@ private struct CPSLPromptComposerView: View {
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
 
                 Button {
-                    isPromptFocused.wrappedValue = false
+                    dismissKeyboard()
                     if hasPromptInput {
                         model.submitPrompt()
                     } else {
@@ -826,7 +1120,14 @@ private struct CPSLPromptComposerView: View {
             }
         }
         .padding(CPSLTheme.medium)
-        .background(CPSLTheme.surface)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous)
+                    .fill(CPSLTheme.surface.opacity(0.78))
+            }
+        }
         .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
         .padding(.horizontal, CPSLTheme.large)
         .padding(.bottom, CPSLTheme.large)
