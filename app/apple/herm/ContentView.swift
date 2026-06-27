@@ -11,26 +11,11 @@ import Combine
 import SwiftUI
 import CPSL
 
-#if os(macOS)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
-
 struct ContentView: View {
     var body: some View {
-        CPSLTerminalView()
+        CPSLChatScreen()
     }
 }
-
-private typealias CPSLBootstrapResult = (
-    abiVersion: UInt32,
-    metadataJSON: String?,
-    metadataError: String?,
-    rootPath: String?,
-    workdirPath: String?,
-    sessionError: String?
-)
 
 private typealias CPSLEvalServiceResult = (
     rawJSON: String?,
@@ -44,10 +29,6 @@ private typealias CPSLEvalServiceResult = (
     warnings: [String],
     ffiError: String?
 )
-
-private nonisolated enum CPSLDebugMessages {
-    static let timedOutRestart = "CPSL session timed out. Restart the app to run more commands."
-}
 
 private nonisolated struct CPSLSessionHandle {
     let id: Int
@@ -70,8 +51,7 @@ private nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
 
     func resume(
         _ result: CPSLEvalRaceResult,
-        continuation: CheckedContinuation<CPSLEvalRaceResult, Never>,
-        beforeResume: (@Sendable () -> Void)? = nil
+        continuation: CheckedContinuation<CPSLEvalRaceResult, Never>
     ) {
         lock.lock()
         let shouldResume = !didResume
@@ -81,32 +61,8 @@ private nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
         lock.unlock()
 
         if shouldResume {
-            beforeResume?()
             continuation.resume(returning: result)
         }
-    }
-}
-
-// Survives view/model recreation after a timed-out cpsl_eval leaks its session.
-private nonisolated final class CPSLProcessPoisonState: @unchecked Sendable {
-    static let shared = CPSLProcessPoisonState()
-
-    private let lock = NSLock()
-    private var poisoned = false
-
-    private init() {}
-
-    func poison() {
-        lock.lock()
-        poisoned = true
-        lock.unlock()
-    }
-
-    func isPoisoned() -> Bool {
-        lock.lock()
-        let value = poisoned
-        lock.unlock()
-        return value
     }
 }
 
@@ -115,505 +71,733 @@ private struct CPSLSandboxURLs {
     let workdir: URL
 }
 
-private struct CPSLTerminalView: View {
-    @StateObject private var model = CPSLTerminalModel()
+private struct CPSLChatScreen: View {
+    @StateObject private var model = CPSLChatModel()
 
     var body: some View {
-        VStack(spacing: 0) {
-            CPSLTerminalTextArea(
-                text: Binding(
-                    get: { model.terminalText },
-                    set: { model.handleTerminalTextChange($0) }
-                ),
-                editableStartUTF16: model.editableStartUTF16,
-                isEditable: model.canEdit,
-                onReturnKey: {
-                    model.handleReturnKey()
-                },
-                onClear: {
-                    model.clearTerminal()
+        ZStack {
+            CPSLTheme.background.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                CPSLHeaderView()
+
+                Group {
+                    if model.isFileBrowserOpen {
+                        CPSLFileBrowserView(model: model)
+                    } else {
+                        CPSLChatTimelineView(model: model)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                CPSLToolStripView(model: model)
+                CPSLPromptComposerView(model: model)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .alert(
+            "Coming soon",
+            isPresented: Binding(
+                get: { model.comingSoonMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        model.comingSoonMessage = nil
+                    }
                 }
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider()
-
-            HStack {
-                Spacer()
-                Button {
-                    model.clearTerminal()
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
-                .buttonStyle(.bordered)
-                .keyboardShortcut("k", modifiers: [.command])
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-        }
-        .cpslTerminalBackground()
-        .cpslDebugWindowFrame()
-        .task {
-            await model.start()
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.comingSoonMessage ?? "Coming soon")
         }
     }
+}
+
+private enum CPSLTheme {
+    static let background = Color(red: 0.047, green: 0.055, blue: 0.094)
+    static let surface = Color(red: 0.067, green: 0.082, blue: 0.125)
+    static let card = Color(red: 0.086, green: 0.102, blue: 0.165)
+    static let elevated = Color(red: 0.106, green: 0.125, blue: 0.204)
+    static let controlPressed = Color(red: 0.16, green: 0.15, blue: 0.25)
+    static let text = Color(red: 0.941, green: 0.933, blue: 0.914)
+    static let secondaryText = Color(red: 0.604, green: 0.616, blue: 0.698)
+    static let mutedText = Color(red: 0.345, green: 0.369, blue: 0.447)
+    static let mauve = Color(red: 0.49, green: 0.42, blue: 0.78)
+    static let command = Color(red: 0.16, green: 0.24, blue: 0.22)
+    static let error = Color(red: 0.36, green: 0.16, blue: 0.20)
+
+    static let small: CGFloat = 8
+    static let medium: CGFloat = 12
+    static let large: CGFloat = 20
+
+    static let composerRadius: CGFloat = 10
+    static let controlRadius: CGFloat = 8
+    static let rowRadius: CGFloat = 6
+
+    static let controlSize: CGFloat = 38
+    static let fileIndent = Self.small + Self.medium
+
+    static let headerFont = Font.system(size: 22, weight: .semibold)
+    static let promptFont = Font.system(size: 16, weight: .regular)
+    static let controlFont = Font.system(size: 14, weight: .medium)
+    static let rowTitleFont = Font.system(size: 13, weight: .regular)
+}
+
+private enum CPSLChatRole {
+    case user
+    case command
+    case output
+    case error
+
+    var isTrailingAligned: Bool {
+        self == .user || self == .command
+    }
+
+    var usesMonospaceBody: Bool {
+        self == .command || self == .output || self == .error
+    }
+
+    var fill: Color {
+        switch self {
+        case .user:
+            return CPSLTheme.elevated
+        case .command:
+            return CPSLTheme.command
+        case .output:
+            return CPSLTheme.surface
+        case .error:
+            return CPSLTheme.error
+        }
+    }
+
+    var foreground: Color {
+        CPSLTheme.text
+    }
+}
+
+private struct CPSLChatMessage: Identifiable {
+    let id = UUID()
+    let role: CPSLChatRole
+    let title: String?
+    let body: String
+}
+
+private struct CPSLFileEntry: Identifiable, Equatable, Sendable {
+    var id: String { path }
+
+    let name: String
+    let path: String
+    let isDirectory: Bool
+}
+
+private struct CPSLDirectoryListing: Sendable {
+    let entries: [CPSLFileEntry]
+    let error: String?
 }
 
 @MainActor
-private final class CPSLTerminalModel: ObservableObject {
-    @Published var terminalText = "Starting CPSL...\n"
-    @Published private(set) var editableStartUTF16 = ("Starting CPSL...\n" as NSString).length
+private final class CPSLChatModel: ObservableObject {
+    @Published var promptText = ""
+    @Published var comingSoonMessage: String?
+    @Published private(set) var messages: [CPSLChatMessage] = []
     @Published private(set) var isRunning = false
+    @Published private(set) var isFileBrowserOpen = false
+    @Published private(set) var browserPath = "/"
+    @Published private(set) var browserEntries: [CPSLFileEntry] = []
+    @Published private(set) var childEntriesByPath: [String: [CPSLFileEntry]] = [:]
+    @Published private(set) var expandedFilePaths: Set<String> = []
+    @Published private(set) var loadingFilePaths: Set<String> = []
+    @Published private(set) var fileBrowserError: String?
 
     private let service = CPSLDebugService()
-    private var didStart = false
-    private var sessionReady = false
-    private var terminalError: String?
-    private var currentCWD = "/workdir"
 
-    var canEdit: Bool {
-        sessionReady && terminalError == nil && !isRunning
+    func showComingSoon(_ message: String = "coming soon") {
+        comingSoonMessage = message
     }
 
-    func start() async {
-        guard !didStart else {
+    func submitPrompt() {
+        let input = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty, !isRunning else {
             return
         }
-        didStart = true
 
-        let result = await service.bootstrap()
-        if result.abiVersion > 0 {
-            appendLogLine("CPSL ABI \(result.abiVersion)")
-        }
-        if let rootPath = result.rootPath {
-            appendLogLine("mount \(rootPath) -> /")
-        }
-        if let workdirPath = result.workdirPath {
-            appendLogLine("mount \(workdirPath) -> /workdir")
-        }
-        if let metadataJSON = result.metadataJSON {
-            appendLogBlock("metadata", prettyJSON(metadataJSON))
-        }
-        if let metadataError = result.metadataError {
-            appendLogLine("error: Metadata: \(metadataError)")
-        }
-        if let sessionError = result.sessionError {
-            if sessionError == CPSLDebugMessages.timedOutRestart {
-                terminalError = sessionError
+        promptText = ""
+        isFileBrowserOpen = false
+        if input.hasPrefix("!") {
+            let command = String(input.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !command.isEmpty else {
+                appendErrorMessage(title: "bash", body: "Enter a command after !")
+                return
             }
-            appendLogLine("error: Session init: \(sessionError)")
+            runCommand(command)
             return
         }
 
-        sessionReady = true
-        appendLogLine("Session ready")
-        appendPrompt()
+        messages.append(CPSLChatMessage(role: .user, title: nil, body: input))
     }
 
-    func handleTerminalTextChange(_ newText: String) {
-        guard canEdit else {
-            return
-        }
+    func toggleFileBrowser() {
+        isFileBrowserOpen.toggle()
 
-        let lockedPrefix = (terminalText as NSString).substring(
-            to: min(editableStartUTF16, (terminalText as NSString).length)
-        )
-        guard newText.hasPrefix(lockedPrefix) else {
-            return
-        }
-
-        terminalText = newText
-    }
-
-    func handleReturnKey() {
-        guard canEdit else {
-            return
-        }
-
-        if currentInput().hasSuffix("\\") {
-            removeTrailingBackslash()
-            terminalText.append("\n")
-            return
-        }
-
-        runCurrentCommand()
-    }
-
-    func clearTerminal() {
-        terminalText = ""
-        editableStartUTF16 = 0
-        if canEdit {
-            appendPrompt()
+        if isFileBrowserOpen && browserEntries.isEmpty && loadingFilePaths.isEmpty {
+            loadBrowserPath("/")
         }
     }
 
-    private func runCurrentCommand() {
-        let input = currentInput()
-        terminalText.append("\n")
-        editableStartUTF16 = terminalTextUTF16Length
+    func loadBrowserPath(_ path: String) {
+        let normalized = normalizedPath(path)
+        browserPath = normalized
+        fileBrowserError = nil
+        expandedFilePaths.removeAll()
+        childEntriesByPath.removeAll()
 
-        guard !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            appendPrompt()
+        Task {
+            await loadDirectory(normalized, childOf: nil)
+        }
+    }
+
+    func navigateToParentDirectory() {
+        loadBrowserPath(parentPath(of: browserPath))
+    }
+
+    func toggleExpansion(for entry: CPSLFileEntry) {
+        guard entry.isDirectory else {
             return
         }
 
+        if expandedFilePaths.contains(entry.path) {
+            expandedFilePaths.remove(entry.path)
+            return
+        }
+
+        expandedFilePaths.insert(entry.path)
+        if childEntriesByPath[entry.path] == nil {
+            Task {
+                await loadDirectory(entry.path, childOf: entry.path)
+            }
+        }
+    }
+
+    func openFileEntry(_ entry: CPSLFileEntry) {
+        if entry.isDirectory {
+            loadBrowserPath(entry.path)
+        } else {
+            showComingSoon("coming soon")
+        }
+    }
+
+    func children(for path: String) -> [CPSLFileEntry] {
+        childEntriesByPath[path] ?? []
+    }
+
+    func isExpanded(_ entry: CPSLFileEntry) -> Bool {
+        expandedFilePaths.contains(entry.path)
+    }
+
+    func isLoading(_ path: String) -> Bool {
+        loadingFilePaths.contains(path)
+    }
+
+    private func runCommand(_ command: String) {
+        messages.append(CPSLChatMessage(role: .command, title: "bash", body: "!\(command)"))
         isRunning = true
 
         Task {
-            let result = await service.evaluate(input)
-            applyEvalResult(result)
+            let result = await service.evaluate(command)
+            applyCommandResult(result)
             isRunning = false
-            if terminalError == nil {
-                appendPrompt()
-            }
         }
     }
 
-    private func currentInput() -> String {
-        let text = terminalText as NSString
-        guard editableStartUTF16 < text.length else {
-            return ""
-        }
-        return text.substring(from: editableStartUTF16)
-    }
-
-    private func removeTrailingBackslash() {
-        let text = terminalText as NSString
-        guard text.length > editableStartUTF16 else {
-            return
-        }
-
-        let mutable = NSMutableString(string: terminalText)
-        mutable.deleteCharacters(in: NSRange(location: text.length - 1, length: 1))
-        terminalText = mutable as String
-    }
-
-    private func applyEvalResult(_ result: CPSLEvalServiceResult) {
-        if let cwd = result.cwd, !cwd.isEmpty {
-            currentCWD = cwd
-        }
-        if result.errorCode == "timeout" {
-            terminalError = CPSLDebugMessages.timedOutRestart
-        }
-
+    private func applyCommandResult(_ result: CPSLEvalServiceResult) {
         if let ffiError = result.ffiError {
-            appendLogLine("error: \(ffiError)")
+            appendErrorMessage(title: "CPSL", body: ffiError)
             return
         }
 
-        for warning in result.warnings {
-            appendLogLine("warn: \(warning)")
-        }
-        if !result.stdout.isEmpty {
-            terminalText.append(result.stdout)
-        }
-        if !result.stderr.isEmpty {
-            terminalText.append(result.stderr)
-        }
+        var sections: [String] = []
+        sections.append(contentsOf: result.warnings.map { "warning: \($0)" })
+        appendSection("stdout", result.stdout, to: &sections)
+        appendSection("stderr", result.stderr, to: &sections)
+
         if let errorMessage = result.errorMessage {
-            let prefix = result.errorCode.map { "error[\($0)]: " } ?? "error: "
-            appendLogLine("\(prefix)\(errorMessage)")
+            let prefix = result.errorCode.map { "error[\($0)]" } ?? "error"
+            sections.append("\(prefix): \(errorMessage)")
         }
         if result.errorCode == "invalid_response", let rawJSON = result.rawJSON {
-            appendLogBlock("raw", rawJSON)
+            sections.append("raw:\n\(rawJSON)")
+        }
+        if sections.isEmpty {
+            let exit = result.exitCode.map { "exit \($0)" } ?? "done"
+            sections.append(exit)
         }
 
+        let role: CPSLChatRole = result.ok == false || result.errorMessage != nil ? .error : .output
+        messages.append(CPSLChatMessage(role: role, title: "CPSL", body: sections.joined(separator: "\n\n")))
     }
 
-    private func appendPrompt() {
-        ensureTerminalEndsWithNewline()
-        terminalText.append("sandbox:\(currentCWD)$ ")
-        editableStartUTF16 = terminalTextUTF16Length
-    }
-
-    private func appendLogLine(_ line: String) {
-        ensureTerminalEndsWithNewline()
-        terminalText.append(line)
-        terminalText.append("\n")
-        editableStartUTF16 = terminalTextUTF16Length
-    }
-
-    private func appendLogBlock(_ label: String, _ block: String) {
-        ensureTerminalEndsWithNewline()
-        terminalText.append("\(label):\n")
-        terminalText.append(block)
-        ensureTerminalEndsWithNewline()
-        editableStartUTF16 = terminalTextUTF16Length
-    }
-
-    private func ensureTerminalEndsWithNewline() {
-        if !terminalText.isEmpty && !terminalText.hasSuffix("\n") {
-            terminalText.append("\n")
+    private func appendSection(_ label: String, _ text: String, to sections: inout [String]) {
+        let trimmed = text.trimmingCharacters(in: .newlines)
+        guard !trimmed.isEmpty else {
+            return
         }
+        sections.append("\(label):\n\(trimmed)")
     }
 
-    private var terminalTextUTF16Length: Int {
-        (terminalText as NSString).length
-    }
-
-    private func prettyJSON(_ raw: String) -> String {
-        guard
-            let data = raw.data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data),
-            JSONSerialization.isValidJSONObject(object),
-            let prettyData = try? JSONSerialization.data(
-                withJSONObject: object,
-                options: [.prettyPrinted, .sortedKeys]
-            ),
-            let pretty = String(data: prettyData, encoding: .utf8)
-        else {
-            return raw
+    private func loadDirectory(_ path: String, childOf parent: String?) async {
+        guard !loadingFilePaths.contains(path) else {
+            return
         }
-        return pretty
-    }
-}
-
-#if os(macOS)
-private struct CPSLTerminalTextArea: NSViewRepresentable {
-    @Binding var text: String
-    let editableStartUTF16: Int
-    let isEditable: Bool
-    let onReturnKey: () -> Void
-    let onClear: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = false
-        scrollView.drawsBackground = false
-
-        let textView = CPSLTerminalNSTextView()
-        textView.terminalDelegate = context.coordinator
-        textView.delegate = context.coordinator
-        textView.string = text
-        textView.isRichText = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.isEditable = isEditable
-        textView.isSelectable = true
-        textView.allowsUndo = true
-        textView.drawsBackground = false
-        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.textColor = .textColor
-        textView.backgroundColor = .clear
-        textView.insertionPointColor = .textColor
-        textView.textContainerInset = NSSize(width: 14, height: 14)
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: scrollView.contentSize.width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        textView.minSize = NSSize(width: 0, height: 0)
-        textView.maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-
-        scrollView.documentView = textView
-
-        DispatchQueue.main.async {
-            textView.window?.makeFirstResponder(textView)
-            textView.scrollToEndOfDocument(nil)
+        loadingFilePaths.insert(path)
+        defer {
+            loadingFilePaths.remove(path)
         }
 
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        context.coordinator.parent = self
-        guard let textView = scrollView.documentView as? CPSLTerminalNSTextView else {
+        let listing = await service.listDirectory(path)
+        if let error = listing.error {
+            applyDirectoryLoadFailure(error, path: path, childOf: parent)
             return
         }
 
-        textView.isEditable = isEditable
-        if textView.string != text {
-            textView.string = text
-            textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-            textView.scrollToEndOfDocument(nil)
+        if let parent {
+            childEntriesByPath[parent] = listing.entries
+        } else {
+            browserEntries = listing.entries
         }
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate, CPSLTerminalNSTextViewDelegate {
-        var parent: CPSLTerminalTextArea
+    private func applyDirectoryLoadFailure(_ message: String, path: String, childOf parent: String?) {
+        if let parent {
+            childEntriesByPath[parent] = []
+        } else {
+            browserEntries = []
+        }
+        fileBrowserError = "\(path): \(message)"
+    }
 
-        init(_ parent: CPSLTerminalTextArea) {
-            self.parent = parent
+    private func appendErrorMessage(title: String?, body: String) {
+        messages.append(CPSLChatMessage(role: .error, title: title, body: body))
+    }
+
+    private func normalizedPath(_ path: String) -> String {
+        var normalized = path.isEmpty ? "/" : path
+        if !normalized.hasPrefix("/") {
+            normalized = "/\(normalized)"
+        }
+        while normalized.count > 1 && normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
+    }
+
+    private func parentPath(of path: String) -> String {
+        let normalized = normalizedPath(path)
+        guard normalized != "/" else {
+            return "/"
         }
 
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else {
-                return
+        let components = normalized.split(separator: "/")
+        guard components.count > 1 else {
+            return "/"
+        }
+        return "/" + components.dropLast().joined(separator: "/")
+    }
+
+}
+
+private struct CPSLHeaderView: View {
+    var body: some View {
+        HStack(spacing: CPSLTheme.medium) {
+            HStack(spacing: CPSLTheme.small) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(CPSLTheme.mauve)
+                Text("Herm")
+                    .font(CPSLTheme.headerFont)
             }
-            parent.text = textView.string
-        }
+            .foregroundStyle(CPSLTheme.text)
 
-        func textView(
-            _ textView: NSTextView,
-            shouldChangeTextIn affectedCharRange: NSRange,
-            replacementString: String?
-        ) -> Bool {
-            parent.isEditable && affectedCharRange.location >= parent.editableStartUTF16
+            Spacer()
         }
-
-        func terminalTextViewDidRequestReturn(_ textView: NSTextView) {
-            textView.setSelectedRange(NSRange(location: (textView.string as NSString).length, length: 0))
-            parent.onReturnKey()
-        }
-
-        func terminalTextViewDidRequestClear(_ textView: NSTextView) {
-            parent.onClear()
-        }
+        .padding(.horizontal, CPSLTheme.large)
+        .padding(.top, CPSLTheme.large)
+        .padding(.bottom, CPSLTheme.medium)
     }
 }
 
-private protocol CPSLTerminalNSTextViewDelegate: AnyObject {
-    func terminalTextViewDidRequestReturn(_ textView: NSTextView)
-    func terminalTextViewDidRequestClear(_ textView: NSTextView)
-}
+private struct CPSLChatTimelineView: View {
+    @ObservedObject var model: CPSLChatModel
 
-private final class CPSLTerminalNSTextView: NSTextView {
-    weak var terminalDelegate: CPSLTerminalNSTextViewDelegate?
-
-    override func keyDown(with event: NSEvent) {
-        if event.isCommandKey("k") {
-            terminalDelegate?.terminalTextViewDidRequestClear(self)
-            return
-        }
-
-        if event.isPlainReturn {
-            terminalDelegate?.terminalTextViewDidRequestReturn(self)
-            return
-        }
-
-        super.keyDown(with: event)
-    }
-}
-
-private extension NSEvent {
-    var isPlainReturn: Bool {
-        let flags = modifierFlags
-            .intersection(.deviceIndependentFlagsMask)
-            .subtracting([.capsLock, .numericPad])
-        return flags.isEmpty && (keyCode == 36 || keyCode == 76)
-    }
-
-    func isCommandKey(_ key: String) -> Bool {
-        let flags = modifierFlags
-            .intersection(.deviceIndependentFlagsMask)
-            .subtracting([.capsLock])
-        return flags == .command && charactersIgnoringModifiers?.lowercased() == key
-    }
-}
-#elseif canImport(UIKit)
-private struct CPSLTerminalTextArea: UIViewRepresentable {
-    @Binding var text: String
-    let editableStartUTF16: Int
-    let isEditable: Bool
-    let onReturnKey: () -> Void
-    let onClear: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    func makeUIView(context: Context) -> CPSLTerminalUITextView {
-        let textView = CPSLTerminalUITextView()
-        textView.delegate = context.coordinator
-        textView.onClear = onClear
-        textView.text = text
-        textView.isEditable = isEditable
-        textView.isSelectable = true
-        textView.autocorrectionType = .no
-        textView.autocapitalizationType = .none
-        textView.spellCheckingType = .no
-        textView.smartDashesType = .no
-        textView.smartQuotesType = .no
-        textView.smartInsertDeleteType = .no
-        textView.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .regular)
-        textView.textColor = .label
-        textView.backgroundColor = .clear
-        textView.tintColor = .label
-        textView.alwaysBounceVertical = true
-        textView.keyboardDismissMode = .interactive
-        textView.textContainerInset = UIEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
-        textView.selectedRange = NSRange(location: (text as NSString).length, length: 0)
-
-        DispatchQueue.main.async {
-            textView.becomeFirstResponder()
-        }
-
-        return textView
-    }
-
-    func updateUIView(_ textView: CPSLTerminalUITextView, context: Context) {
-        context.coordinator.parent = self
-        textView.onClear = onClear
-        textView.isEditable = isEditable
-        if textView.text != text {
-            textView.text = text
-            textView.selectedRange = NSRange(location: (text as NSString).length, length: 0)
-            textView.scrollRangeToVisible(textView.selectedRange)
-        }
-    }
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: CPSLTerminalTextArea
-
-        init(_ parent: CPSLTerminalTextArea) {
-            self.parent = parent
-        }
-
-        func textViewDidChange(_ textView: UITextView) {
-            parent.text = textView.text
-        }
-
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText text: String
-        ) -> Bool {
-            if text == "\n" {
-                textView.selectedRange = NSRange(location: (textView.text as NSString).length, length: 0)
-                parent.onReturnKey()
-                return false
+    var body: some View {
+        ZStack {
+            if model.messages.isEmpty {
+                CPSLEmptyChatView()
             }
-            return parent.isEditable && range.location >= parent.editableStartUTF16
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: CPSLTheme.medium) {
+                        ForEach(model.messages) { message in
+                            CPSLChatBubbleView(message: message)
+                                .id(message.id)
+                        }
+                    }
+                    .padding(.horizontal, CPSLTheme.large)
+                    .padding(.vertical, CPSLTheme.medium)
+                }
+                .opacity(model.messages.isEmpty ? 0 : 1)
+                .onChange(of: model.messages.count) { _ in
+                    guard let lastID = model.messages.last?.id else {
+                        return
+                    }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(lastID, anchor: .bottom)
+                    }
+                }
+            }
         }
     }
 }
 
-private final class CPSLTerminalUITextView: UITextView {
-    var onClear: (() -> Void)?
+private struct CPSLEmptyChatView: View {
+    var body: some View {
+        VStack(spacing: CPSLTheme.medium) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 56, weight: .light))
+                .foregroundStyle(CPSLTheme.mauve.opacity(0.30))
 
-    override var keyCommands: [UIKeyCommand]? {
-        [
-            UIKeyCommand(
-                input: "k",
-                modifierFlags: .command,
-                action: #selector(clearTerminal)
-            )
-        ]
-    }
-
-    @objc private func clearTerminal() {
-        onClear?()
+            Text("Herm")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(CPSLTheme.mutedText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
-#endif
+
+private struct CPSLChatBubbleView: View {
+    let message: CPSLChatMessage
+
+    var body: some View {
+        HStack {
+            if message.role.isTrailingAligned {
+                Spacer(minLength: CPSLTheme.large * 2)
+            }
+
+            VStack(alignment: .leading, spacing: CPSLTheme.small) {
+                if let title = message.title {
+                    Text(title)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(message.role.foreground.opacity(0.72))
+                }
+                Text(message.body)
+                    .font(message.role.usesMonospaceBody ? .system(.callout, design: .monospaced) : .callout)
+                    .foregroundStyle(message.role.foreground)
+                    .textSelection(.enabled)
+            }
+            .padding(CPSLTheme.medium)
+            .background(message.role.fill)
+            .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            .frame(maxWidth: 720, alignment: message.role.isTrailingAligned ? .trailing : .leading)
+
+            if !message.role.isTrailingAligned {
+                Spacer(minLength: CPSLTheme.large * 2)
+            }
+        }
+    }
+}
+
+private struct CPSLFileBrowserView: View {
+    @ObservedObject var model: CPSLChatModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: CPSLTheme.medium) {
+                Button {
+                    model.navigateToParentDirectory()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.browserPath == "/")
+                .foregroundStyle(model.browserPath == "/" ? CPSLTheme.mutedText : CPSLTheme.text)
+
+                HStack(spacing: CPSLTheme.small) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(CPSLTheme.mauve)
+                    Text(model.browserPath)
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(CPSLTheme.text)
+                }
+                .padding(.horizontal, CPSLTheme.medium)
+                .padding(.vertical, CPSLTheme.small)
+                .background(CPSLTheme.elevated)
+                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .lineLimit(1)
+
+                Text("\(model.browserEntries.count)")
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(CPSLTheme.mutedText)
+            }
+            .padding(CPSLTheme.medium)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if let error = model.fileBrowserError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(CPSLTheme.secondaryText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(CPSLTheme.medium)
+                    }
+
+                    if model.isLoading(model.browserPath) && model.browserEntries.isEmpty {
+                        ProgressView()
+                            .padding(.top, CPSLTheme.large)
+                    } else if model.browserEntries.isEmpty && model.fileBrowserError == nil {
+                        Text("Empty")
+                            .font(.callout)
+                            .foregroundStyle(CPSLTheme.mutedText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, CPSLTheme.large)
+                    } else {
+                        CPSLFileRowsView(model: model, entries: model.browserEntries, depth: 0)
+                    }
+                }
+                .padding(.horizontal, CPSLTheme.medium)
+                .padding(.bottom, CPSLTheme.medium)
+            }
+        }
+        .background(CPSLTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
+        .padding(.horizontal, CPSLTheme.large)
+        .padding(.bottom, CPSLTheme.medium)
+    }
+}
+
+private struct CPSLFileRowsView: View {
+    @ObservedObject var model: CPSLChatModel
+    let entries: [CPSLFileEntry]
+    let depth: Int
+
+    var body: some View {
+        ForEach(entries) { entry in
+            CPSLFileRowView(model: model, entry: entry, depth: depth)
+
+            if entry.isDirectory && model.isExpanded(entry) {
+                if model.isLoading(entry.path) {
+                    HStack {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading")
+                            .font(.caption)
+                            .foregroundStyle(CPSLTheme.mutedText)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, CGFloat(depth + 1) * CPSLTheme.fileIndent + 28)
+                    .padding(.vertical, CPSLTheme.small)
+                } else {
+                    CPSLFileRowsView(
+                        model: model,
+                        entries: model.children(for: entry.path),
+                        depth: depth + 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct CPSLFileRowView: View {
+    @ObservedObject var model: CPSLChatModel
+    let entry: CPSLFileEntry
+    let depth: Int
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            disclosureControl
+
+            Button {
+                model.openFileEntry(entry)
+            } label: {
+                HStack(spacing: CPSLTheme.medium) {
+                    Image(systemName: entry.isDirectory ? "folder.fill" : "doc.text")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(entry.isDirectory ? CPSLTheme.mauve : CPSLTheme.secondaryText)
+                        .frame(width: 20)
+
+                    Text(entry.name)
+                        .font(CPSLTheme.rowTitleFont)
+                        .lineLimit(1)
+                        .foregroundStyle(CPSLTheme.text)
+
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+        }
+        .padding(.leading, CGFloat(depth) * CPSLTheme.fileIndent)
+        .padding(.horizontal, CPSLTheme.small)
+        .padding(.vertical, CPSLTheme.small)
+        .background(CPSLTheme.card.opacity(depth == 0 ? 1 : 0.52))
+        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
+        .padding(.bottom, 1)
+    }
+
+    @ViewBuilder
+    private var disclosureControl: some View {
+        if entry.isDirectory {
+            Button {
+                model.toggleExpansion(for: entry)
+            } label: {
+                Image(systemName: model.isExpanded(entry) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 24, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(CPSLTheme.secondaryText)
+        } else {
+            Color.clear.frame(width: 24, height: 28)
+        }
+    }
+}
+
+private struct CPSLToolStripView: View {
+    @ObservedObject var model: CPSLChatModel
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: CPSLTheme.medium) {
+                Button {
+                    model.toggleFileBrowser()
+                } label: {
+                    HStack(spacing: CPSLTheme.small) {
+                        Image(systemName: "folder.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Files")
+                            .font(CPSLTheme.controlFont)
+                    }
+                    .padding(.horizontal, CPSLTheme.medium)
+                    .frame(height: CPSLTheme.controlSize)
+                    .background(model.isFileBrowserOpen ? CPSLTheme.controlPressed : CPSLTheme.card)
+                    .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CPSLTheme.text)
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+
+                CPSLDisabledToolIcon(systemName: "envelope.fill")
+                CPSLDisabledToolIcon(systemName: "calendar")
+            }
+            .padding(.horizontal, CPSLTheme.large)
+        }
+        .padding(.bottom, CPSLTheme.medium)
+    }
+}
+
+private struct CPSLDisabledToolIcon: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(CPSLTheme.mutedText)
+            .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+            .background(CPSLTheme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            .opacity(0.62)
+    }
+}
+
+private struct CPSLPromptComposerView: View {
+    @ObservedObject var model: CPSLChatModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.medium) {
+            TextField("Ask Anything", text: $model.promptText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .submitLabel(.send)
+                .lineLimit(1...4)
+                .font(CPSLTheme.promptFont)
+                .foregroundStyle(CPSLTheme.text)
+                .tint(CPSLTheme.text)
+                .disabled(model.isRunning)
+                .onSubmit {
+                    model.submitPrompt()
+                }
+
+            HStack(spacing: CPSLTheme.medium) {
+                Button {
+                    model.showComingSoon("coming soon")
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 18, weight: .medium))
+                        .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CPSLTheme.text)
+                .background(CPSLTheme.elevated)
+                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+
+                Spacer()
+
+                Button {
+                    model.showComingSoon("coming soon")
+                } label: {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 15, weight: .medium))
+                        .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CPSLTheme.text)
+                .background(CPSLTheme.elevated)
+                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+
+                Button {
+                    model.showComingSoon("coming soon")
+                } label: {
+                    HStack(spacing: CPSLTheme.small) {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 15, weight: .medium))
+                        Text("Speak")
+                            .font(CPSLTheme.controlFont)
+                    }
+                    .padding(.horizontal, CPSLTheme.medium)
+                    .frame(height: CPSLTheme.controlSize)
+                    .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(CPSLTheme.background)
+                .background(CPSLTheme.text)
+                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            }
+        }
+        .padding(CPSLTheme.medium)
+        .background(CPSLTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
+        .padding(.horizontal, CPSLTheme.large)
+        .padding(.bottom, CPSLTheme.large)
+    }
+}
 
 private actor CPSLDebugService {
-    private nonisolated static let evalTimeoutMilliseconds: UInt64 = 10_000
-    private nonisolated static let poisonState = CPSLProcessPoisonState.shared
+    private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
 
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
@@ -626,50 +810,40 @@ private actor CPSLDebugService {
         }
     }
 
-    func bootstrap() -> CPSLBootstrapResult {
-        guard !Self.poisonState.isPoisoned() else {
-            return (
-                abiVersion: 0,
-                metadataJSON: nil,
-                metadataError: nil,
-                rootPath: nil,
-                workdirPath: nil,
-                sessionError: CPSLDebugMessages.timedOutRestart
-            )
-        }
-
-        let abiVersion = cpsl_abi_version()
-        let metadata = loadMetadataJSON()
-
+    func listDirectory(_ virtualPath: String) -> CPSLDirectoryListing {
         do {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
-            let sessionError = initializeSessionIfNeeded(sandboxURLs: sandboxURLs)
-            return (
-                abiVersion: abiVersion,
-                metadataJSON: metadata.json,
-                metadataError: metadata.error,
-                rootPath: sandboxURLs.root.resolvingSymlinksInPath().path,
-                workdirPath: sandboxURLs.workdir.resolvingSymlinksInPath().path,
-                sessionError: sessionError
+            let hostURL = hostURL(forVirtualPath: virtualPath, sandboxURLs: sandboxURLs)
+
+            let fileManager = FileManager.default
+            let urls = try fileManager.contentsOfDirectory(
+                at: hostURL,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: []
             )
+            let normalizedPath = Self.normalizedVirtualPath(virtualPath)
+            let entries = try urls.map { url in
+                let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+                return CPSLFileEntry(
+                    name: url.lastPathComponent,
+                    path: Self.virtualChildPath(parent: normalizedPath, child: url.lastPathComponent),
+                    isDirectory: values.isDirectory == true
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.isDirectory != rhs.isDirectory {
+                    return lhs.isDirectory
+                }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            return CPSLDirectoryListing(entries: entries, error: nil)
         } catch {
-            return (
-                abiVersion: abiVersion,
-                metadataJSON: metadata.json,
-                metadataError: metadata.error,
-                rootPath: nil,
-                workdirPath: nil,
-                sessionError: "Workspace setup failed: \(error.localizedDescription)"
-            )
+            return CPSLDirectoryListing(entries: [], error: error.localizedDescription)
         }
     }
 
     func evaluate(_ command: String) async -> CPSLEvalServiceResult {
-        guard !Self.poisonState.isPoisoned() else {
-            return Self.poisonedFailure()
-        }
-
         let sandboxURLs: CPSLSandboxURLs
         do {
             sandboxURLs = try ensureSandboxURLs()
@@ -708,21 +882,60 @@ private actor CPSLDebugService {
             return result
         case .timedOut:
             if session?.id == activeSession.id {
-                // cpsl_eval may still be blocked; abandon and intentionally leak this debug session.
+                // cpsl_eval may still be blocked; abandon and intentionally leak this session.
                 session = nil
+            }
+            if evaluatingSessionID == activeSession.id {
+                evaluatingSessionID = nil
             }
             return Self.timeoutFailure()
         }
     }
 
-    private func loadMetadataJSON() -> (json: String?, error: String?) {
-        guard let pointer = cpsl_backend_metadata_json() else {
-            return (nil, Self.lastErrorMessage(fallback: "cpsl_backend_metadata_json returned NULL"))
+    private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) -> URL {
+        let normalized = Self.normalizedVirtualPath(virtualPath)
+        if normalized == "/workdir" || normalized.hasPrefix("/workdir/") {
+            return Self.appendingVirtualPath(
+                normalized.dropFirst("/workdir".count),
+                to: sandboxURLs.workdir
+            )
         }
-        defer {
-            cpsl_string_free(pointer)
+        return Self.appendingVirtualPath(normalized.dropFirst(), to: sandboxURLs.root)
+    }
+
+    private nonisolated static func normalizedVirtualPath(_ path: String) -> String {
+        var normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            normalized = "/"
         }
-        return (String(cString: pointer), nil)
+        if !normalized.hasPrefix("/") {
+            normalized = "/\(normalized)"
+        }
+        var components: [String] = []
+        for component in normalized.split(separator: "/") {
+            let pathComponent = String(component)
+            switch pathComponent {
+            case ".", "":
+                continue
+            case "..":
+                _ = components.popLast()
+            default:
+                components.append(pathComponent)
+            }
+        }
+        return components.isEmpty ? "/" : "/\(components.joined(separator: "/"))"
+    }
+
+    private nonisolated static func appendingVirtualPath<T: StringProtocol>(_ relativePath: T, to baseURL: URL) -> URL {
+        var url = baseURL
+        for component in relativePath.split(separator: "/") where !component.isEmpty {
+            url.appendPathComponent(String(component))
+        }
+        return url
+    }
+
+    private nonisolated static func virtualChildPath(parent: String, child: String) -> String {
+        parent == "/" ? "/\(child)" : "\(parent)/\(child)"
     }
 
     private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) -> String? {
@@ -781,7 +994,8 @@ private actor CPSLDebugService {
             "root",
             "tmp",
             "usr",
-            "var"
+            "var",
+            "workdir"
         ]
 
         for name in directoryNames {
@@ -866,9 +1080,7 @@ private actor CPSLDebugService {
             DispatchQueue.global().asyncAfter(
                 deadline: .now() + .milliseconds(Int(evalTimeoutMilliseconds))
             ) {
-                race.resume(.timedOut, continuation: continuation) {
-                    poisonState.poison()
-                }
+                race.resume(.timedOut, continuation: continuation)
             }
         }
     }
@@ -934,23 +1146,7 @@ private actor CPSLDebugService {
             ok: false,
             cwd: nil,
             errorCode: "timeout",
-            errorMessage: "Command timed out after \(evalTimeoutMilliseconds / 1_000)s. "
-                + CPSLDebugMessages.timedOutRestart,
-            warnings: [],
-            ffiError: nil
-        )
-    }
-
-    private nonisolated static func poisonedFailure() -> CPSLEvalServiceResult {
-        (
-            rawJSON: nil,
-            stdout: "",
-            stderr: "",
-            exitCode: nil,
-            ok: false,
-            cwd: nil,
-            errorCode: "timeout",
-            errorMessage: CPSLDebugMessages.timedOutRestart,
+            errorMessage: "Command timed out after \(evalTimeoutMilliseconds / 1_000)s. You can try again.",
             warnings: [],
             ffiError: nil
         )
@@ -1009,37 +1205,3 @@ private actor CPSLDebugService {
         return []
     }
 }
-
-private extension View {
-    func cpslDebugWindowFrame() -> some View {
-        #if os(macOS)
-        frame(minWidth: 720, minHeight: 520)
-        #else
-        frame(maxWidth: .infinity, maxHeight: .infinity)
-        #endif
-    }
-
-    func cpslTerminalBackground() -> some View {
-        #if os(macOS)
-        background(Color(NSColor.cpslTerminalBackground))
-        #elseif canImport(UIKit)
-        background(Color(UIColor.cpslTerminalBackground))
-        #else
-        background(Color.clear)
-        #endif
-    }
-}
-
-#if os(macOS)
-private extension NSColor {
-    static var cpslTerminalBackground: NSColor {
-        NSColor.textBackgroundColor
-    }
-}
-#elseif canImport(UIKit)
-private extension UIColor {
-    static var cpslTerminalBackground: UIColor {
-        UIColor.systemBackground
-    }
-}
-#endif
