@@ -78,6 +78,24 @@ Examples:
 EOF
 }
 
+xcframework_supports_platform() {
+	info=$1
+	platform=$2
+
+	[ -f "$info" ] || return 1
+	awk -v platform="$platform" '
+		/<key>SupportedPlatform<\/key>/ {
+			getline
+			if ($0 ~ "<string>" platform "</string>") {
+				found = 1
+			}
+		}
+		END {
+			exit found ? 0 : 1
+		}
+	' "$info"
+}
+
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 
@@ -135,6 +153,21 @@ while [ "$#" -gt 0 ]; do
 	esac
 	shift
 done
+
+cpsl_has_macos=0
+for platform in $cpsl_platforms; do
+	case "$platform" in
+	ios)
+		;;
+	macos)
+		cpsl_has_macos=1
+		;;
+	*)
+		die "unsupported APPLE_PLATFORMS entry for macOS app build: $platform"
+		;;
+	esac
+done
+[ "$cpsl_has_macos" -eq 1 ] || die "dev-apple-macos.sh requires CPSL macOS slices; unset APPLE_PLATFORMS or include macos"
 
 [ "$(uname -s)" = Darwin ] || die "run this from a macOS terminal, not Linux or a container"
 
@@ -206,7 +239,15 @@ if [ -z "$cpsl_macos_targets" ]; then
 fi
 
 cpsl_patches_newer=0
+cpsl_platform_missing=0
 xcframework_info="$xcframework_path/Info.plist"
+if [ -d "$xcframework_path" ]; then
+	for platform in $cpsl_platforms; do
+		if ! xcframework_supports_platform "$xcframework_info" "$platform"; then
+			cpsl_platform_missing=1
+		fi
+	done
+fi
 if [ -d "$xcframework_path" ] && [ -d "$root/scripts/cpsl-patches" ]; then
 	if [ ! -f "$xcframework_info" ]; then
 		cpsl_patches_newer=1
@@ -217,7 +258,8 @@ fi
 
 if [ "$cpsl_mode" = skip ]; then
 	[ -d "$xcframework_path" ] || die "missing $xcframework_path; rerun without --skip-cpsl"
-elif [ "$cpsl_mode" = rebuild ] || [ ! -d "$xcframework_path" ] || [ "$cpsl_patches_newer" -eq 1 ]; then
+	[ "$cpsl_platform_missing" -eq 0 ] || die "$xcframework_path does not contain required platform(s): $cpsl_platforms; rerun without --skip-cpsl"
+elif [ "$cpsl_mode" = rebuild ] || [ ! -d "$xcframework_path" ] || [ "$cpsl_patches_newer" -eq 1 ] || [ "$cpsl_platform_missing" -eq 1 ]; then
 	printf 'Building CPSL Apple XCFramework for: %s\n' "$cpsl_platforms"
 	APPLE_PLATFORMS="$cpsl_platforms" \
 		MACOS_TARGETS="$cpsl_macos_targets" \
