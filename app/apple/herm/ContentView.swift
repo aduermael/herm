@@ -82,6 +82,11 @@ private struct CPSLSandboxURLs {
 private struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
+    @State private var bottomChromeHeight = CPSLTheme.bottomChromeInset
+
+    private var contentBottomInset: CGFloat {
+        bottomChromeHeight + CPSLTheme.medium
+    }
 
     var body: some View {
         ZStack {
@@ -92,13 +97,13 @@ private struct CPSLChatScreen: View {
                     CPSLFileBrowserView(
                         model: model,
                         topInset: CPSLTheme.topChromeInset,
-                        bottomInset: CPSLTheme.bottomChromeInset
+                        bottomInset: contentBottomInset
                     )
                 } else {
                     CPSLChatTimelineView(
                         model: model,
                         topInset: CPSLTheme.topChromeInset,
-                        bottomInset: CPSLTheme.bottomChromeInset
+                        bottomInset: contentBottomInset
                     )
                 }
             }
@@ -128,23 +133,17 @@ private struct CPSLChatScreen: View {
                     }
 
                 Spacer()
-
-                VStack(spacing: 0) {
-                    CPSLToolStripView(model: model)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            promptDismissRequest += 1
-                        }
-
-                    CPSLPromptComposerView(
-                        model: model,
-                        dismissKeyboardRequest: promptDismissRequest
-                    ) {
-                        promptDismissRequest += 1
-                    }
-                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomChrome
+        }
+        .onPreferenceChange(CPSLBottomChromeHeightKey.self) { height in
+            guard height > 0, abs(height - bottomChromeHeight) > 0.5 else {
+                return
+            }
+            bottomChromeHeight = height
         }
         .alert(
             "Coming soon",
@@ -160,6 +159,31 @@ private struct CPSLChatScreen: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(model.comingSoonMessage ?? "Coming soon")
+        }
+    }
+
+    private var bottomChrome: some View {
+        VStack(spacing: 0) {
+            CPSLToolStripView(model: model)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    promptDismissRequest += 1
+                }
+
+            CPSLPromptComposerView(
+                model: model,
+                dismissKeyboardRequest: promptDismissRequest
+            ) {
+                promptDismissRequest += 1
+            }
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: CPSLBottomChromeHeightKey.self,
+                    value: proxy.size.height
+                )
+            }
         }
     }
 }
@@ -186,7 +210,6 @@ private enum CPSLTheme {
     static let rowRadius: CGFloat = 6
 
     static let controlSize: CGFloat = 38
-    static let fileIndent = Self.small + Self.medium
     static let contentHorizontalInset = Self.large + Self.small
     static let chromeHorizontalInset = Self.large
     static let topChromeInset: CGFloat = 148
@@ -203,6 +226,14 @@ private enum CPSLTheme {
     static let monospacedBodyFont = Font.system(size: Self.normalTextSize, weight: .regular, design: .monospaced)
     static let controlFont = Font.system(size: 14, weight: .medium)
     static let rowTitleFont = Font.system(size: 13, weight: .regular)
+}
+
+private struct CPSLBottomChromeHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }
 
 private struct CPSLGlassSurface<S: Shape>: View {
@@ -382,6 +413,10 @@ private final class CPSLChatModel: ObservableObject {
         if isFileBrowserOpen && browserEntries.isEmpty && loadingFilePaths.isEmpty {
             loadBrowserPath("/")
         }
+    }
+
+    func closeFileBrowser() {
+        isFileBrowserOpen = false
     }
 
     func loadBrowserPath(_ path: String) {
@@ -617,6 +652,7 @@ private struct CPSLChatTimelineView: View {
     @ObservedObject var model: CPSLChatModel
     let topInset: CGFloat
     let bottomInset: CGFloat
+    private let bottomAnchorID = "conversation-bottom"
 
     var body: some View {
         ZStack {
@@ -631,30 +667,43 @@ private struct CPSLChatTimelineView: View {
                             CPSLChatBubbleView(message: message)
                                 .id(message.id)
                         }
+
+                        Color.clear
+                            .frame(height: bottomInset)
+                            .id(bottomAnchorID)
                     }
                     .padding(.horizontal, CPSLTheme.contentHorizontalInset)
                     .padding(.top, topInset)
-                    .padding(.bottom, bottomInset)
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .opacity(model.messages.isEmpty ? 0 : 1)
+                .onAppear {
+                    scrollToBottom(proxy, animated: false)
+                }
                 .onChange(of: model.messages.count) { _, _ in
-                    guard let lastID = model.messages.last?.id else {
-                        return
-                    }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
+                    scrollToBottom(proxy, animated: true)
                 }
                 .onChange(of: model.messages.last?.body) { _, _ in
-                    guard let lastID = model.messages.last?.id else {
-                        return
-                    }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(lastID, anchor: .bottom)
-                    }
+                    scrollToBottom(proxy, animated: true)
+                }
+                .onChange(of: bottomInset) { _, _ in
+                    scrollToBottom(proxy, animated: false)
                 }
             }
+        }
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        guard !model.messages.isEmpty else {
+            return
+        }
+
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            }
+        } else {
+            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
         }
     }
 }
@@ -761,86 +810,138 @@ private struct CPSLFileBrowserView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: CPSLTheme.medium) {
+            header
+            .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
+            .padding(.top, topInset)
+            .padding(.bottom, CPSLTheme.medium)
+
+            filePane
+                .padding(.horizontal, CPSLTheme.contentHorizontalInset)
+                .padding(.bottom, CPSLTheme.medium)
+        }
+        .padding(.bottom, bottomInset)
+    }
+
+    private var isAtRoot: Bool {
+        model.browserPath == "/"
+    }
+
+    private var header: some View {
+        HStack(spacing: CPSLTheme.medium) {
+            if !isAtRoot {
                 Button {
                     model.navigateToParentDirectory()
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 28, height: 28)
+                        .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(model.browserPath == "/")
-                .foregroundStyle(model.browserPath == "/" ? CPSLTheme.mutedText : CPSLTheme.text)
-
-                HStack(spacing: CPSLTheme.small) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(CPSLTheme.mauve)
-                    Text(model.browserPath)
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundStyle(CPSLTheme.text)
-                }
-                .padding(.horizontal, CPSLTheme.medium)
-                .padding(.vertical, CPSLTheme.small)
+                .foregroundStyle(CPSLTheme.text)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-                    tint: CPSLTheme.elevated.opacity(0.40),
+                    tint: CPSLTheme.background.opacity(0.36),
                     strokeOpacity: 0.06
                 )
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .lineLimit(1)
-
-                Text("\(model.browserEntries.count)")
-                    .font(.caption)
-                    .lineLimit(1)
-                    .foregroundStyle(CPSLTheme.mutedText)
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
             }
-            .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
-            .padding(.top, topInset)
-            .padding(.bottom, CPSLTheme.medium)
 
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    if let error = model.fileBrowserError {
-                        Text(error)
-                            .font(.caption)
-                            .foregroundStyle(CPSLTheme.secondaryText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(CPSLTheme.medium)
-                    }
+            pathBadge
 
-                    if model.isLoading(model.browserPath) && model.browserEntries.isEmpty {
-                        ProgressView()
-                            .padding(.top, CPSLTheme.large)
-                    } else if model.browserEntries.isEmpty && model.fileBrowserError == nil {
-                        Text("Empty")
-                            .font(.callout)
-                            .foregroundStyle(CPSLTheme.mutedText)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, CPSLTheme.large)
-                    } else {
-                        CPSLFileRowsView(model: model, entries: model.browserEntries, depth: 0)
-                    }
+            Button {
+                model.closeFileBrowser()
+            } label: {
+                HStack(spacing: CPSLTheme.small) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Close")
+                        .font(CPSLTheme.controlFont)
                 }
-                .padding(.horizontal, CPSLTheme.contentHorizontalInset)
-                .padding(.bottom, bottomInset)
+                .lineLimit(1)
+                .padding(.horizontal, CPSLTheme.medium)
+                .frame(height: CPSLTheme.controlSize)
+                .fixedSize(horizontal: true, vertical: false)
+                .cpslGlassBackground(
+                    in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
+                    tint: CPSLTheme.background.opacity(0.36),
+                    strokeOpacity: 0.06
+                )
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
             }
-            .scrollDismissesKeyboard(.interactively)
+            .buttonStyle(.plain)
+            .foregroundStyle(CPSLTheme.text)
+            .accessibilityLabel("Close Files")
         }
+    }
+
+    private var pathBadge: some View {
+        HStack(spacing: CPSLTheme.small) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(CPSLTheme.mauve)
+            Text(model.browserPath)
+                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .foregroundStyle(CPSLTheme.text)
+        }
+        .padding(.horizontal, CPSLTheme.medium)
+        .frame(height: CPSLTheme.controlSize)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
+            tint: CPSLTheme.elevated.opacity(0.40),
+            strokeOpacity: 0.06
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .lineLimit(1)
+    }
+
+    private var filePane: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                if let error = model.fileBrowserError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(CPSLTheme.secondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(CPSLTheme.medium)
+                }
+
+                if model.isLoading(model.browserPath) && model.browserEntries.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, CPSLTheme.large)
+                } else if model.browserEntries.isEmpty && model.fileBrowserError == nil {
+                    Text("Empty")
+                        .font(.callout)
+                        .foregroundStyle(CPSLTheme.mutedText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, CPSLTheme.large)
+                } else {
+                    CPSLFileRowsView(model: model, entries: model.browserEntries)
+                }
+            }
+            .padding(.vertical, CPSLTheme.small)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxHeight: .infinity)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+            tint: CPSLTheme.card.opacity(0.62),
+            strokeOpacity: 0.045
+        )
     }
 }
 
 private struct CPSLFileRowsView: View {
     @ObservedObject var model: CPSLChatModel
     let entries: [CPSLFileEntry]
-    let depth: Int
 
     var body: some View {
         ForEach(entries) { entry in
-            CPSLFileRowView(model: model, entry: entry, depth: depth)
+            CPSLFileRowView(model: model, entry: entry)
 
             if entry.isDirectory && model.isExpanded(entry) {
                 if model.isLoading(entry.path) {
@@ -852,13 +953,12 @@ private struct CPSLFileRowsView: View {
                             .foregroundStyle(CPSLTheme.mutedText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, CGFloat(depth + 1) * CPSLTheme.fileIndent + 28)
+                    .padding(.leading, 28)
                     .padding(.vertical, CPSLTheme.small)
                 } else {
                     CPSLFileRowsView(
                         model: model,
-                        entries: model.children(for: entry.path),
-                        depth: depth + 1
+                        entries: model.children(for: entry.path)
                     )
                 }
             }
@@ -869,7 +969,6 @@ private struct CPSLFileRowsView: View {
 private struct CPSLFileRowView: View {
     @ObservedObject var model: CPSLChatModel
     let entry: CPSLFileEntry
-    let depth: Int
 
     var body: some View {
         HStack(spacing: CPSLTheme.small) {
@@ -897,12 +996,9 @@ private struct CPSLFileRowView: View {
             .buttonStyle(.plain)
             .contentShape(Rectangle())
         }
-        .padding(.leading, CGFloat(depth) * CPSLTheme.fileIndent)
         .padding(.horizontal, CPSLTheme.small)
         .padding(.vertical, CPSLTheme.small)
-        .background(CPSLTheme.card.opacity(depth == 0 ? 1 : 0.52))
-        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
-        .padding(.bottom, 1)
+        .contentShape(Rectangle())
     }
 
     @ViewBuilder
