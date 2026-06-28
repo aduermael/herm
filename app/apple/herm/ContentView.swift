@@ -38,6 +38,11 @@ private nonisolated struct CPSLSessionHandle {
     let pointer: OpaquePointer
 }
 
+private nonisolated struct CPSLSessionInitResult: @unchecked Sendable {
+    let pointer: OpaquePointer?
+    let errorMessage: String?
+}
+
 private nonisolated struct CPSLBlockingEvalRequest: @unchecked Sendable {
     let session: OpaquePointer
     let requestJSON: String
@@ -84,9 +89,11 @@ private struct CPSLChatScreen: View {
 
             Group {
                 if model.isFileBrowserOpen {
-                    CPSLFileBrowserView(model: model)
-                        .padding(.top, CPSLTheme.topChromeInset)
-                        .padding(.bottom, CPSLTheme.bottomChromeInset)
+                    CPSLFileBrowserView(
+                        model: model,
+                        topInset: CPSLTheme.topChromeInset,
+                        bottomInset: CPSLTheme.bottomChromeInset
+                    )
                 } else {
                     CPSLChatTimelineView(
                         model: model,
@@ -96,17 +103,21 @@ private struct CPSLChatScreen: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
             .contentShape(Rectangle())
             .onTapGesture {
                 promptDismissRequest += 1
             }
 
-            CPSLScrollEdgeBlend(edge: .top, height: CPSLTheme.topBlendHeight)
-                .frame(maxHeight: .infinity, alignment: .top)
+            CPSLScrollEdgeGlass(edge: .top, height: CPSLTheme.topBlendHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .ignoresSafeArea(.container, edges: .top)
                 .allowsHitTesting(false)
 
-            CPSLScrollEdgeBlend(edge: .bottom, height: CPSLTheme.bottomBlendHeight)
-                .frame(maxHeight: .infinity, alignment: .bottom)
+            CPSLScrollEdgeGlass(edge: .bottom, height: CPSLTheme.bottomBlendHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .ignoresSafeArea(.container, edges: .bottom)
                 .allowsHitTesting(false)
 
             VStack(spacing: 0) {
@@ -176,10 +187,12 @@ private enum CPSLTheme {
 
     static let controlSize: CGFloat = 38
     static let fileIndent = Self.small + Self.medium
-    static let topChromeInset: CGFloat = 104
-    static let bottomChromeInset: CGFloat = 264
-    static let topBlendHeight: CGFloat = 128
-    static let bottomBlendHeight: CGFloat = 284
+    static let contentHorizontalInset = Self.large + Self.small
+    static let chromeHorizontalInset = Self.large
+    static let topChromeInset: CGFloat = 148
+    static let bottomChromeInset: CGFloat = 132
+    static let topBlendHeight: CGFloat = 100
+    static let bottomBlendHeight: CGFloat = 200
     static let commandBlockMaxHeight: CGFloat = 320
 
     static let normalTextSize: CGFloat = 16
@@ -190,6 +203,73 @@ private enum CPSLTheme {
     static let monospacedBodyFont = Font.system(size: Self.normalTextSize, weight: .regular, design: .monospaced)
     static let controlFont = Font.system(size: 14, weight: .medium)
     static let rowTitleFont = Font.system(size: 13, weight: .regular)
+}
+
+private struct CPSLGlassSurface<S: Shape>: View {
+    let shape: S
+    let tint: Color
+    let strokeOpacity: Double
+
+    var body: some View {
+        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+            nativeGlass
+        } else {
+            materialGlass
+        }
+    }
+
+    private var nativeGlass: some View {
+        shape
+            .fill(CPSLTheme.background.opacity(0.001))
+            .glassEffect(.clear.tint(CPSLTheme.background.opacity(0.24)), in: shape)
+            .overlay(shape.fill(tint))
+            .overlay(stroke)
+    }
+
+    private var materialGlass: some View {
+        shape
+            .fill(.thinMaterial)
+            .overlay(shape.fill(tint))
+            .overlay(stroke)
+    }
+
+    private var stroke: some View {
+        shape.stroke(CPSLTheme.text.opacity(strokeOpacity), lineWidth: 1)
+    }
+}
+
+private struct CPSLGlassBackgroundModifier<S: Shape>: ViewModifier {
+    let shape: S
+    let tint: Color
+    let strokeOpacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                CPSLGlassSurface(
+                    shape: shape,
+                    tint: tint,
+                    strokeOpacity: strokeOpacity
+                )
+            }
+            .clipShape(shape)
+    }
+}
+
+private extension View {
+    func cpslGlassBackground<S: Shape>(
+        in shape: S,
+        tint: Color = CPSLTheme.background.opacity(0.40),
+        strokeOpacity: Double = 0.045
+    ) -> some View {
+        modifier(
+            CPSLGlassBackgroundModifier(
+                shape: shape,
+                tint: tint,
+                strokeOpacity: strokeOpacity
+            )
+        )
+    }
 }
 
 private enum CPSLChatRole {
@@ -492,32 +572,44 @@ private struct CPSLHeaderView: View {
 
             Spacer()
         }
-        .padding(.horizontal, CPSLTheme.large)
-        .padding(.top, CPSLTheme.large)
+        .padding(.horizontal, CPSLTheme.medium)
+        .padding(.top, CPSLTheme.medium)
         .padding(.bottom, CPSLTheme.medium)
     }
 }
 
-private struct CPSLScrollEdgeBlend: View {
+private struct CPSLScrollEdgeGlass: View {
     let edge: VerticalEdge
     let height: CGFloat
 
     var body: some View {
+        ZStack {
+            backgroundFade
+        }
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .ignoresSafeArea(.container, edges: safeAreaEdge)
+    }
+
+    private var backgroundFade: LinearGradient {
         LinearGradient(
-            stops: stops,
+            stops: [
+                .init(color: CPSLTheme.background, location: 0),
+                .init(color: CPSLTheme.background, location: 0.05),
+                .init(color: CPSLTheme.background.opacity(0), location: 1)
+            ],
             startPoint: edge == .top ? .top : .bottom,
             endPoint: edge == .top ? .bottom : .top
         )
-        .frame(height: height)
     }
 
-    private var stops: [Gradient.Stop] {
-        [
-            .init(color: CPSLTheme.background, location: 0),
-            .init(color: CPSLTheme.background.opacity(0.88), location: 0.30),
-            .init(color: CPSLTheme.background.opacity(0.45), location: 0.70),
-            .init(color: CPSLTheme.background.opacity(0), location: 1)
-        ]
+    private var safeAreaEdge: Edge.Set {
+        switch edge {
+        case .top:
+            return .top
+        case .bottom:
+            return .bottom
+        }
     }
 }
 
@@ -540,7 +632,7 @@ private struct CPSLChatTimelineView: View {
                                 .id(message.id)
                         }
                     }
-                    .padding(.horizontal, CPSLTheme.large)
+                    .padding(.horizontal, CPSLTheme.contentHorizontalInset)
                     .padding(.top, topInset)
                     .padding(.bottom, bottomInset)
                 }
@@ -664,6 +756,8 @@ private struct CPSLCommandBlockHeightKey: PreferenceKey {
 
 private struct CPSLFileBrowserView: View {
     @ObservedObject var model: CPSLChatModel
+    let topInset: CGFloat
+    let bottomInset: CGFloat
 
     var body: some View {
         VStack(spacing: 0) {
@@ -690,8 +784,11 @@ private struct CPSLFileBrowserView: View {
                 }
                 .padding(.horizontal, CPSLTheme.medium)
                 .padding(.vertical, CPSLTheme.small)
-                .background(CPSLTheme.elevated)
-                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
+                .cpslGlassBackground(
+                    in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
+                    tint: CPSLTheme.elevated.opacity(0.40),
+                    strokeOpacity: 0.06
+                )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .lineLimit(1)
@@ -701,7 +798,9 @@ private struct CPSLFileBrowserView: View {
                     .lineLimit(1)
                     .foregroundStyle(CPSLTheme.mutedText)
             }
-            .padding(CPSLTheme.medium)
+            .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
+            .padding(.top, topInset)
+            .padding(.bottom, CPSLTheme.medium)
 
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -726,15 +825,11 @@ private struct CPSLFileBrowserView: View {
                         CPSLFileRowsView(model: model, entries: model.browserEntries, depth: 0)
                     }
                 }
-                .padding(.horizontal, CPSLTheme.medium)
-                .padding(.bottom, CPSLTheme.medium)
+                .padding(.horizontal, CPSLTheme.contentHorizontalInset)
+                .padding(.bottom, bottomInset)
             }
             .scrollDismissesKeyboard(.interactively)
         }
-        .background(CPSLTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
-        .padding(.horizontal, CPSLTheme.large)
-        .padding(.bottom, CPSLTheme.medium)
     }
 }
 
@@ -832,6 +927,14 @@ private struct CPSLFileRowView: View {
 private struct CPSLToolStripView: View {
     @ObservedObject var model: CPSLChatModel
 
+    private var filesControlTint: Color {
+        model.isFileBrowserOpen ? CPSLTheme.card.opacity(0.52) : CPSLTheme.background.opacity(0.40)
+    }
+
+    private var filesControlStrokeOpacity: Double {
+        model.isFileBrowserOpen ? 0.10 : 0.045
+    }
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: CPSLTheme.medium) {
@@ -846,8 +949,11 @@ private struct CPSLToolStripView: View {
                     }
                     .padding(.horizontal, CPSLTheme.medium)
                     .frame(height: CPSLTheme.controlSize)
-                    .background(model.isFileBrowserOpen ? CPSLTheme.controlPressed : CPSLTheme.card)
-                    .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                    .cpslGlassBackground(
+                        in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                        tint: filesControlTint,
+                        strokeOpacity: filesControlStrokeOpacity
+                    )
                     .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
                 }
                 .buttonStyle(.plain)
@@ -857,7 +963,7 @@ private struct CPSLToolStripView: View {
                 CPSLDisabledToolIcon(systemName: "envelope.fill")
                 CPSLDisabledToolIcon(systemName: "calendar")
             }
-            .padding(.horizontal, CPSLTheme.large)
+            .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
         }
         .padding(.bottom, CPSLTheme.medium)
     }
@@ -871,8 +977,11 @@ private struct CPSLDisabledToolIcon: View {
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(CPSLTheme.mutedText)
             .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-            .background(CPSLTheme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            .cpslGlassBackground(
+                in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                tint: CPSLTheme.background.opacity(0.34),
+                strokeOpacity: 0.035
+            )
             .opacity(0.62)
     }
 }
@@ -1065,8 +1174,11 @@ private struct CPSLPromptComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(CPSLTheme.text)
-                .background(CPSLTheme.elevated)
-                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                .cpslGlassBackground(
+                    in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                    tint: CPSLTheme.card.opacity(0.38),
+                    strokeOpacity: 0.045
+                )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
 
                 Spacer()
@@ -1082,8 +1194,11 @@ private struct CPSLPromptComposerView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(CPSLTheme.text)
-                .background(CPSLTheme.elevated)
-                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                .cpslGlassBackground(
+                    in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                    tint: CPSLTheme.card.opacity(0.38),
+                    strokeOpacity: 0.045
+                )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
 
                 Button {
@@ -1120,16 +1235,12 @@ private struct CPSLPromptComposerView: View {
             }
         }
         .padding(CPSLTheme.medium)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous)
-                    .fill(CPSLTheme.surface.opacity(0.78))
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
-        .padding(.horizontal, CPSLTheme.large)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous),
+            tint: CPSLTheme.background.opacity(0.54),
+            strokeOpacity: 0.055
+        )
+        .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
         .padding(.bottom, CPSLTheme.large)
     }
 }
@@ -1190,7 +1301,7 @@ private actor CPSLDebugService {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
         }
 
-        if let sessionError = initializeSessionIfNeeded(sandboxURLs: sandboxURLs) {
+        if let sessionError = await initializeSessionIfNeeded(sandboxURLs: sandboxURLs) {
             return Self.ffiFailure("Session init: \(sessionError)")
         }
 
@@ -1276,7 +1387,7 @@ private actor CPSLDebugService {
         parent == "/" ? "/\(child)" : "\(parent)/\(child)"
     }
 
-    private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) -> String? {
+    private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) async -> String? {
         guard session == nil else {
             return nil
         }
@@ -1287,11 +1398,13 @@ private actor CPSLDebugService {
             return "Could not encode session config JSON"
         }
 
-        let newSession = configJSON.withCString { configPointer in
-            cpsl_session_new(configPointer)
+        let result = await Self.performBlockingSessionInit(configJSON: configJSON)
+        guard let newSession = result.pointer else {
+            return result.errorMessage ?? "cpsl_session_new returned NULL"
         }
-        guard let newSession else {
-            return Self.lastErrorMessage(fallback: "cpsl_session_new returned NULL")
+        guard session == nil else {
+            cpsl_session_free(newSession)
+            return nil
         }
 
         nextSessionID += 1
@@ -1402,6 +1515,29 @@ private actor CPSLDebugService {
             return nil
         }
         return json
+    }
+
+    private nonisolated static func performBlockingSessionInit(
+        configJSON: String
+    ) async -> CPSLSessionInitResult {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .default).async {
+                continuation.resume(returning: createSession(configJSON: configJSON))
+            }
+        }
+    }
+
+    private nonisolated static func createSession(configJSON: String) -> CPSLSessionInitResult {
+        let pointer = configJSON.withCString { configPointer in
+            cpsl_session_new(configPointer)
+        }
+        guard let pointer else {
+            return CPSLSessionInitResult(
+                pointer: nil,
+                errorMessage: lastErrorMessage(fallback: "cpsl_session_new returned NULL")
+            )
+        }
+        return CPSLSessionInitResult(pointer: pointer, errorMessage: nil)
     }
 
     private nonisolated static func performBlockingEvalWithTimeout(
