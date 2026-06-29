@@ -35,3 +35,22 @@ languages:
         variables: language-default
         types: language-default
         constants: language-default
+  swift:
+    files:
+      - app/apple/herm/...
+    exclude:
+      - "**/DerivedData/**"
+      - "**/GeneratedAssetSymbols.swift"
+    rules:
+      max-function-parameters:
+        enabled: true
+        max: 3
+      source-file-header:
+        required: false
+        min-length: 0
+        max-length: 0
+      indent:
+        type: spaces
+        width: 4
+      casing:
+        enabled: false
