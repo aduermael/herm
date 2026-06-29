@@ -321,7 +321,7 @@ func saveConfig(cfg Config) error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
-	return os.WriteFile(configPath(), data, 0o644)
+	return os.WriteFile(configPath(), data, 0o600)
 }
 
 // saveConfigToOptions is the parameter bundle for saveConfigTo.
@@ -344,7 +344,7 @@ func saveConfigTo(opts saveConfigToOptions) error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
-	return os.WriteFile(filepath.Join(cfgDir, configFile), data, 0o644)
+	return os.WriteFile(filepath.Join(cfgDir, configFile), data, 0o600)
 }
 
 // loadProjectConfig reads project-level overrides from <repoRoot>/.herm/config.json.
@@ -487,5 +487,5 @@ func saveProjectConfig(opts saveProjectConfigOptions) error {
 	if err != nil {
 		return fmt.Errorf("marshaling project config: %w", err)
 	}
-	return os.WriteFile(projectConfigPath(repoRoot), data, 0o644)
+	return os.WriteFile(projectConfigPath(repoRoot), data, 0o600)
 }
