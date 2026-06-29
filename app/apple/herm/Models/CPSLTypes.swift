@@ -60,7 +60,7 @@ struct CPSLSandboxURLs {
     let workdir: URL
 }
 
-enum CPSLChatRole {
+enum CPSLChatRole: String, Decodable {
     case user
     case command
     case output

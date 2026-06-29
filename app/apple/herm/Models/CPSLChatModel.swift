@@ -17,8 +17,23 @@ final class CPSLChatModel: ObservableObject {
 
     private let service = CPSLDebugService()
 
+    init() {
+        messages = CPSLSeedConversation.load()
+    }
+
     func showComingSoon(_ message: String = "coming soon") {
         comingSoonMessage = message
+    }
+
+    func startNewConversation() {
+        guard !isRunning else {
+            return
+        }
+
+        promptText = ""
+        comingSoonMessage = nil
+        messages = []
+        isFileBrowserOpen = false
     }
 
     func submitPrompt() {

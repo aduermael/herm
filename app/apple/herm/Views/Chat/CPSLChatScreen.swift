@@ -47,7 +47,7 @@ struct CPSLChatScreen: View {
                 .allowsHitTesting(false)
 
             VStack(spacing: 0) {
-                CPSLHeaderView()
+                CPSLHeaderView(model: model)
                     .contentShape(Rectangle())
                     .onTapGesture {
                         promptDismissRequest += 1
@@ -118,6 +118,8 @@ private struct CPSLBottomChromeHeightKey: PreferenceKey {
 }
 
 private struct CPSLHeaderView: View {
+    @ObservedObject var model: CPSLChatModel
+
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
             HStack(spacing: CPSLTheme.small) {
@@ -130,6 +132,26 @@ private struct CPSLHeaderView: View {
             .foregroundStyle(CPSLTheme.text)
 
             Spacer()
+
+            Button {
+                model.startNewConversation()
+            } label: {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                    .cpslGlassBackground(
+                        in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                        tint: CPSLTheme.background.opacity(0.34),
+                        strokeOpacity: 0.045
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(CPSLTheme.text)
+            .disabled(model.isRunning)
+            .opacity(model.isRunning ? 0.45 : 1)
+            .accessibilityLabel("New conversation")
+            .help("New conversation")
         }
         .padding(.horizontal, CPSLTheme.medium)
         .padding(.top, CPSLTheme.medium)
