@@ -5,8 +5,11 @@ script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/cpsl-xcframework.sh"
 
-link_path="$herm_root/scripts/cpsl-xcframework-placeholder/cpsl.xcframework"
+placeholder_dir="$herm_root/scripts/cpsl-xcframework-placeholder"
+link_path="$placeholder_dir/cpsl.xcframework"
 built_path="$herm_root/.herm-cpsl/artifacts/apple/cpsl.xcframework"
+
+cpsl_xcframework_remove_stray_links "$placeholder_dir" "$link_path"
 
 # Xcode validates the linked XCFramework path before any build phase runs, so a
 # tracked bootstrap directory must exist on fresh clones. Locally, repair broken
@@ -37,9 +40,11 @@ if [ -L "$link_path" ]; then
 	if [ "$current_target" = "$built_path" ]; then
 		exit 0
 	fi
-	rm "$link_path"
-elif [ -e "$link_path" ]; then
-	rm -rf "$link_path"
 fi
 
-ln -sfn "$built_path" "$link_path"
+if [ -d "$link_path" ] && cpsl_xcframework_is_placeholder "$link_path"; then
+	cpsl_xcframework_set_skip_worktree "$herm_root"
+fi
+
+rm -rf "$link_path"
+ln -s "$built_path" "$link_path"

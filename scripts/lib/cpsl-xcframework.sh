@@ -171,6 +171,72 @@ EOF
 		>"$(cpsl_xcframework_placeholder_marker "$xcframework_path")"
 }
 
+cpsl_xcframework_placeholder_prefix() {
+	printf '%s' "scripts/cpsl-xcframework-placeholder/cpsl.xcframework"
+}
+
+cpsl_xcframework_for_each_tracked_placeholder_file() {
+	herm_root=$1
+	action=$2
+
+	[ -d "$herm_root/.git" ] || return 0
+
+	git -C "$herm_root" ls-files -z "$(cpsl_xcframework_placeholder_prefix)" | while IFS= read -r -d '' path; do
+		[ -n "$path" ] || continue
+		"$action" "$herm_root" "$path"
+	done
+}
+
+cpsl_xcframework_clear_skip_worktree_entry() {
+	herm_root=$1
+	path=$2
+
+	git -C "$herm_root" update-index --no-skip-worktree "$path" 2>/dev/null || true
+}
+
+cpsl_xcframework_set_skip_worktree_entry() {
+	herm_root=$1
+	path=$2
+
+	git -C "$herm_root" update-index --skip-worktree "$path" 2>/dev/null || true
+}
+
+cpsl_xcframework_clear_skip_worktree() {
+	herm_root=$1
+	cpsl_xcframework_for_each_tracked_placeholder_file "$herm_root" cpsl_xcframework_clear_skip_worktree_entry
+}
+
+cpsl_xcframework_set_skip_worktree() {
+	herm_root=$1
+	cpsl_xcframework_for_each_tracked_placeholder_file "$herm_root" cpsl_xcframework_set_skip_worktree_entry
+}
+
+cpsl_xcframework_remove_stray_links() {
+	placeholder_dir=$1
+	link_path=$2
+	entry=
+
+	[ -d "$placeholder_dir" ] || return 0
+
+	for entry in "$placeholder_dir"/cpsl*.xcframework; do
+		[ -e "$entry" ] || continue
+		[ "$entry" = "$link_path" ] && continue
+		rm -rf "$entry"
+	done
+}
+
+cpsl_xcframework_restore_tracked_placeholder() {
+	herm_root=$1
+	link_path=$2
+
+	cpsl_xcframework_clear_skip_worktree "$herm_root"
+	if git -C "$herm_root" checkout -- "$(cpsl_xcframework_placeholder_prefix)" 2>/dev/null && \
+		[ -d "$link_path" ] && cpsl_xcframework_is_placeholder "$link_path"; then
+		return 0
+	fi
+	return 1
+}
+
 cpsl_xcframework_inputs_newer_than() {
 	info_plist=$1
 	herm_root=$2

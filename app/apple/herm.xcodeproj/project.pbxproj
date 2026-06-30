@@ -110,7 +110,6 @@
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
 				85D75D312FE62B6F0095BAB2 /* Resources */,
 				850B3BFC2FE8390E00A21FC8 /* Embed Frameworks */,
-				850B3C042FE8391000A21FD0 /* Restore CPSL XCFramework Placeholder */,
 			);
 			buildRules = (
 			);
@@ -195,26 +194,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh\"\n";
-		};
-		850B3C042FE8391000A21FD0 /* Restore CPSL XCFramework Placeholder */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Restore CPSL XCFramework Placeholder";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(SRCROOT)/../../scripts/cpsl-xcframework-placeholder/cpsl.xcframework/.bootstrap-placeholder",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/../../scripts/restore-cpsl-xcframework-placeholder.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

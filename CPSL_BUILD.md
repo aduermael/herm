@@ -210,9 +210,9 @@ placeholder at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework`
 satisfies that check on fresh clones. The ensure script then builds the real
 XCFramework under gitignored `.herm-cpsl/artifacts/apple/`, and the Xcode helper
 replaces the placeholder path with a local symlink to that artifact during the
-build, then a final run-script phase restores the tracked bootstrap directory so
-`git status` stays clean. Do not commit the symlink; only the bootstrap directory
-belongs in git.
+build. The link step marks the tracked bootstrap files `skip-worktree` so
+`git status` stays clean while the symlink is present. Do not commit the
+symlink; only the bootstrap directory belongs in git.
 
 ### First-build prerequisites
 
