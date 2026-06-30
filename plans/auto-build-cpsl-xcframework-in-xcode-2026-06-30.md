@@ -85,7 +85,7 @@ Set `ENABLE_USER_SCRIPT_SANDBOXING = NO` on the **herm target** Debug and Releas
 
 - [x] 1a: Add `scripts/lib/cpsl-xcframework.sh` with slice validation helpers (`ios device`, `ios simulator`, `macos`) and staleness detection over the three input paths listed above. Extract logic from `dev-apple-macos.sh` / `dev-apple-ios.sh`; extend macOS launcher's platform check to distinguish device vs simulator slices.
 - [x] 1b: Add `scripts/ensure-cpsl-apple-xcframework.sh` implementing visionOS guard, `HERM_CPSL_REBUILD=1`, full-framework validation, staleness check, optional lock file, and delegation to `build-cpsl-apple-xcframework.sh` with `APPLE_PLATFORMS=ios macos`.
-- [ ] 1c: Refactor `scripts/dev-apple-macos.sh` and `scripts/dev-apple-ios.sh` to call `ensure-cpsl-apple-xcframework.sh` instead of inline CPSL logic. Map `--skip-cpsl` / `--rebuild-cpsl` to ensure-script behavior; update `--help` for `--full-cpsl` deprecation note.
+- [x] 1c: Refactor `scripts/dev-apple-macos.sh` and `scripts/dev-apple-ios.sh` to call `ensure-cpsl-apple-xcframework.sh` instead of inline CPSL logic. Map `--skip-cpsl` / `--rebuild-cpsl` to ensure-script behavior; update `--help` for `--full-cpsl` deprecation note.
 
 ## Phase 2: Xcode project integration
 

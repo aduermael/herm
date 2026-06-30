@@ -64,7 +64,7 @@ Options:
   --open             Launch the .app with Launch Services instead of running the executable.
   --skip-cpsl        Do not build the CPSL XCFramework; require it to already exist.
   --rebuild-cpsl     Rebuild the CPSL XCFramework before building the app.
-  --full-cpsl        Build both iOS and macOS CPSL slices. Default is macOS only.
+  --full-cpsl        Deprecated: the ensure script always builds the full iOS+macOS framework.
   --universal-cpsl   Build both arm64 and x86_64 macOS CPSL slices.
   --project-signing  Use the Xcode project's signing settings instead of ad hoc signing.
   --configuration C  Build configuration. Defaults to Debug.
@@ -78,30 +78,11 @@ Examples:
 EOF
 }
 
-xcframework_supports_platform() {
-	info=$1
-	platform=$2
-
-	[ -f "$info" ] || return 1
-	awk -v platform="$platform" '
-		/<key>SupportedPlatform<\/key>/ {
-			getline
-			if ($0 ~ "<string>" platform "</string>") {
-				found = 1
-			}
-		}
-		END {
-			exit found ? 0 : 1
-		}
-	' "$info"
-}
-
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 
 mode=run
 cpsl_mode=auto
-cpsl_platforms=${APPLE_PLATFORMS:-macos}
 cpsl_macos_targets=${MACOS_TARGETS:-}
 configuration=Debug
 derived_data="$root/.herm-apple/DerivedData"
@@ -125,7 +106,6 @@ while [ "$#" -gt 0 ]; do
 		cpsl_mode=rebuild
 		;;
 	--full-cpsl)
-		cpsl_platforms="ios macos"
 		;;
 	--universal-cpsl)
 		cpsl_macos_targets="aarch64-apple-darwin x86_64-apple-darwin"
@@ -153,21 +133,6 @@ while [ "$#" -gt 0 ]; do
 	esac
 	shift
 done
-
-cpsl_has_macos=0
-for platform in $cpsl_platforms; do
-	case "$platform" in
-	ios)
-		;;
-	macos)
-		cpsl_has_macos=1
-		;;
-	*)
-		die "unsupported APPLE_PLATFORMS entry for macOS app build: $platform"
-		;;
-	esac
-done
-[ "$cpsl_has_macos" -eq 1 ] || die "dev-apple-macos.sh requires CPSL macOS slices; unset APPLE_PLATFORMS or include macos"
 
 [ "$(uname -s)" = Darwin ] || die "run this from a macOS terminal, not Linux or a container"
 
@@ -238,34 +203,17 @@ if [ -z "$cpsl_macos_targets" ]; then
 	esac
 fi
 
-cpsl_patches_newer=0
-cpsl_platform_missing=0
-xcframework_info="$xcframework_path/Info.plist"
-if [ -d "$xcframework_path" ]; then
-	for platform in $cpsl_platforms; do
-		if ! xcframework_supports_platform "$xcframework_info" "$platform"; then
-			cpsl_platform_missing=1
-		fi
-	done
+if [ "$cpsl_mode" = rebuild ]; then
+	HERM_CPSL_REBUILD=1
+	export HERM_CPSL_REBUILD
 fi
-if [ -d "$xcframework_path" ] && [ -d "$root/scripts/cpsl-patches" ]; then
-	if [ ! -f "$xcframework_info" ]; then
-		cpsl_patches_newer=1
-	elif find "$root/scripts/cpsl-patches" -type f -newer "$xcframework_info" | grep -q .; then
-		cpsl_patches_newer=1
-	fi
+if [ -n "$cpsl_macos_targets" ]; then
+	export MACOS_TARGETS="$cpsl_macos_targets"
 fi
-
 if [ "$cpsl_mode" = skip ]; then
-	[ -d "$xcframework_path" ] || die "missing $xcframework_path; rerun without --skip-cpsl"
-	[ "$cpsl_platform_missing" -eq 0 ] || die "$xcframework_path does not contain required platform(s): $cpsl_platforms; rerun without --skip-cpsl"
-elif [ "$cpsl_mode" = rebuild ] || [ ! -d "$xcframework_path" ] || [ "$cpsl_patches_newer" -eq 1 ] || [ "$cpsl_platform_missing" -eq 1 ]; then
-	printf 'Building CPSL Apple XCFramework for: %s\n' "$cpsl_platforms"
-	APPLE_PLATFORMS="$cpsl_platforms" \
-		MACOS_TARGETS="$cpsl_macos_targets" \
-		"$root/scripts/build-cpsl-apple-xcframework.sh"
+	"$root/scripts/ensure-cpsl-apple-xcframework.sh" --skip
 else
-	printf 'Using existing CPSL XCFramework: %s\n' "$xcframework_path"
+	"$root/scripts/ensure-cpsl-apple-xcframework.sh"
 fi
 
 clean_xattrs "$root/app/apple/herm" "$xcframework_path" "$app_path"

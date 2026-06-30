@@ -39,7 +39,7 @@ Options:
   --device-name NAME           Use a connected device by exact display name.
   --skip-cpsl                  Do not build the CPSL XCFramework; require it to already exist.
   --rebuild-cpsl               Rebuild the CPSL XCFramework before building the app.
-  --full-cpsl                  Build both iOS and macOS CPSL slices. Default is iOS only.
+  --full-cpsl                  Deprecated: the ensure script always builds the full iOS+macOS framework.
   --universal-cpsl             Build both arm64 and x86_64 iOS simulator CPSL slices.
   --allow-provisioning-updates Allow xcodebuild to update automatic signing assets. Default.
   --no-provisioning-updates    Do not allow xcodebuild to update signing assets.
@@ -70,56 +70,6 @@ make_temp() {
 		tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/herm-ios.XXXXXX") || die "failed to create temporary directory"
 	fi
 	mktemp "$tmp_dir/file.XXXXXX" || die "failed to create temporary file"
-}
-
-xcframework_supports_platform() {
-	info=$1
-	platform=$2
-
-	[ -f "$info" ] || return 1
-	awk -v platform="$platform" '
-		/<key>SupportedPlatform<\/key>/ {
-			getline
-			if ($0 ~ "<string>" platform "</string>") {
-				found = 1
-			}
-		}
-		END {
-			exit found ? 0 : 1
-		}
-	' "$info"
-}
-
-xcframework_supports_ios_device() {
-	info=$1
-
-	[ -f "$info" ] || return 1
-	awk '
-		/<dict>/ {
-			platform = ""
-			variant = ""
-		}
-		/<key>SupportedPlatform<\/key>/ {
-			getline
-			if ($0 ~ /<string>ios<\/string>/) {
-				platform = "ios"
-			}
-		}
-		/<key>SupportedPlatformVariant<\/key>/ {
-			getline
-			if ($0 ~ /<string>simulator<\/string>/) {
-				variant = "simulator"
-			}
-		}
-		/<\/dict>/ {
-			if (platform == "ios" && variant != "simulator") {
-				found = 1
-			}
-		}
-		END {
-			exit found ? 0 : 1
-		}
-	' "$info"
 }
 
 write_ios_devices() {
@@ -299,7 +249,6 @@ trap cleanup EXIT HUP INT TERM
 
 mode=run
 cpsl_mode=auto
-cpsl_platforms=${APPLE_PLATFORMS:-ios}
 cpsl_ios_simulator_targets=${IOS_SIMULATOR_TARGETS:-}
 cpsl_macos_targets=${MACOS_TARGETS:-}
 configuration=Debug
@@ -342,7 +291,6 @@ while [ "$#" -gt 0 ]; do
 		cpsl_mode=rebuild
 		;;
 	--full-cpsl)
-		cpsl_platforms="ios macos"
 		;;
 	--universal-cpsl)
 		cpsl_ios_simulator_targets="aarch64-apple-ios-sim x86_64-apple-ios"
@@ -397,21 +345,6 @@ done
 
 [ -z "$device_id" ] || [ -z "$device_name" ] || die "--device and --device-name are mutually exclusive"
 [ "$personal_team" -eq 0 ] || [ "$explicit_team_id" -eq 0 ] || die "--personal-team and --team-id are mutually exclusive"
-
-cpsl_has_ios=0
-for platform in $cpsl_platforms; do
-	case "$platform" in
-	ios)
-		cpsl_has_ios=1
-		;;
-	macos)
-		;;
-	*)
-		die "unsupported APPLE_PLATFORMS entry for iOS app build: $platform"
-		;;
-	esac
-done
-[ "$cpsl_has_ios" -eq 1 ] || die "dev-apple-ios.sh requires CPSL iOS slices; unset APPLE_PLATFORMS or include ios"
 
 [ "$(uname -s)" = Darwin ] || die "run this from a macOS terminal, not Linux or a container"
 
@@ -538,44 +471,20 @@ else
 	fi
 fi
 
-cpsl_patches_newer=0
-cpsl_platform_missing=0
-xcframework_info="$xcframework_path/Info.plist"
-if [ -d "$xcframework_path" ]; then
-	for platform in $cpsl_platforms; do
-		case "$platform" in
-		ios)
-			if ! xcframework_supports_ios_device "$xcframework_info"; then
-				cpsl_platform_missing=1
-			fi
-			;;
-		macos)
-			if ! xcframework_supports_platform "$xcframework_info" "$platform"; then
-				cpsl_platform_missing=1
-			fi
-			;;
-		esac
-	done
+if [ "$cpsl_mode" = rebuild ]; then
+	HERM_CPSL_REBUILD=1
+	export HERM_CPSL_REBUILD
 fi
-if [ -d "$xcframework_path" ] && [ -d "$root/scripts/cpsl-patches" ]; then
-	if [ ! -f "$xcframework_info" ]; then
-		cpsl_patches_newer=1
-	elif find "$root/scripts/cpsl-patches" -type f -newer "$xcframework_info" | grep -q .; then
-		cpsl_patches_newer=1
-	fi
+if [ -n "$cpsl_ios_simulator_targets" ]; then
+	export IOS_SIMULATOR_TARGETS="$cpsl_ios_simulator_targets"
 fi
-
+if [ -n "$cpsl_macos_targets" ]; then
+	export MACOS_TARGETS="$cpsl_macos_targets"
+fi
 if [ "$cpsl_mode" = skip ]; then
-	[ -d "$xcframework_path" ] || die "missing $xcframework_path; rerun without --skip-cpsl"
-	[ "$cpsl_platform_missing" -eq 0 ] || die "$xcframework_path does not contain required platform(s): $cpsl_platforms; rerun without --skip-cpsl"
-elif [ "$cpsl_mode" = rebuild ] || [ ! -d "$xcframework_path" ] || [ "$cpsl_patches_newer" -eq 1 ] || [ "$cpsl_platform_missing" -eq 1 ]; then
-	printf 'Building CPSL Apple XCFramework for: %s\n' "$cpsl_platforms"
-	APPLE_PLATFORMS="$cpsl_platforms" \
-		IOS_SIMULATOR_TARGETS="$cpsl_ios_simulator_targets" \
-		MACOS_TARGETS="$cpsl_macos_targets" \
-		"$root/scripts/build-cpsl-apple-xcframework.sh"
+	"$root/scripts/ensure-cpsl-apple-xcframework.sh" --skip
 else
-	printf 'Using existing CPSL XCFramework: %s\n' "$xcframework_path"
+	"$root/scripts/ensure-cpsl-apple-xcframework.sh"
 fi
 
 clean_xattrs "$root/app/apple/herm" "$xcframework_path" "$app_path"
