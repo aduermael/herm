@@ -4,7 +4,7 @@ struct CPSLToolStripView: View {
     @ObservedObject var model: CPSLChatModel
 
     private var filesControlTint: Color {
-        model.isFileBrowserOpen ? CPSLTheme.card.opacity(0.52) : CPSLTheme.background.opacity(0.40)
+        model.isFileBrowserOpen ? CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.52) : CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.40)
     }
 
     private var filesControlStrokeOpacity: Double {
@@ -55,7 +55,7 @@ private struct CPSLDisabledToolIcon: View {
             .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
             .cpslGlassBackground(
                 in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                tint: CPSLTheme.background.opacity(0.34),
+                tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34),
                 strokeOpacity: 0.035
             )
             .opacity(0.62)

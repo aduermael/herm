@@ -129,7 +129,7 @@ private struct CPSLHeaderIconButton: View {
                 .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                    tint: CPSLTheme.background.opacity(0.34),
+                    tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34),
                     strokeOpacity: 0.045
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))

@@ -38,7 +38,7 @@ struct CPSLFileBrowserView: View {
                 .foregroundStyle(CPSLTheme.text)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-                    tint: CPSLTheme.background.opacity(0.36),
+                    tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.36),
                     strokeOpacity: 0.06
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
@@ -61,7 +61,7 @@ struct CPSLFileBrowserView: View {
                 .fixedSize(horizontal: true, vertical: false)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-                    tint: CPSLTheme.background.opacity(0.36),
+                    tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.36),
                     strokeOpacity: 0.06
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
@@ -85,7 +85,7 @@ struct CPSLFileBrowserView: View {
         .frame(height: CPSLTheme.controlSize)
         .cpslGlassBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLTheme.elevated.opacity(0.40),
+            tint: CPSLGlassTuning.tint(CPSLTheme.elevated, opacity: 0.40),
             strokeOpacity: 0.06
         )
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -126,7 +126,7 @@ struct CPSLFileBrowserView: View {
         .frame(maxHeight: .infinity)
         .cpslGlassBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-            tint: CPSLTheme.card.opacity(0.62),
+            tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.62),
             strokeOpacity: 0.045
         )
     }

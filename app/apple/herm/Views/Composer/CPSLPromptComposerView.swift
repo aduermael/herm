@@ -10,6 +10,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
     let isCommandInput: Bool
     let isDisabled: Bool
     let maxHeight: CGFloat
+    let focusPromptRequest: Int
     let dismissKeyboardRequest: Int
     let onHeightChange: (CGFloat) -> Void
 
@@ -24,6 +25,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         textView.textContainer.lineFragmentPadding = 0
         textView.returnKeyType = .default
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        context.coordinator.focusPromptRequest = focusPromptRequest
         context.coordinator.dismissKeyboardRequest = dismissKeyboardRequest
         applyInputTraits(to: textView)
         return textView
@@ -46,6 +48,13 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         } else if context.coordinator.dismissKeyboardRequest != dismissKeyboardRequest {
             context.coordinator.dismissKeyboardRequest = dismissKeyboardRequest
             textView.resignFirstResponder()
+        } else if context.coordinator.focusPromptRequest != focusPromptRequest {
+            context.coordinator.focusPromptRequest = focusPromptRequest
+            if !textView.isFirstResponder {
+                DispatchQueue.main.async {
+                    textView.becomeFirstResponder()
+                }
+            }
         }
 
         if didChangeTraits && textView.isFirstResponder {
@@ -89,6 +98,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: CPSLPromptTextView
+        var focusPromptRequest = 0
         var dismissKeyboardRequest = 0
 
         init(parent: CPSLPromptTextView) {
@@ -116,6 +126,8 @@ struct CPSLPromptComposerView: View {
     let dismissKeyboardRequest: Int
     let dismissKeyboard: () -> Void
     @State private var promptContentHeight: CGFloat = 0
+    @State private var focusPromptRequest = 0
+    @FocusState private var isPromptFocused: Bool
 
     private var hasPromptInput: Bool {
         !model.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -154,6 +166,7 @@ struct CPSLPromptComposerView: View {
                     isCommandInput: isCommandInput,
                     isDisabled: model.isRunning,
                     maxHeight: promptLineHeight * 6,
+                    focusPromptRequest: focusPromptRequest,
                     dismissKeyboardRequest: dismissKeyboardRequest
                 ) { height in
                     promptContentHeight = height
@@ -169,10 +182,15 @@ struct CPSLPromptComposerView: View {
                     .font(CPSLTheme.bodyFont)
                     .foregroundStyle(CPSLTheme.text)
                     .tint(CPSLTheme.text)
+                    .focused($isPromptFocused)
                     .disabled(model.isRunning)
                     .padding(.horizontal, CPSLTheme.medium)
                     .padding(.vertical, CPSLTheme.small)
 #endif
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                focusPrompt()
             }
             .background {
                 RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
@@ -194,7 +212,7 @@ struct CPSLPromptComposerView: View {
                 .foregroundStyle(CPSLTheme.text)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                    tint: CPSLTheme.card.opacity(0.38),
+                    tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.38),
                     strokeOpacity: 0.045
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
@@ -214,7 +232,7 @@ struct CPSLPromptComposerView: View {
                 .foregroundStyle(CPSLTheme.text)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                    tint: CPSLTheme.card.opacity(0.38),
+                    tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.38),
                     strokeOpacity: 0.045
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
@@ -253,12 +271,37 @@ struct CPSLPromptComposerView: View {
             }
         }
         .padding(CPSLTheme.medium)
+        .background {
+            RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous)
+                .fill(Color.clear)
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
+                .onTapGesture {
+                    focusPrompt()
+                }
+        }
         .cpslGlassBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous),
-            tint: CPSLTheme.background.opacity(0.54),
+            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.54),
             strokeOpacity: 0.055
         )
         .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
         .padding(.bottom, CPSLTheme.large)
+        .onChange(of: dismissKeyboardRequest) { _, _ in
+            isPromptFocused = false
+        }
+        .onChange(of: model.isRunning) { _, isRunning in
+            if isRunning {
+                isPromptFocused = false
+            }
+        }
+    }
+
+    private func focusPrompt() {
+        guard !model.isRunning else {
+            return
+        }
+
+        focusPromptRequest += 1
+        isPromptFocused = true
     }
 }

@@ -4,8 +4,8 @@ struct CPSLChatTimelineView: View {
     @ObservedObject var model: CPSLChatModel
     let topInset: CGFloat
     let bottomInset: CGFloat
-    private let bottomAnchorID = "conversation-bottom"
     @State private var isPinnedToBottom = true
+    @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
     var body: some View {
         ZStack {
@@ -13,82 +13,112 @@ struct CPSLChatTimelineView: View {
                 CPSLEmptyChatView()
             }
 
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: CPSLTheme.medium) {
-                        ForEach(model.messages) { message in
-                            CPSLChatBubbleView(message: message)
-                                .id(message.id)
-                        }
+            ScrollView {
+                LazyVStack(spacing: CPSLTheme.medium) {
+                    ForEach(model.messages) { message in
+                        CPSLChatBubbleView(message: message)
+                            .id(message.id)
+                    }
 
-                        Color.clear
-                            .frame(height: bottomInset)
-                            .id(bottomAnchorID)
-                    }
-                    .padding(.horizontal, CPSLTheme.contentHorizontalInset)
-                    .padding(.top, topInset)
+                    Color.clear
+                        .frame(height: bottomInset)
                 }
-                .scrollDismissesKeyboard(.interactively)
-                .opacity(model.messages.isEmpty ? 0 : 1)
-                .onAppear {
-                    scrollToBottom(proxy, animated: false)
-                }
-                .onChange(of: model.messages.count) { _, _ in
-                    scrollToBottom(proxy, animated: true)
-                }
-                .onChange(of: model.messages.last?.body) { _, _ in
-                    scrollToBottom(proxy, animated: true)
-                }
-                .onChange(of: bottomInset) { _, _ in
-                    scrollToBottomIfPinned(proxy)
-                }
-                .onScrollGeometryChange(
-                    for: CPSLTimelineScrollState.self,
-                    of: { geometry in
-                        CPSLTimelineScrollState(geometry: geometry)
-                    },
-                    action: { oldState, newState in
-                        handleScrollGeometryChange(oldState: oldState, newState: newState, proxy: proxy)
-                    }
-                )
+                .padding(.horizontal, CPSLTheme.contentHorizontalInset)
+                .padding(.top, topInset)
             }
+            .scrollPosition($scrollPosition)
+            .scrollDismissesKeyboard(.interactively)
+            .opacity(model.messages.isEmpty ? 0 : 1)
+            .onAppear {
+                scrollToBottom(animated: false)
+            }
+            .onChange(of: model.messages.count) { _, _ in
+                scrollToBottom(animated: true)
+            }
+            .onChange(of: model.messages.last?.body) { _, _ in
+                scrollToBottom(animated: true)
+            }
+            .onChange(of: bottomInset) { _, _ in
+                scrollToBottomIfPinned()
+            }
+            .onScrollGeometryChange(
+                for: CPSLTimelineScrollState.self,
+                of: { geometry in
+                    CPSLTimelineScrollState(geometry: geometry)
+                },
+                action: { oldState, newState in
+                    handleScrollGeometryChange(oldState: oldState, newState: newState)
+                }
+            )
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToBottom(animated: Bool) {
         guard !model.messages.isEmpty else {
             return
         }
 
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
-                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                scrollPosition.scrollTo(edge: .bottom)
             }
         } else {
-            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+            scrollPosition.scrollTo(edge: .bottom)
         }
     }
 
-    private func scrollToBottomIfPinned(_ proxy: ScrollViewProxy) {
+    private func scrollToBottomIfPinned() {
         guard isPinnedToBottom else {
             return
         }
-        scrollToBottom(proxy, animated: false)
+        scrollToBottom(animated: false)
     }
 
     private func handleScrollGeometryChange(
         oldState: CPSLTimelineScrollState,
-        newState: CPSLTimelineScrollState,
-        proxy: ScrollViewProxy
+        newState: CPSLTimelineScrollState
     ) {
+        guard oldState.viewportHeight > 0 else {
+            isPinnedToBottom = newState.isPinnedToBottom
+            return
+        }
+
         let didResize = abs(oldState.viewportHeight - newState.viewportHeight) > 0.5
         let shouldPreserveBottom = oldState.isPinnedToBottom || isPinnedToBottom
+        let isViewportExpanding = newState.viewportHeight > oldState.viewportHeight
 
         if didResize && shouldPreserveBottom {
             isPinnedToBottom = true
-            scrollToBottom(proxy, animated: false)
+            scrollToBottom(animated: isViewportExpanding)
+        } else if didResize {
+            preserveVisibleScrollPosition(
+                oldState: oldState,
+                newState: newState,
+                animated: isViewportExpanding
+            )
         } else {
             isPinnedToBottom = newState.isPinnedToBottom
+        }
+    }
+
+    private func preserveVisibleScrollPosition(
+        oldState: CPSLTimelineScrollState,
+        newState: CPSLTimelineScrollState,
+        animated: Bool
+    ) {
+        let viewportDelta = oldState.viewportHeight - newState.viewportHeight
+        let targetY = min(
+            max(oldState.contentOffsetY + viewportDelta, 0),
+            newState.maxContentOffsetY
+        )
+
+        isPinnedToBottom = newState.isPinnedToBottom
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) {
+                scrollPosition.scrollTo(y: targetY)
+            }
+        } else {
+            scrollPosition.scrollTo(y: targetY)
         }
     }
 }
@@ -96,11 +126,19 @@ struct CPSLChatTimelineView: View {
 private struct CPSLTimelineScrollState: Equatable {
     let isPinnedToBottom: Bool
     let viewportHeight: CGFloat
+    let contentHeight: CGFloat
+    let contentOffsetY: CGFloat
+
+    var maxContentOffsetY: CGFloat {
+        max(0, contentHeight - viewportHeight)
+    }
 
     init(geometry: ScrollGeometry) {
         let bottomDistance = geometry.contentSize.height - geometry.visibleRect.maxY
         isPinnedToBottom = bottomDistance <= CPSLTheme.medium
         viewportHeight = geometry.containerSize.height
+        contentHeight = geometry.contentSize.height
+        contentOffsetY = geometry.contentOffset.y
     }
 }
 
