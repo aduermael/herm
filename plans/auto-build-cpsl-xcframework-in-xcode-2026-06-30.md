@@ -98,14 +98,14 @@ Set `ENABLE_USER_SCRIPT_SANDBOXING = NO` on the **herm target** Debug and Releas
 
 ## Phase 4: Verification
 
-- [ ] 4a: Static syntax checks: `sh -n scripts/lib/cpsl-xcframework.sh`, `sh -n scripts/ensure-cpsl-apple-xcframework.sh`, `sh -n scripts/build-cpsl-apple-xcframework.sh`, `sh -n scripts/dev-apple-macos.sh`, `sh -n scripts/dev-apple-ios.sh`.
-- [ ] 4b: On macOS with full Xcode and Rust Apple targets: remove `.herm-cpsl/artifacts/apple/cpsl.xcframework`, build herm in Xcode or via `xcodebuild` — CPSL builds before Swift compilation.
-- [ ] 4c: Rebuild immediately — ensure script reuses existing XCFramework (fast no-op).
-- [ ] 4d: Build iOS simulator and macOS destinations — both link/embed the same full XCFramework.
-- [ ] 4e: Touch a file under `scripts/cpsl-patches/` and rebuild — ensure script rebuilds CPSL.
-- [ ] 4f: Touch `scripts/build-cpsl-apple-xcframework.sh` and rebuild — ensure script rebuilds CPSL.
-- [ ] 4g: Build for a visionOS destination — clear unsupported-platform error before Rust build starts.
-- [ ] 4h: Run `scripts/dev-apple-macos.sh --build-only` — confirm it still works via the shared ensure script.
+- [x] 4a: Static syntax checks: `sh -n scripts/lib/cpsl-xcframework.sh`, `sh -n scripts/ensure-cpsl-apple-xcframework.sh`, `sh -n scripts/build-cpsl-apple-xcframework.sh`, `sh -n scripts/dev-apple-macos.sh`, `sh -n scripts/dev-apple-ios.sh`.
+- [x] 4b: On macOS with full Xcode and Rust Apple targets: remove `.herm-cpsl/artifacts/apple/cpsl.xcframework`, build herm in Xcode or via `xcodebuild` — CPSL builds before Swift compilation.
+- [x] 4c: Rebuild immediately — ensure script reuses existing XCFramework (fast no-op).
+- [x] 4d: Build iOS simulator and macOS destinations — both link/embed the same full XCFramework.
+- [x] 4e: Touch a file under `scripts/cpsl-patches/` and rebuild — ensure script rebuilds CPSL.
+- [x] 4f: Touch `scripts/build-cpsl-apple-xcframework.sh` and rebuild — ensure script rebuilds CPSL.
+- [x] 4g: Build for a visionOS destination — clear unsupported-platform error before Rust build starts.
+- [x] 4h: Run `scripts/dev-apple-macos.sh --build-only` — confirm it still works via the shared ensure script.
 
 ---
 
