@@ -211,9 +211,9 @@ if [ -n "$cpsl_macos_targets" ]; then
 	export MACOS_TARGETS="$cpsl_macos_targets"
 fi
 if [ "$cpsl_mode" = skip ]; then
-	"$root/scripts/ensure-cpsl-apple-xcframework.sh" --skip
+	"$root/scripts/link-cpsl-xcframework-for-xcode.sh" --skip
 else
-	"$root/scripts/ensure-cpsl-apple-xcframework.sh"
+	"$root/scripts/link-cpsl-xcframework-for-xcode.sh"
 fi
 
 clean_xattrs "$root/app/apple/herm" "$xcframework_path" "$app_path"

@@ -8,7 +8,11 @@ herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 link_path="$herm_root/scripts/cpsl-xcframework-placeholder/cpsl.xcframework"
 built_path="$herm_root/.herm-cpsl/artifacts/apple/cpsl.xcframework"
 
-"$herm_root/scripts/ensure-cpsl-apple-xcframework.sh"
+if [ ! -e "$link_path" ]; then
+	"$herm_root/scripts/bootstrap-cpsl-xcframework-placeholder.sh"
+fi
+
+"$herm_root/scripts/ensure-cpsl-apple-xcframework.sh" "$@"
 
 [ -d "$built_path" ] || {
 	printf '%s\n' "error: missing built CPSL XCFramework: $built_path" >&2
