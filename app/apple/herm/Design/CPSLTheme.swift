@@ -29,7 +29,7 @@ enum CPSLTheme {
     static let rowRadius = Self.compactRadius
 
     static let controlSize: CGFloat = 38
-    static let contentHorizontalInset: CGFloat = 16
+    static let contentHorizontalInset = Self.medium
     static let chromeHorizontalInset = Self.medium
     static let messageVerticalSpacing = Self.large
     static let framedMessageSideIndent: CGFloat = 44
@@ -37,7 +37,7 @@ enum CPSLTheme {
     static let bodyLineSpacing: CGFloat = 2
     static let composerSpacing = Self.small
     static let composerPadding = Self.small
-    static let promptVerticalInset: CGFloat = 4
+    static let promptVerticalInset = Self.small
     static let topChromeInset: CGFloat = 148
     static let bottomChromeInset: CGFloat = 132
     static let topBlendHeight: CGFloat = 100

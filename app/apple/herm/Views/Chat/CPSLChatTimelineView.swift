@@ -19,15 +19,15 @@ struct CPSLChatTimelineView: View {
                         CPSLChatMessageView(message: message)
                             .id(message.id)
                     }
-
-                    Color.clear
-                        .frame(height: bottomInset)
                 }
                 .padding(.horizontal, CPSLTheme.contentHorizontalInset)
-                .padding(.top, topInset)
+                .padding(.top, topInset + CPSLTheme.messageVerticalSpacing)
+                .padding(.bottom, bottomInset + CPSLTheme.messageVerticalSpacing)
             }
             .scrollPosition($scrollPosition)
             .scrollDismissesKeyboard(.interactively)
+            .contentMargins(.top, topInset, for: .scrollIndicators)
+            .contentMargins(.bottom, bottomInset, for: .scrollIndicators)
             .opacity(model.messages.isEmpty ? 0 : 1)
             .onAppear {
                 scrollToBottom(animated: false)
