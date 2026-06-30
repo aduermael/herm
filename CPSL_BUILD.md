@@ -165,8 +165,12 @@ The Apple helper currently builds the minimum Herm CPSL profile. The `--all`
 profile is intentionally not enabled until the Apple PDFium/runtime artifact
 path is defined.
 
-For an iOS-only output under `.herm-cpsl/artifacts/ios/`, the narrower
-`scripts/build-cpsl-ios-xcframework.sh` helper remains available.
+For an iOS-only output under `.herm-cpsl/artifacts/ios/`, use the Apple helper
+with the iOS platform selected:
+
+```sh
+APPLE_PLATFORMS=ios OUT_DIR=.herm-cpsl/artifacts/ios scripts/build-cpsl-apple-xcframework.sh
+```
 
 ## macOS App From Terminal
 
@@ -229,7 +233,6 @@ CPSL_REF=47ea301e1b32223cc0bc46001cca59fb7516f047 scripts/build-cpsl-image.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 CPSL_TARGET_DIR=/tmp/cpsl-target scripts/build-cpsl-image.sh
 scripts/build-cpsl-apple-xcframework.sh
-scripts/build-cpsl-ios-xcframework.sh
 ```
 
 `RUN_PROBE=1` runs the ignored CPSL FFI probe test after building. The normal
