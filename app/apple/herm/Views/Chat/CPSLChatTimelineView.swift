@@ -87,13 +87,11 @@ struct CPSLChatTimelineView: View {
         let shouldPreserveBottom = oldState.isPinnedToBottom || isPinnedToBottom
         let isViewportExpanding = newState.viewportHeight > oldState.viewportHeight
 
-        if didResize && shouldPreserveBottom {
-            isPinnedToBottom = true
-            scrollToBottom(animated: isViewportExpanding)
-        } else if didResize {
+        if didResize {
             preserveVisibleScrollPosition(
                 oldState: oldState,
                 newState: newState,
+                pinnedToBottom: shouldPreserveBottom,
                 animated: isViewportExpanding
             )
         } else {
@@ -104,15 +102,17 @@ struct CPSLChatTimelineView: View {
     private func preserveVisibleScrollPosition(
         oldState: CPSLTimelineScrollState,
         newState: CPSLTimelineScrollState,
+        pinnedToBottom: Bool,
         animated: Bool
     ) {
         let viewportDelta = oldState.viewportHeight - newState.viewportHeight
-        let targetY = min(
-            max(oldState.contentOffsetY + viewportDelta, 0),
+        let preservedY = oldState.contentOffsetY + viewportDelta
+        let targetY = pinnedToBottom ? newState.maxContentOffsetY : min(
+            max(preservedY, 0),
             newState.maxContentOffsetY
         )
 
-        isPinnedToBottom = newState.isPinnedToBottom
+        isPinnedToBottom = pinnedToBottom || newState.isPinnedToBottom
         if animated {
             withAnimation(.easeOut(duration: 0.2)) {
                 scrollPosition.scrollTo(y: targetY)
