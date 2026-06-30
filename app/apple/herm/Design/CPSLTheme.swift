@@ -13,7 +13,7 @@ enum CPSLTheme {
     static let secondaryText = Color(red: 0.604, green: 0.616, blue: 0.698)
     static let mutedText = Color(red: 0.345, green: 0.369, blue: 0.447)
     static let mauve = Color(red: 0.49, green: 0.42, blue: 0.78)
-    static let command = Color(red: 0.16, green: 0.24, blue: 0.22)
+    static let command = Color(red: 0.076, green: 0.091, blue: 0.145)
     static let error = Color(red: 0.36, green: 0.16, blue: 0.20)
 
     static let small: CGFloat = 8
@@ -47,6 +47,7 @@ enum CPSLTheme {
     enum FontSize {
         static let title: CGFloat = 22
         static let body: CGFloat = 16
+        static let monospaceBody: CGFloat = 15
         static let control: CGFloat = 14
         static let supporting: CGFloat = 13
         static let caption: CGFloat = 12
@@ -70,7 +71,7 @@ enum CPSLTheme {
 
     static let headerFont = userFont(size: FontSize.title, weight: .semibold)
     static let bodyFont = userFont(size: FontSize.body)
-    static let monospacedBodyFont = userFont(size: FontSize.body, design: .monospaced)
+    static let monospacedBodyFont = userFont(size: FontSize.monospaceBody, design: .monospaced)
     static let controlFont = userFont(size: FontSize.control, weight: .medium)
     static let supportingFont = userFont(size: FontSize.supporting)
     static let supportingMediumFont = userFont(size: FontSize.supporting, weight: .medium)
