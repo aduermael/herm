@@ -8,7 +8,20 @@ herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 link_path="$herm_root/scripts/cpsl-xcframework-placeholder/cpsl.xcframework"
 built_path="$herm_root/.herm-cpsl/artifacts/apple/cpsl.xcframework"
 
-if [ ! -e "$link_path" ]; then
+# Xcode validates the linked XCFramework path before any build phase runs, so a
+# tracked bootstrap directory must exist on fresh clones. Locally, repair broken
+# symlinks or unexpected contents before building the real artifact.
+if [ -L "$link_path" ]; then
+	if [ ! -e "$link_path" ]; then
+		rm "$link_path"
+		"$herm_root/scripts/bootstrap-cpsl-xcframework-placeholder.sh"
+	fi
+elif [ ! -e "$link_path" ]; then
+	"$herm_root/scripts/bootstrap-cpsl-xcframework-placeholder.sh"
+elif [ -d "$link_path" ] && cpsl_xcframework_is_placeholder "$link_path"; then
+	:
+elif [ -e "$link_path" ]; then
+	rm -rf "$link_path"
 	"$herm_root/scripts/bootstrap-cpsl-xcframework-placeholder.sh"
 fi
 
@@ -20,6 +33,10 @@ fi
 }
 
 if [ -L "$link_path" ]; then
+	current_target=$(CDPATH= cd "$(dirname "$link_path")" && readlink "$link_path" || printf '')
+	if [ "$current_target" = "$built_path" ]; then
+		exit 0
+	fi
 	rm "$link_path"
 elif [ -e "$link_path" ]; then
 	rm -rf "$link_path"

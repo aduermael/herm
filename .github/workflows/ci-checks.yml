@@ -45,3 +45,18 @@ jobs:
           go-version: "1.24"
       - run: cd tools/ci-check && go build -o "$RUNNER_TEMP/ci-check" .
       - run: '"$RUNNER_TEMP/ci-check" positional-params .'
+
+  cpsl-xcframework-placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify tracked CPSL XCFramework placeholder is not a symlink
+        run: |
+          set -eu
+          path="scripts/cpsl-xcframework-placeholder/cpsl.xcframework"
+          if [ -L "$path" ]; then
+            echo "error: $path is a symlink; commit the bootstrap directory instead" >&2
+            echo "Run: scripts/bootstrap-cpsl-xcframework-placeholder.sh" >&2
+            exit 1
+          fi
+          test -f "$path/.bootstrap-placeholder"

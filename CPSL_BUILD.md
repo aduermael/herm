@@ -182,8 +182,8 @@ APPLE_PLATFORMS=ios OUT_DIR=.herm-cpsl/artifacts/ios scripts/build-cpsl-apple-xc
 Opening `app/apple/herm.xcodeproj` in Xcode and building the `herm` target
 automatically ensures the CPSL XCFramework exists before Swift compilation.
 
-The `herm` target has a **Build CPSL XCFramework** run-script phase inserted
-before Sources. On every build it runs:
+The `herm` target depends on a **Build CPSL XCFramework** aggregate target that
+runs before compilation. On every build it runs:
 
 ```sh
 "${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh"
@@ -205,11 +205,12 @@ or `scripts/apply-cpsl-patches.sh` changed.
 Xcode builds always produce the full iOS+macOS XCFramework, even when the active
 destination only needs one platform.
 
-A tracked bootstrap placeholder at
-`scripts/cpsl-xcframework-placeholder/cpsl.xcframework` satisfies Xcode's
-pre-build validation on fresh clones. The ensure script builds the real
-XCFramework under gitignored `.herm-cpsl/artifacts/apple/`, then the Xcode
-helper replaces the placeholder path with a symlink to that artifact.
+Xcode validates linked XCFrameworks before any target runs. A tracked bootstrap
+placeholder at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework`
+satisfies that check on fresh clones. The ensure script then builds the real
+XCFramework under gitignored `.herm-cpsl/artifacts/apple/`, and the Xcode helper
+replaces the placeholder path with a local symlink to that artifact. Do not
+commit the symlink; only the bootstrap directory belongs in git.
 
 ### First-build prerequisites
 
