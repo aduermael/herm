@@ -25,6 +25,16 @@
 		};
 /* End PBXCopyFilesBuildPhase section */
 
+/* Begin PBXContainerItemProxy section */
+		850B3C002FE8390F00A21FCC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 85D75D2B2FE62B6F0095BAB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 850B3BFE2FE8390F00A21FCA;
+			remoteInfo = "Build CPSL XCFramework";
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = cpsl.xcframework; path = "../../.herm-cpsl/artifacts/apple/cpsl.xcframework"; sourceTree = "<group>"; };
 		85D75D332FE62B6F0095BAB2 /* herm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = herm.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -77,12 +87,25 @@
 		};
 /* End PBXGroup section */
 
+/* Begin PBXAggregateTarget section */
+		850B3BFE2FE8390F00A21FCA /* Build CPSL XCFramework */ = {
+			isa = PBXAggregateTarget;
+			buildConfigurationList = 850B3C012FE8390F00A21FCD /* Build configuration list for PBXAggregateTarget "Build CPSL XCFramework" */;
+			buildPhases = (
+				850B3BFD2FE8390F00A21FC9 /* Build CPSL XCFramework */,
+			);
+			dependencies = (
+			);
+			name = "Build CPSL XCFramework";
+			productName = "Build CPSL XCFramework";
+		};
+/* End PBXAggregateTarget section */
+
 /* Begin PBXNativeTarget section */
 		85D75D322FE62B6F0095BAB2 /* herm */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 85D75D3E2FE62B6F0095BAB2 /* Build configuration list for PBXNativeTarget "herm" */;
 			buildPhases = (
-				850B3BFD2FE8390F00A21FC9 /* Build CPSL XCFramework */,
 				85D75D2F2FE62B6F0095BAB2 /* Sources */,
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
 				85D75D312FE62B6F0095BAB2 /* Resources */,
@@ -91,6 +114,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				850B3BFF2FE8390F00A21FCB /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				85D75D352FE62B6F0095BAB2 /* herm */,
@@ -112,6 +136,9 @@
 				LastSwiftUpdateCheck = 2650;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
+					850B3BFE2FE8390F00A21FCA = {
+						CreatedOnToolsVersion = 26.5;
+					};
 					85D75D322FE62B6F0095BAB2 = {
 						CreatedOnToolsVersion = 26.5;
 					};
@@ -131,6 +158,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				850B3BFE2FE8390F00A21FCA /* Build CPSL XCFramework */,
 				85D75D322FE62B6F0095BAB2 /* herm */,
 			);
 		};
@@ -161,6 +189,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/../../.herm-cpsl/artifacts/apple/cpsl.xcframework/Info.plist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -177,6 +206,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		850B3BFF2FE8390F00A21FCB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 850B3BFE2FE8390F00A21FCA /* Build CPSL XCFramework */;
+			targetProxy = 850B3C002FE8390F00A21FCC /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		85D75D3C2FE62B6F0095BAB2 /* Debug */ = {
@@ -395,9 +432,34 @@
 			};
 			name = Release;
 		};
+		850B3C022FE8390F00A21FCE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		850B3C032FE8390F00A21FCF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		850B3C012FE8390F00A21FCD /* Build configuration list for PBXAggregateTarget "Build CPSL XCFramework" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				850B3C022FE8390F00A21FCE /* Debug */,
+				850B3C032FE8390F00A21FCF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		85D75D2E2FE62B6F0095BAB2 /* Build configuration list for PBXProject "herm" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

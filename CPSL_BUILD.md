@@ -195,6 +195,11 @@ or `scripts/apply-cpsl-patches.sh` changed.
 Xcode builds always produce the full iOS+macOS XCFramework, even when the active
 destination only needs one platform.
 
+A tracked bootstrap placeholder at
+`.herm-cpsl/artifacts/apple/cpsl.xcframework` satisfies Xcode's pre-build
+validation on fresh clones. The ensure script replaces it with a real build when
+the placeholder marker is present or the artifact is incomplete or stale.
+
 ### First-build prerequisites
 
 The first full XCFramework build compiles five Rust targets and may take several

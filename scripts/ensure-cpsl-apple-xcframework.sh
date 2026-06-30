@@ -82,6 +82,7 @@ cpsl_ensure_should_reuse() {
 	[ "${HERM_CPSL_REBUILD:-0}" = 1 ] && return 1
 	[ -d "$xcframework_path" ] || return 1
 	[ -f "$xcframework_info" ] || return 1
+	cpsl_xcframework_is_placeholder "$xcframework_path" && return 1
 	cpsl_xcframework_is_full "$xcframework_info" || return 1
 	cpsl_xcframework_inputs_newer_than "$xcframework_info" "$herm_root" && return 1
 	return 0

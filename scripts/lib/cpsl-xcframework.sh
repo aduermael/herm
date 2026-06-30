@@ -95,6 +95,82 @@ cpsl_xcframework_is_full() {
 		cpsl_xcframework_has_macos "$info"
 }
 
+cpsl_xcframework_placeholder_marker() {
+	xcframework_path=$1
+	printf '%s/.bootstrap-placeholder' "$xcframework_path"
+}
+
+cpsl_xcframework_is_placeholder() {
+	xcframework_path=$1
+	marker=$(cpsl_xcframework_placeholder_marker "$xcframework_path")
+	[ -f "$marker" ]
+}
+
+cpsl_xcframework_bootstrap_placeholder() {
+	xcframework_path=$1
+	header_source=$2
+	slice_id_ios_device=ios-arm64
+	slice_id_ios_simulator=ios-arm64_x86_64-simulator
+	slice_id_macos=macos-arm64_x86_64
+
+	[ -n "$header_source" ] || return 1
+	[ -f "$header_source" ] || return 1
+
+	mkdir -p \
+		"$xcframework_path/$slice_id_ios_device/Headers" \
+		"$xcframework_path/$slice_id_ios_simulator/Headers" \
+		"$xcframework_path/$slice_id_macos/Headers"
+
+	cp "$header_source" "$xcframework_path/$slice_id_ios_device/Headers/cpsl.h"
+	cp "$header_source" "$xcframework_path/$slice_id_ios_simulator/Headers/cpsl.h"
+	cp "$header_source" "$xcframework_path/$slice_id_macos/Headers/cpsl.h"
+	printf 'bootstrap placeholder\n' >"$xcframework_path/$slice_id_ios_device/libcpsl.dylib"
+	printf 'bootstrap placeholder\n' >"$xcframework_path/$slice_id_ios_simulator/libcpsl.dylib"
+	printf 'bootstrap placeholder\n' >"$xcframework_path/$slice_id_macos/libcpsl.dylib"
+
+	cat >"$xcframework_path/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>AvailableLibraries</key>
+<array>
+<dict>
+<key>BinaryPath</key><string>libcpsl.dylib</string>
+<key>HeadersPath</key><string>Headers</string>
+<key>LibraryIdentifier</key><string>$slice_id_macos</string>
+<key>LibraryPath</key><string>libcpsl.dylib</string>
+<key>SupportedArchitectures</key><array><string>arm64</string><string>x86_64</string></array>
+<key>SupportedPlatform</key><string>macos</string>
+</dict>
+<dict>
+<key>BinaryPath</key><string>libcpsl.dylib</string>
+<key>HeadersPath</key><string>Headers</string>
+<key>LibraryIdentifier</key><string>$slice_id_ios_simulator</string>
+<key>LibraryPath</key><string>libcpsl.dylib</string>
+<key>SupportedArchitectures</key><array><string>arm64</string><string>x86_64</string></array>
+<key>SupportedPlatform</key><string>ios</string>
+<key>SupportedPlatformVariant</key><string>simulator</string>
+</dict>
+<dict>
+<key>BinaryPath</key><string>libcpsl.dylib</string>
+<key>HeadersPath</key><string>Headers</string>
+<key>LibraryIdentifier</key><string>$slice_id_ios_device</string>
+<key>LibraryPath</key><string>libcpsl.dylib</string>
+<key>SupportedArchitectures</key><array><string>arm64</string></array>
+<key>SupportedPlatform</key><string>ios</string>
+</dict>
+</array>
+<key>CFBundlePackageType</key><string>XFWK</string>
+<key>XCFrameworkFormatVersion</key><string>1.0</string>
+</dict>
+</plist>
+EOF
+
+	printf 'Herm CPSL XCFramework bootstrap placeholder. Rebuilt automatically by ensure-cpsl-apple-xcframework.sh.\n' \
+		>"$(cpsl_xcframework_placeholder_marker "$xcframework_path")"
+}
+
 cpsl_xcframework_inputs_newer_than() {
 	info_plist=$1
 	herm_root=$2
