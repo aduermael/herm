@@ -17,10 +17,6 @@ tools/edit-file/edit-file
 .herm/
 .herm-lock
 .herm-cpsl/
-!.herm-cpsl/artifacts/
-!.herm-cpsl/artifacts/apple/
-!.herm-cpsl/artifacts/apple/cpsl.xcframework/
-!.herm-cpsl/artifacts/apple/cpsl.xcframework/**
 .herm-apple/
 .agents/
 

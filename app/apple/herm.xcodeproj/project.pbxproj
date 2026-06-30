@@ -36,7 +36,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = cpsl.xcframework; path = "../../.herm-cpsl/artifacts/apple/cpsl.xcframework"; sourceTree = "<group>"; };
+		850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = cpsl.xcframework; path = "../../scripts/cpsl-xcframework-placeholder/cpsl.xcframework"; sourceTree = "<group>"; };
 		85D75D332FE62B6F0095BAB2 /* herm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = herm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -189,11 +189,11 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/../../.herm-cpsl/artifacts/apple/cpsl.xcframework/Info.plist",
+				"$(SRCROOT)/../../scripts/cpsl-xcframework-placeholder/cpsl.xcframework/Info.plist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/../../scripts/ensure-cpsl-apple-xcframework.sh\"\n";
+			shellScript = "\"${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

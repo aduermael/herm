@@ -10,8 +10,7 @@ script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/cpsl-xcframework.sh"
 
-work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
-out_dir=${OUT_DIR:-"$work_dir/artifacts/apple"}
+out_dir=${OUT_DIR:-"$herm_root/scripts/cpsl-xcframework-placeholder"}
 xcframework_path="$out_dir/cpsl.xcframework"
 header_source="$script_dir/cpsl-xcframework-placeholder/cpsl.h"
 

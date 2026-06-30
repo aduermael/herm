@@ -181,8 +181,13 @@ The `herm` target has a **Build CPSL XCFramework** run-script phase inserted
 before Sources. On every build it runs:
 
 ```sh
-"${SRCROOT}/../../scripts/ensure-cpsl-apple-xcframework.sh"
+"${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh"
 ```
+
+That helper calls `ensure-cpsl-apple-xcframework.sh` to build or reuse
+`.herm-cpsl/artifacts/apple/cpsl.xcframework`, then symlinks the Xcode-linked
+path at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework` to the built
+artifact.
 
 The phase is marked always-out-of-date so Xcode invokes the script each build,
 but the ensure script itself is cheap when nothing changed: it reuses
@@ -196,9 +201,10 @@ Xcode builds always produce the full iOS+macOS XCFramework, even when the active
 destination only needs one platform.
 
 A tracked bootstrap placeholder at
-`.herm-cpsl/artifacts/apple/cpsl.xcframework` satisfies Xcode's pre-build
-validation on fresh clones. The ensure script replaces it with a real build when
-the placeholder marker is present or the artifact is incomplete or stale.
+`scripts/cpsl-xcframework-placeholder/cpsl.xcframework` satisfies Xcode's
+pre-build validation on fresh clones. The ensure script builds the real
+XCFramework under gitignored `.herm-cpsl/artifacts/apple/`, then the Xcode
+helper replaces the placeholder path with a symlink to that artifact.
 
 ### First-build prerequisites
 
