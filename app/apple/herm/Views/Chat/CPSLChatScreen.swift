@@ -3,10 +3,9 @@ import SwiftUI
 struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
-    @State private var bottomChromeHeight = CPSLTheme.bottomChromeInset
 
     private var contentBottomInset: CGFloat {
-        bottomChromeHeight + CPSLTheme.medium
+        CPSLTheme.medium
     }
 
     var body: some View {
@@ -29,7 +28,7 @@ struct CPSLChatScreen: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea(.container, edges: [.top, .bottom])
+            .ignoresSafeArea(.container, edges: .top)
             .contentShape(Rectangle())
             .onTapGesture {
                 promptDismissRequest += 1
@@ -59,12 +58,6 @@ struct CPSLChatScreen: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomChrome
-        }
-        .onPreferenceChange(CPSLBottomChromeHeightKey.self) { height in
-            guard height > 0, abs(height - bottomChromeHeight) > 0.5 else {
-                return
-            }
-            bottomChromeHeight = height
         }
         .alert(
             "Coming soon",
@@ -98,22 +91,6 @@ struct CPSLChatScreen: View {
                 promptDismissRequest += 1
             }
         }
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: CPSLBottomChromeHeightKey.self,
-                    value: proxy.size.height
-                )
-            }
-        }
-    }
-}
-
-private struct CPSLBottomChromeHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }
 
@@ -122,40 +99,45 @@ private struct CPSLHeaderView: View {
 
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
-            HStack(spacing: CPSLTheme.small) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(CPSLTheme.mauve)
-                Text("Herm")
-                    .font(CPSLTheme.headerFont)
+            CPSLHeaderIconButton(systemName: "line.3.horizontal", accessibilityLabel: "Menu") {
+                model.showComingSoon("coming soon")
             }
-            .foregroundStyle(CPSLTheme.text)
 
             Spacer()
 
-            Button {
+            CPSLHeaderIconButton(systemName: "square.and.pencil", accessibilityLabel: "New conversation") {
                 model.startNewConversation()
-            } label: {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-                    .cpslGlassBackground(
-                        in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                        tint: CPSLTheme.background.opacity(0.34),
-                        strokeOpacity: 0.045
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(CPSLTheme.text)
             .disabled(model.isRunning)
             .opacity(model.isRunning ? 0.45 : 1)
-            .accessibilityLabel("New conversation")
-            .help("New conversation")
         }
         .padding(.horizontal, CPSLTheme.medium)
         .padding(.top, CPSLTheme.medium)
         .padding(.bottom, CPSLTheme.medium)
+    }
+}
+
+private struct CPSLHeaderIconButton: View {
+    let systemName: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .cpslGlassBackground(
+                    in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                    tint: CPSLTheme.background.opacity(0.34),
+                    strokeOpacity: 0.045
+                )
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.text)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
     }
 }
 

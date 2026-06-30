@@ -5,6 +5,7 @@ struct CPSLChatTimelineView: View {
     let topInset: CGFloat
     let bottomInset: CGFloat
     private let bottomAnchorID = "conversation-bottom"
+    @State private var isPinnedToBottom = true
 
     var body: some View {
         ZStack {
@@ -39,8 +40,17 @@ struct CPSLChatTimelineView: View {
                     scrollToBottom(proxy, animated: true)
                 }
                 .onChange(of: bottomInset) { _, _ in
-                    scrollToBottom(proxy, animated: false)
+                    scrollToBottomIfPinned(proxy)
                 }
+                .onScrollGeometryChange(
+                    for: CPSLTimelineScrollState.self,
+                    of: { geometry in
+                        CPSLTimelineScrollState(geometry: geometry)
+                    },
+                    action: { oldState, newState in
+                        handleScrollGeometryChange(oldState: oldState, newState: newState, proxy: proxy)
+                    }
+                )
             }
         }
     }
@@ -57,6 +67,40 @@ struct CPSLChatTimelineView: View {
         } else {
             proxy.scrollTo(bottomAnchorID, anchor: .bottom)
         }
+    }
+
+    private func scrollToBottomIfPinned(_ proxy: ScrollViewProxy) {
+        guard isPinnedToBottom else {
+            return
+        }
+        scrollToBottom(proxy, animated: false)
+    }
+
+    private func handleScrollGeometryChange(
+        oldState: CPSLTimelineScrollState,
+        newState: CPSLTimelineScrollState,
+        proxy: ScrollViewProxy
+    ) {
+        let didResize = abs(oldState.viewportHeight - newState.viewportHeight) > 0.5
+        let shouldPreserveBottom = oldState.isPinnedToBottom || isPinnedToBottom
+
+        if didResize && shouldPreserveBottom {
+            isPinnedToBottom = true
+            scrollToBottom(proxy, animated: false)
+        } else {
+            isPinnedToBottom = newState.isPinnedToBottom
+        }
+    }
+}
+
+private struct CPSLTimelineScrollState: Equatable {
+    let isPinnedToBottom: Bool
+    let viewportHeight: CGFloat
+
+    init(geometry: ScrollGeometry) {
+        let bottomDistance = geometry.contentSize.height - geometry.visibleRect.maxY
+        isPinnedToBottom = bottomDistance <= CPSLTheme.medium
+        viewportHeight = geometry.containerSize.height
     }
 }
 
