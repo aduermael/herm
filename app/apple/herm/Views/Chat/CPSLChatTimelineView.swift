@@ -14,9 +14,9 @@ struct CPSLChatTimelineView: View {
             }
 
             ScrollView {
-                LazyVStack(spacing: CPSLTheme.medium) {
+                LazyVStack(spacing: CPSLTheme.messageVerticalSpacing) {
                     ForEach(model.messages) { message in
-                        CPSLChatBubbleView(message: message)
+                        CPSLChatMessageView(message: message)
                             .id(message.id)
                     }
 
@@ -146,47 +146,61 @@ private struct CPSLEmptyChatView: View {
     var body: some View {
         VStack(spacing: CPSLTheme.medium) {
             Image(systemName: "sparkles")
-                .font(.system(size: 56, weight: .light))
+                .font(CPSLTheme.emptyStateIconFont)
                 .foregroundStyle(CPSLTheme.mauve.opacity(0.30))
 
             Text("Herm")
-                .font(.system(size: 14, weight: .medium))
+                .font(CPSLTheme.controlFont)
                 .foregroundStyle(CPSLTheme.mutedText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-private struct CPSLChatBubbleView: View {
+private struct CPSLChatMessageView: View {
     let message: CPSLChatMessage
 
     var body: some View {
         HStack {
             if message.role.isTrailingAligned && !message.role.isFullWidth {
-                Spacer(minLength: CPSLTheme.large * 2)
+                Spacer(minLength: CPSLTheme.framedMessageSideIndent)
             }
 
-            VStack(alignment: .leading, spacing: CPSLTheme.small) {
-                if let title = message.title {
-                    Text(title)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(message.role.foreground.opacity(0.72))
-                }
-                messageBody
-            }
-            .padding(CPSLTheme.medium)
-            .background(message.role.fill)
-            .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-            .frame(
-                maxWidth: message.role.isFullWidth ? .infinity : 720,
-                alignment: message.role.isTrailingAligned ? .trailing : .leading
-            )
+            messageContent
 
             if !message.role.isTrailingAligned && !message.role.isFullWidth {
-                Spacer(minLength: CPSLTheme.large * 2)
+                Spacer(minLength: CPSLTheme.framedMessageSideIndent)
             }
         }
         .frame(maxWidth: .infinity, alignment: message.role.isTrailingAligned ? .trailing : .leading)
+    }
+
+    @ViewBuilder
+    private var messageContent: some View {
+        if message.role.isFramed {
+            messageStack
+                .padding(CPSLTheme.medium)
+                .background(message.role.fill)
+                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.messageRadius, style: .continuous))
+                .frame(
+                    maxWidth: message.role.isFullWidth ? .infinity : CPSLTheme.framedMessageMaxWidth,
+                    alignment: message.role.isTrailingAligned ? .trailing : .leading
+                )
+        } else {
+            messageStack
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var messageStack: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small) {
+            if message.role.displaysTitle, let title = message.title {
+                Text(title)
+                    .font(CPSLTheme.captionMediumFont)
+                    .foregroundStyle(message.role.foreground.opacity(0.72))
+            }
+            messageBody
+        }
     }
 
     @ViewBuilder
@@ -197,6 +211,7 @@ private struct CPSLChatBubbleView: View {
             Text(message.body)
                 .font(message.role.usesMonospaceBody ? CPSLTheme.monospacedBodyFont : CPSLTheme.bodyFont)
                 .foregroundStyle(message.role.foreground)
+                .lineSpacing(message.role.usesMonospaceBody ? 0 : CPSLTheme.bodyLineSpacing)
                 .textSelection(.enabled)
         }
     }

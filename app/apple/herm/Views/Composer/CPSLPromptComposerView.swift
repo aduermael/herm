@@ -20,7 +20,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         textView.backgroundColor = .clear
         textView.textColor = UIColor(CPSLTheme.text)
         textView.tintColor = UIColor(CPSLTheme.text)
-        textView.font = UIFont.systemFont(ofSize: CPSLTheme.normalTextSize, weight: .regular)
+        textView.font = CPSLTheme.bodyUIFont
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.returnKeyType = .default
@@ -139,9 +139,9 @@ struct CPSLPromptComposerView: View {
 
     private var promptLineHeight: CGFloat {
 #if canImport(UIKit)
-        ceil(UIFont.systemFont(ofSize: CPSLTheme.normalTextSize, weight: .regular).lineHeight)
+        ceil(CPSLTheme.bodyUIFont.lineHeight)
 #else
-        ceil(CPSLTheme.normalTextSize * 1.25)
+        ceil(CPSLTheme.FontSize.body * 1.25)
 #endif
     }
 
@@ -150,14 +150,14 @@ struct CPSLPromptComposerView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.medium) {
+        VStack(alignment: .leading, spacing: CPSLTheme.composerSpacing) {
             ZStack(alignment: .topLeading) {
                 if model.promptText.isEmpty {
                     Text("Ask Anything")
                         .font(CPSLTheme.bodyFont)
                         .foregroundStyle(CPSLTheme.mutedText)
                         .padding(.horizontal, CPSLTheme.medium)
-                        .padding(.vertical, CPSLTheme.small)
+                        .padding(.vertical, CPSLTheme.promptVerticalInset)
                 }
 
 #if canImport(UIKit)
@@ -173,7 +173,7 @@ struct CPSLPromptComposerView: View {
                 }
                 .frame(height: promptTextHeight)
                 .padding(.horizontal, CPSLTheme.medium)
-                .padding(.vertical, CPSLTheme.small)
+                .padding(.vertical, CPSLTheme.promptVerticalInset)
 #else
                 TextField("", text: $model.promptText, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -185,7 +185,7 @@ struct CPSLPromptComposerView: View {
                     .focused($isPromptFocused)
                     .disabled(model.isRunning)
                     .padding(.horizontal, CPSLTheme.medium)
-                    .padding(.vertical, CPSLTheme.small)
+                    .padding(.vertical, CPSLTheme.promptVerticalInset)
 #endif
             }
             .contentShape(Rectangle())
@@ -204,7 +204,7 @@ struct CPSLPromptComposerView: View {
                     model.showComingSoon("coming soon")
                 } label: {
                     Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(CPSLTheme.iconLargeFont)
                         .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
@@ -224,7 +224,7 @@ struct CPSLPromptComposerView: View {
                     model.showComingSoon("coming soon")
                 } label: {
                     Image(systemName: "mic.fill")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(CPSLTheme.iconMediumFont)
                         .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
@@ -248,12 +248,12 @@ struct CPSLPromptComposerView: View {
                     Group {
                         if hasPromptInput {
                             Image(systemName: "arrow.up")
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconLarge, weight: .semibold))
                                 .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         } else {
                             HStack(spacing: CPSLTheme.small) {
                                 Image(systemName: "waveform")
-                                    .font(.system(size: 15, weight: .medium))
+                                    .font(CPSLTheme.iconMediumFont)
                                 Text("Speak")
                                     .font(CPSLTheme.controlFont)
                             }
@@ -270,7 +270,7 @@ struct CPSLPromptComposerView: View {
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             }
         }
-        .padding(CPSLTheme.medium)
+        .padding(CPSLTheme.composerPadding)
         .background {
             RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous)
                 .fill(Color.clear)
@@ -285,7 +285,7 @@ struct CPSLPromptComposerView: View {
             strokeOpacity: 0.055
         )
         .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
-        .padding(.bottom, CPSLTheme.large)
+        .padding(.bottom, CPSLTheme.medium)
         .onChange(of: dismissKeyboardRequest) { _, _ in
             isPromptFocused = false
         }

@@ -125,7 +125,7 @@ private struct CPSLHeaderIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 16, weight: .semibold))
+                .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
                 .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),

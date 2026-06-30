@@ -61,6 +61,7 @@ struct CPSLSandboxURLs {
 }
 
 enum CPSLChatRole: String, Decodable {
+    case assistant
     case user
     case command
     case output
@@ -71,15 +72,25 @@ enum CPSLChatRole: String, Decodable {
     }
 
     var isFullWidth: Bool {
-        self == .command
+        self == .assistant || self == .command
     }
 
     var usesMonospaceBody: Bool {
         self == .command || self == .output || self == .error
     }
 
+    var isFramed: Bool {
+        self != .assistant
+    }
+
+    var displaysTitle: Bool {
+        self != .assistant
+    }
+
     var fill: Color {
         switch self {
+        case .assistant:
+            return .clear
         case .user:
             return CPSLTheme.elevated
         case .command:

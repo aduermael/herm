@@ -30,7 +30,7 @@ struct CPSLFileBrowserView: View {
                     model.navigateToParentDirectory()
                 } label: {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(CPSLTheme.iconSmallFont)
                         .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
@@ -51,7 +51,7 @@ struct CPSLFileBrowserView: View {
             } label: {
                 HStack(spacing: CPSLTheme.small) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconSmall, weight: .bold))
                     Text("Close")
                         .font(CPSLTheme.controlFont)
                 }
@@ -75,10 +75,10 @@ struct CPSLFileBrowserView: View {
     private var pathBadge: some View {
         HStack(spacing: CPSLTheme.small) {
             Image(systemName: "folder.fill")
-                .font(.system(size: 14, weight: .medium))
+                .font(CPSLTheme.iconMediumFont)
                 .foregroundStyle(CPSLTheme.mauve)
             Text(model.browserPath)
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .font(CPSLTheme.userFont(size: CPSLTheme.FontSize.supporting, weight: .medium, design: .monospaced))
                 .foregroundStyle(CPSLTheme.text)
         }
         .padding(.horizontal, CPSLTheme.medium)
@@ -98,7 +98,7 @@ struct CPSLFileBrowserView: View {
             LazyVStack(spacing: 0) {
                 if let error = model.fileBrowserError {
                     Text(error)
-                        .font(.caption)
+                        .font(CPSLTheme.captionFont)
                         .foregroundStyle(CPSLTheme.secondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(CPSLTheme.medium)
@@ -110,7 +110,7 @@ struct CPSLFileBrowserView: View {
                         .padding(.vertical, CPSLTheme.large)
                 } else if model.browserEntries.isEmpty && model.fileBrowserError == nil {
                     Text("Empty")
-                        .font(.callout)
+                        .font(CPSLTheme.bodyFont)
                         .foregroundStyle(CPSLTheme.mutedText)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, CPSLTheme.large)
@@ -125,7 +125,7 @@ struct CPSLFileBrowserView: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(maxHeight: .infinity)
         .cpslGlassBackground(
-            in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+            in: RoundedRectangle(cornerRadius: CPSLTheme.paneRadius, style: .continuous),
             tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.62),
             strokeOpacity: 0.045
         )
@@ -146,7 +146,7 @@ private struct CPSLFileRowsView: View {
                         ProgressView()
                             .controlSize(.small)
                         Text("Loading")
-                            .font(.caption)
+                            .font(CPSLTheme.captionFont)
                             .foregroundStyle(CPSLTheme.mutedText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -176,7 +176,7 @@ private struct CPSLFileRowView: View {
             } label: {
                 HStack(spacing: CPSLTheme.medium) {
                     Image(systemName: entry.isDirectory ? "folder.fill" : "doc.text")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(CPSLTheme.iconMediumFont)
                         .foregroundStyle(entry.isDirectory ? CPSLTheme.mauve : CPSLTheme.secondaryText)
                         .frame(width: 20)
 
@@ -205,7 +205,7 @@ private struct CPSLFileRowView: View {
                 model.toggleExpansion(for: entry)
             } label: {
                 Image(systemName: model.isExpanded(entry) ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.caption, weight: .bold))
                     .frame(width: 24, height: 28)
                     .contentShape(Rectangle())
             }

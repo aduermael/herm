@@ -19,7 +19,7 @@ struct CPSLToolStripView: View {
                 } label: {
                     HStack(spacing: CPSLTheme.small) {
                         Image(systemName: "folder.fill")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
                         Text("Files")
                             .font(CPSLTheme.controlFont)
                     }
@@ -41,7 +41,7 @@ struct CPSLToolStripView: View {
             }
             .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
         }
-        .padding(.bottom, CPSLTheme.medium)
+        .padding(.bottom, CPSLTheme.small)
     }
 }
 
@@ -50,7 +50,7 @@ private struct CPSLDisabledToolIcon: View {
 
     var body: some View {
         Image(systemName: systemName)
-            .font(.system(size: 15, weight: .semibold))
+            .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
             .foregroundStyle(CPSLTheme.mutedText)
             .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
             .cpslGlassBackground(

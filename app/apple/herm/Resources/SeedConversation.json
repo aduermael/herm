@@ -16,8 +16,8 @@
       "body": "!rg --files app/apple/herm | head\n\napp/apple/herm/ContentView.swift\napp/apple/herm/hermApp.swift\napp/apple/herm/Models/CPSLTypes.swift\napp/apple/herm/Models/CPSLChatModel.swift\napp/apple/herm/Views/Chat/CPSLChatScreen.swift\napp/apple/herm/Views/Chat/CPSLChatTimelineView.swift"
     },
     {
-      "role": "output",
-      "title": "Assistant",
+      "role": "assistant",
+      "title": null,
       "body": "The SwiftUI shell is ready for UI integration work. The chat screen, timeline, composer, and file browser already share one observable model, so the next iteration can focus on turning placeholder messages into real agent events without changing the view hierarchy."
     },
     {
@@ -26,8 +26,8 @@
       "body": "Good. Keep the code simple enough that we can replace the fake data with a real agent later."
     },
     {
-      "role": "output",
-      "title": "Assistant",
+      "role": "assistant",
+      "title": null,
       "body": "Agreed. The seed data should stay separate from the model behavior, and the UI can treat loaded, typed, or streamed messages as the same message array."
     }
   ]
