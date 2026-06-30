@@ -30,3 +30,7 @@ tools/edit-file/edit-file
 # IDE - Xcode
 xcuserdata/
 debug.log
+
+# Local CPSL XCFramework symlink created by Xcode builds. The tracked bootstrap
+# stub directory uses this same path on fresh clones.
+scripts/cpsl-xcframework-placeholder/cpsl.xcframework
