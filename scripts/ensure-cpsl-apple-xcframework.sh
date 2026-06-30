@@ -90,7 +90,9 @@ cpsl_ensure_should_reuse() {
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
+. "$script_dir/lib/host-path.sh"
 . "$script_dir/lib/cpsl-xcframework.sh"
+herm_ensure_rust_path
 
 skip_mode=0
 while [ "$#" -gt 0 ]; do

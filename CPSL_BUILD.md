@@ -145,11 +145,16 @@ multi-platform XCFramework:
   include/cpsl.h
 ```
 
-Install the Rust Apple targets before building:
+Install Rust with [rustup](https://rustup.rs/), then add the Apple targets before
+building:
 
 ```sh
 rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin
 ```
+
+Xcode run scripts do not use your login-shell `PATH`. The CPSL build scripts
+source `~/.cargo/env` and prepend `~/.cargo/bin` automatically. If Xcode still
+cannot find `cargo`, restart Xcode after installing Rust.
 
 Override the source or output path the same way as the host-native helper:
 

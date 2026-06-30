@@ -67,6 +67,8 @@ done
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
+. "$script_dir/lib/host-path.sh"
+herm_ensure_rust_path
 
 [ "$(uname -s)" = Darwin ] || die "Apple XCFramework builds require macOS with Xcode"
 
@@ -114,8 +116,8 @@ if [ "$include_macos" -eq 1 ]; then
 	[ -n "$macos_targets" ] || die "MACOS_TARGETS must not be empty when APPLE_PLATFORMS includes macos"
 fi
 
-need_cmd cargo "install Rust from https://rustup.rs"
-need_cmd rustc "install Rust from https://rustup.rs"
+need_cmd cargo "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
+need_cmd rustc "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
 need_cmd xcode-select "run: xcode-select --install"
 need_cmd xcodebuild "install Xcode"
 need_cmd xcrun "install Xcode command line tools"
