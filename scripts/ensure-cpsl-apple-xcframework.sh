@@ -20,8 +20,8 @@ Options:
 
 Environment:
   HERM_CPSL_REBUILD=1  Force a CPSL XCFramework rebuild.
-  CPSL_ROOT, CPSL_REF, CPSL_WORK_DIR, OUT_DIR, IOS_SIMULATOR_TARGETS,
-  MACOS_TARGETS        Passed through to build-cpsl-apple-xcframework.sh.
+  CPSL_ROOT, CPSL_WORK_DIR, OUT_DIR, IOS_SIMULATOR_TARGETS, MACOS_TARGETS
+                         Passed through to build-cpsl-apple-xcframework.sh.
 EOF
 }
 

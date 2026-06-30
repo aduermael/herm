@@ -23,8 +23,9 @@ Usage:
 Builds Herm's CPSL runtime image for the current host platform.
 
 The image contains a Herm binary plus the CPSL dynamic library passed to
-herm --cpsl. By default this script fetches CPSL into a gitignored Herm-local
-work directory, so the Herm repo remains the parent checkout.
+herm --cpsl. By default this script builds CPSL from Herm's external/cpsl
+submodule and writes generated files under the gitignored .herm-cpsl work
+directory.
 
 Options:
   --minimum   Build the default Herm CPSL library profile. This is the default.
@@ -32,9 +33,7 @@ Options:
   -h, --help  Show this help.
 
 Environment:
-  CPSL_REPO      CPSL git URL. Defaults to the public CPSL repository.
-  CPSL_REF       CPSL git ref to fetch. Defaults to the pinned merged CPSL commit.
-  CPSL_ROOT      Existing CPSL checkout to use instead of fetching.
+  CPSL_ROOT      Existing CPSL checkout to use instead of external/cpsl.
   CPSL_WORK_DIR  Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
   CPSL_TARGET_DIR Cargo target directory. Defaults to CPSL_WORK_DIR/cargo-target.
   OUT_DIR        Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/<os>-<arch>.
@@ -67,10 +66,7 @@ herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
-cpsl_repo=${CPSL_REPO:-"https://github.com/fundamental-research-labs/cpsl.git"}
-default_cpsl_ref=47ea301e1b32223cc0bc46001cca59fb7516f047
-cpsl_ref=${CPSL_REF:-"$default_cpsl_ref"}
-managed_cpsl_root="$work_dir/cpsl"
+default_cpsl_root="$herm_root/external/cpsl"
 target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}
 
 os_raw=$(uname -s)
@@ -112,21 +108,13 @@ need_cmd c++ "install the native C++ build tools"
 if [ -n "${CPSL_ROOT:-}" ]; then
 	cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
 else
-	need_cmd git "install Git or set CPSL_ROOT to an existing CPSL checkout"
-	if [ -e "$managed_cpsl_root" ] && [ ! -d "$managed_cpsl_root/.git" ]; then
-		die "$managed_cpsl_root exists but is not a Git checkout"
+	if [ ! -f "$default_cpsl_root/Cargo.toml" ]; then
+		need_cmd git "install Git or set CPSL_ROOT to an existing CPSL checkout"
+		printf 'Initializing CPSL submodule in %s\n' "$default_cpsl_root"
+		git -C "$herm_root" submodule update --init -- external/cpsl
 	fi
-	if [ ! -d "$managed_cpsl_root/.git" ]; then
-		printf 'Initializing CPSL checkout in %s\n' "$managed_cpsl_root"
-		git -c init.defaultBranch=main init "$managed_cpsl_root" >/dev/null
-		git -C "$managed_cpsl_root" remote add origin "$cpsl_repo"
-	else
-		git -C "$managed_cpsl_root" remote set-url origin "$cpsl_repo"
-	fi
-	printf 'Fetching CPSL %s from %s\n' "$cpsl_ref" "$cpsl_repo"
-	git -C "$managed_cpsl_root" fetch --depth 1 origin "$cpsl_ref"
-	git -C "$managed_cpsl_root" checkout --detach FETCH_HEAD
-	cpsl_root=$(CDPATH= cd "$managed_cpsl_root" && pwd -P)
+	cpsl_root=$(CDPATH= cd "$default_cpsl_root" && pwd -P) || \
+		die "missing CPSL submodule at $default_cpsl_root; run: git submodule update --init external/cpsl"
 fi
 
 sh "$herm_root/scripts/apply-cpsl-patches.sh" "$cpsl_root"
@@ -156,7 +144,7 @@ fi
 [ -f "$cpsl_root/ffi/Cargo.toml" ] || die "missing CPSL FFI crate at $cpsl_root/ffi"
 [ -f "$cpsl_root/ffi/include/cpsl.h" ] || die "missing CPSL FFI header at $cpsl_root/ffi/include/cpsl.h"
 [ -f "$herm_root/go.mod" ] || die "missing Herm go.mod at $herm_root"
-[ -f "$herm_root/external/langdag/go.mod" ] || die "missing Herm submodules; run: git submodule update --init --recursive"
+[ -f "$herm_root/external/langdag/go.mod" ] || die "missing Herm submodules; run: git submodule update --init external/langdag external/cpsl"
 
 out_dir=${OUT_DIR:-"$work_dir/artifacts/$os_name-$arch_name"}
 include_dir="$out_dir/include"

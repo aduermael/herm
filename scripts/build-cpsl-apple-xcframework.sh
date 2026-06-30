@@ -22,7 +22,7 @@ Usage:
 
 Builds one CPSL XCFramework for Apple app targets.
 
-By default this script fetches CPSL into a gitignored Herm-local work directory,
+By default this script builds CPSL from Herm's external/cpsl submodule,
 matching scripts/build-cpsl-image.sh. The output is one Apple-consumable
 XCFramework containing iOS device, iOS simulator, and macOS slices.
 
@@ -31,9 +31,7 @@ Options:
   -h, --help  Show this help.
 
 Environment:
-  CPSL_REPO                CPSL git URL. Defaults to the public CPSL repository.
-  CPSL_REF                 CPSL git ref to fetch. Defaults to the pinned merged CPSL commit.
-  CPSL_ROOT                Existing CPSL checkout to use instead of fetching.
+  CPSL_ROOT                Existing CPSL checkout to use instead of external/cpsl.
   CPSL_WORK_DIR            Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
   CPSL_TARGET_DIR          Cargo target directory. Defaults to CPSL_WORK_DIR/cargo-target.
   OUT_DIR                  Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/apple.
@@ -75,10 +73,7 @@ herm_ensure_rust_path
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
-cpsl_repo=${CPSL_REPO:-"https://github.com/fundamental-research-labs/cpsl.git"}
-default_cpsl_ref=47ea301e1b32223cc0bc46001cca59fb7516f047
-cpsl_ref=${CPSL_REF:-"$default_cpsl_ref"}
-managed_cpsl_root="$work_dir/cpsl"
+default_cpsl_root="$herm_root/external/cpsl"
 target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}
 out_dir=${OUT_DIR:-"$work_dir/artifacts/apple"}
 apple_platforms=${APPLE_PLATFORMS:-"ios macos"}
@@ -165,21 +160,13 @@ fi
 if [ -n "${CPSL_ROOT:-}" ]; then
 	cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
 else
-	need_cmd git "install Git or set CPSL_ROOT to an existing CPSL checkout"
-	if [ -e "$managed_cpsl_root" ] && [ ! -d "$managed_cpsl_root/.git" ]; then
-		die "$managed_cpsl_root exists but is not a Git checkout"
+	if [ ! -f "$default_cpsl_root/Cargo.toml" ]; then
+		need_cmd git "install Git or set CPSL_ROOT to an existing CPSL checkout"
+		printf 'Initializing CPSL submodule in %s\n' "$default_cpsl_root"
+		git -C "$herm_root" submodule update --init -- external/cpsl
 	fi
-	if [ ! -d "$managed_cpsl_root/.git" ]; then
-		printf 'Initializing CPSL checkout in %s\n' "$managed_cpsl_root"
-		git -c init.defaultBranch=main init "$managed_cpsl_root" >/dev/null
-		git -C "$managed_cpsl_root" remote add origin "$cpsl_repo"
-	else
-		git -C "$managed_cpsl_root" remote set-url origin "$cpsl_repo"
-	fi
-	printf 'Fetching CPSL %s from %s\n' "$cpsl_ref" "$cpsl_repo"
-	git -C "$managed_cpsl_root" fetch --depth 1 origin "$cpsl_ref"
-	git -C "$managed_cpsl_root" checkout --detach FETCH_HEAD
-	cpsl_root=$(CDPATH= cd "$managed_cpsl_root" && pwd -P)
+	cpsl_root=$(CDPATH= cd "$default_cpsl_root" && pwd -P) || \
+		die "missing CPSL submodule at $default_cpsl_root; run: git submodule update --init external/cpsl"
 fi
 
 sh "$herm_root/scripts/apply-cpsl-patches.sh" "$cpsl_root"

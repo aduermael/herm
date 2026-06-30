@@ -8,9 +8,10 @@ The helper script invokes native build tools, Go, Rust, Git unless `CPSL_ROOT`
 is set, and optional PDFium download tooling for `--all`. It does not invoke
 Python, Node, Docker, package managers, or the CPSL CLI.
 
-Herm owns this build flow. CPSL is fetched as a build dependency into
-`.herm-cpsl/`, which is ignored by git so dependency checkouts and generated
-artifacts do not get committed by accident.
+Herm owns this build flow. CPSL source is tracked as the `external/cpsl`
+submodule. Generated build artifacts and Cargo output still live under
+`.herm-cpsl/`, which is ignored by git so generated files do not get committed
+by accident.
 
 ## Requirements
 
@@ -20,7 +21,8 @@ Common requirements:
 - Rust and Cargo
 - Native C and C++ build tools (`cc` and `c++`)
 - Git, unless `CPSL_ROOT` points at an existing CPSL checkout
-- Herm submodules initialized with `git submodule update --init --recursive`
+- Herm submodules initialized with
+  `git submodule update --init external/langdag external/cpsl`
 
 macOS needs Xcode Command Line Tools:
 
@@ -45,26 +47,25 @@ From the Herm repo:
 scripts/build-cpsl-image.sh
 ```
 
-By default the script fetches CPSL from:
+By default the script builds CPSL from Herm's submodule:
 
 ```text
-https://github.com/fundamental-research-labs/cpsl.git
+external/cpsl
 ```
 
-By default it fetches pinned CPSL commit
-`47ea301e1b32223cc0bc46001cca59fb7516f047`, the merge commit for the CPSL HTTP
-policy integration. Override the source when testing another CPSL ref or a local
-CPSL checkout:
+The current submodule points at CPSL commit
+`4376c3bc49045177f8096688f9e350423a79b9b4`, which includes the HTTP policy and
+composed mount integration used by Herm. Override the source when testing a
+local CPSL checkout:
 
 ```sh
-CPSL_REF=main scripts/build-cpsl-image.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 ```
 
 Before compiling CPSL, Herm applies tracked integration patches from
 `scripts/cpsl-patches/` to the selected checkout. These patches keep the pinned
-CPSL dependency aligned with Herm's app/runtime integration without committing
-the ignored `.herm-cpsl/` checkout.
+CPSL dependency aligned with Herm's app/runtime integration. When a patch is
+already present in the submodule commit, the patch helper skips it.
 
 The default build is the minimum Herm CPSL profile. It compiles `fs`, `json`,
 `csv`, `http`, and `grep`.
@@ -132,8 +133,7 @@ scripts/build-cpsl-apple-xcframework.sh
 ```
 
 This follows the same source dependency model as the host-native helper: Herm
-fetches the pinned CPSL commit into `.herm-cpsl/` unless `CPSL_ROOT` points at an
-existing checkout.
+builds from `external/cpsl` unless `CPSL_ROOT` points at an existing checkout.
 
 The script builds CPSL's FFI crate for iOS device, iOS simulator, and macOS
 targets, then packages the dynamic libraries plus `cpsl.h` into one
@@ -159,7 +159,6 @@ cannot find `cargo`, restart Xcode after installing Rust.
 Override the source or output path the same way as the host-native helper:
 
 ```sh
-CPSL_REF=main scripts/build-cpsl-apple-xcframework.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-apple-xcframework.sh
 OUT_DIR=/tmp/cpsl-apple scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=ios scripts/build-cpsl-apple-xcframework.sh
@@ -309,8 +308,6 @@ scripts/build-cpsl-image.sh --minimum
 scripts/build-cpsl-image.sh --all
 OUT_DIR=/tmp/herm-cpsl scripts/build-cpsl-image.sh
 RUN_PROBE=1 scripts/build-cpsl-image.sh
-CPSL_REPO=https://github.com/fundamental-research-labs/cpsl.git scripts/build-cpsl-image.sh
-CPSL_REF=47ea301e1b32223cc0bc46001cca59fb7516f047 scripts/build-cpsl-image.sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 CPSL_TARGET_DIR=/tmp/cpsl-target scripts/build-cpsl-image.sh
 scripts/build-cpsl-apple-xcframework.sh

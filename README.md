@@ -45,8 +45,9 @@ brew install herm
 Requires Go 1.24+.
 
 ```sh
-git clone --recurse-submodules https://github.com/aduermael/herm
+git clone https://github.com/aduermael/herm
 cd herm
+git submodule update --init external/langdag external/cpsl
 go build -o herm ./cmd/herm
 ./herm
 ```
@@ -54,7 +55,7 @@ go build -o herm ./cmd/herm
 If you already cloned without submodules, run this before building:
 
 ```sh
-git submodule update --init --recursive
+git submodule update --init external/langdag external/cpsl
 ```
 
 To build Herm with a native CPSL local sandbox library instead of Docker, see
@@ -105,7 +106,10 @@ herm/
 ├── scripts/                   Build helpers
 ├── .herm/
 │   └── skills/                Skill definitions (e.g. devenv)
-├── .herm-cpsl/                Ignored CPSL dependency checkout and artifacts
+├── external/
+│   ├── langdag/               langdag submodule
+│   └── cpsl/                  CPSL backend submodule
+├── .herm-cpsl/                Ignored CPSL build artifacts and cache
 ├── img/                       Demo assets
 ├── plans/                     Project planning docs
 ├── CPSL_BUILD.md              Native CPSL local sandbox build guide

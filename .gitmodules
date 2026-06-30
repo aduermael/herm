@@ -1,3 +1,6 @@
 [submodule "external/langdag"]
 	path = external/langdag
 	url = https://github.com/fundamental-research-labs/langdag.git
+[submodule "external/cpsl"]
+	path = external/cpsl
+	url = https://github.com/fundamental-research-labs/cpsl.git

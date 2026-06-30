@@ -16,7 +16,9 @@ tools/edit-file/edit-file
 # App data
 .herm/
 .herm-lock
-.herm-cpsl/
+.herm-cpsl/artifacts/
+.herm-cpsl/cargo-target/
+.herm-cpsl/.cpsl-xcframework-build.lock
 .herm-apple/
 .agents/
 
