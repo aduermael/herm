@@ -89,8 +89,8 @@ Set `ENABLE_USER_SCRIPT_SANDBOXING = NO` on the **herm target** Debug and Releas
 
 ## Phase 2: Xcode project integration
 
-- [ ] 2a: Edit `app/apple/herm.xcodeproj/project.pbxproj` — add `PBXShellScriptBuildPhase` named `Build CPSL XCFramework` before Sources, with `alwaysOutOfDate = 1` and shell script `"${SRCROOT}/../../scripts/ensure-cpsl-apple-xcframework.sh"`.
-- [ ] 2b: Set `ENABLE_USER_SCRIPT_SANDBOXING = NO` on herm target Debug and Release build configurations in `project.pbxproj`.
+- [x] 2a: Edit `app/apple/herm.xcodeproj/project.pbxproj` — add `PBXShellScriptBuildPhase` named `Build CPSL XCFramework` before Sources, with `alwaysOutOfDate = 1` and shell script `"${SRCROOT}/../../scripts/ensure-cpsl-apple-xcframework.sh"`.
+- [x] 2b: Set `ENABLE_USER_SCRIPT_SANDBOXING = NO` on herm target Debug and Release build configurations in `project.pbxproj`.
 
 ## Phase 3: Documentation
 
