@@ -94,7 +94,7 @@ Set `ENABLE_USER_SCRIPT_SANDBOXING = NO` on the **herm target** Debug and Releas
 
 ## Phase 3: Documentation
 
-- [ ] 3a: Update `CPSL_BUILD.md` with an "Xcode auto-build" section: run-script phase behavior, first-build prerequisites (full Xcode, Rust Apple targets), `HERM_CPSL_REBUILD=1`, visionOS unsupported, and note that dev launchers now share the ensure script.
+- [x] 3a: Update `CPSL_BUILD.md` with an "Xcode auto-build" section: run-script phase behavior, first-build prerequisites (full Xcode, Rust Apple targets), `HERM_CPSL_REBUILD=1`, visionOS unsupported, and note that dev launchers now share the ensure script.
 
 ## Phase 4: Verification
 

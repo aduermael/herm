@@ -172,6 +172,69 @@ with the iOS platform selected:
 APPLE_PLATFORMS=ios OUT_DIR=.herm-cpsl/artifacts/ios scripts/build-cpsl-apple-xcframework.sh
 ```
 
+## Xcode auto-build
+
+Opening `app/apple/herm.xcodeproj` in Xcode and building the `herm` target
+automatically ensures the CPSL XCFramework exists before Swift compilation.
+
+The `herm` target has a **Build CPSL XCFramework** run-script phase inserted
+before Sources. On every build it runs:
+
+```sh
+"${SRCROOT}/../../scripts/ensure-cpsl-apple-xcframework.sh"
+```
+
+The phase is marked always-out-of-date so Xcode invokes the script each build,
+but the ensure script itself is cheap when nothing changed: it reuses
+`.herm-cpsl/artifacts/apple/cpsl.xcframework` when all three slices are present
+(iOS device, iOS simulator, macOS) and staleness inputs are not newer than
+`Info.plist`. It rebuilds when the artifact is missing, incomplete, or stale
+because files under `scripts/cpsl-patches/`, `scripts/build-cpsl-apple-xcframework.sh`,
+or `scripts/apply-cpsl-patches.sh` changed.
+
+Xcode builds always produce the full iOS+macOS XCFramework, even when the active
+destination only needs one platform.
+
+### First-build prerequisites
+
+The first full XCFramework build compiles five Rust targets and may take several
+minutes. You need:
+
+- **Full Xcode** installed and selected (Command Line Tools alone is not enough)
+- The Rust Apple targets listed in [Apple XCFramework](#apple-xcframework)
+
+Initialize Xcode from Terminal if needed:
+
+```sh
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -runFirstLaunch
+```
+
+The `herm` target sets `ENABLE_USER_SCRIPT_SANDBOXING = NO` so the run-script
+phase can invoke Cargo, Git, `xcodebuild`, and write under `.herm-cpsl/`.
+
+### Force rebuild
+
+To force a CPSL rebuild from Terminal or by exporting before an Xcode build:
+
+```sh
+HERM_CPSL_REBUILD=1 scripts/ensure-cpsl-apple-xcframework.sh
+```
+
+### visionOS
+
+The `herm` target lists visionOS in `SUPPORTED_PLATFORMS`, but CPSL does not
+yet support visionOS. Building for an `xros` or `xrsimulator` destination fails
+early in the ensure script with a clear error before any Rust build starts.
+
+### Dev launchers
+
+`scripts/dev-apple-macos.sh` and `scripts/dev-apple-ios.sh` call the same
+ensure script. Use `--skip-cpsl` to require an existing full XCFramework without
+building, or `--rebuild-cpsl` to set `HERM_CPSL_REBUILD=1` before the ensure
+step. The `--full-cpsl` flag is deprecated; the ensure script always builds the
+full framework.
+
 ## macOS App From Terminal
 
 Use the macOS dev launcher when you want to build and run the SwiftUI app
@@ -183,8 +246,9 @@ scripts/dev-apple-macos.sh
 
 The launcher must run from a macOS host shell with full Xcode selected.
 Command Line Tools alone, usually selected as `/Library/Developer/CommandLineTools`,
-is not enough for this Xcode project flow. It builds the CPSL XCFramework if
-missing, builds the `herm` app target for macOS, clears local extended
+is not enough for this Xcode project flow. It calls
+`scripts/ensure-cpsl-apple-xcframework.sh` to build or reuse the CPSL
+XCFramework, builds the `herm` app target for macOS, clears local extended
 attributes from the finished bundle, ad-hoc signs it, then runs the app
 executable directly so stdout and stderr stay attached to the terminal.
 
@@ -214,12 +278,10 @@ For a build-only check:
 scripts/dev-apple-macos.sh --build-only
 ```
 
-By default, the launcher builds only the host Mac architecture's macOS CPSL
-slice because that is enough for local app launch and avoids requiring the
-opposite Rust macOS target. Use `--universal-cpsl` when you want both arm64 and
-x86_64 macOS slices. Use `--full-cpsl` when you also want iOS slices in
-`.herm-cpsl/artifacts/apple/cpsl.xcframework`. Use `--project-signing` if you
-want Xcode's configured team/signing settings instead of local ad hoc signing.
+By default, the launcher ensures the full iOS+macOS CPSL XCFramework via the
+shared ensure script. Use `--universal-cpsl` when you want both arm64 and
+x86_64 macOS slices. Use `--project-signing` if you want Xcode's configured
+team/signing settings instead of local ad hoc signing.
 
 ## Options
 
