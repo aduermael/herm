@@ -1,5 +1,11 @@
 import SwiftUI
 
+enum CPSLConversationDrawerLayout {
+    static func width(in availableWidth: CGFloat) -> CGFloat {
+        availableWidth
+    }
+}
+
 struct CPSLConversationDrawerView: View {
     @ObservedObject var model: CPSLChatModel
     let topInset: CGFloat
@@ -7,34 +13,29 @@ struct CPSLConversationDrawerView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            HStack(spacing: 0) {
-                CPSLConversationDrawerPanel(
-                    model: model,
-                    width: min(proxy.size.width * 0.82, 340),
-                    topInset: topInset,
-                    bottomInset: bottomInset
-                )
-
-                Color.black.opacity(0.26)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        model.closeDrawer()
-                    }
-            }
+            CPSLConversationDrawerContent(
+                model: model,
+                width: CPSLConversationDrawerLayout.width(in: proxy.size.width),
+                topInset: topInset,
+                bottomInset: bottomInset
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .transition(.move(edge: .leading).combined(with: .opacity))
     }
 }
 
-private struct CPSLConversationDrawerPanel: View {
+private struct CPSLConversationDrawerContent: View {
     @ObservedObject var model: CPSLChatModel
     let width: CGFloat
     let topInset: CGFloat
     let bottomInset: CGFloat
 
     var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.medium) {
-            CPSLDrawerHeader(model: model)
+        VStack(alignment: .leading, spacing: 0) {
+            CPSLDrawerAppHeader()
+
+            Spacer()
+                .frame(height: CPSLTheme.large + CPSLTheme.medium)
 
             Button {
                 model.startNewConversation()
@@ -56,62 +57,72 @@ private struct CPSLConversationDrawerPanel: View {
                 strokeOpacity: 0.06
             )
 
-            ScrollView {
-                LazyVStack(spacing: CPSLTheme.small) {
-                    if model.conversations.isEmpty {
-                        Text("No conversations")
-                            .font(CPSLTheme.supportingFont)
-                            .foregroundStyle(CPSLTheme.mutedText)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, CPSLTheme.medium)
-                    } else {
-                        ForEach(model.conversations) { conversation in
-                            CPSLConversationRowView(
-                                title: conversation.title,
-                                updatedAt: conversation.updatedAt,
-                                isSelected: conversation.id == model.selectedConversationID
-                            ) {
-                                model.selectConversation(id: conversation.id)
-                            }
-                        }
-                    }
-                }
-                .padding(.vertical, CPSLTheme.small)
-            }
-            .scrollBounceBehavior(.basedOnSize)
+            Spacer()
+                .frame(height: CPSLTheme.medium)
+
+            CPSLConversationListView(model: model)
         }
         .padding(.horizontal, CPSLTheme.medium)
         .padding(.top, topInset)
         .padding(.bottom, bottomInset + CPSLTheme.medium)
         .frame(width: width)
         .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(CPSLTheme.surface)
     }
 }
 
-private struct CPSLDrawerHeader: View {
+private struct CPSLDrawerAppHeader: View {
+    var body: some View {
+        Text("Herm")
+            .font(CPSLTheme.headerFont)
+            .foregroundStyle(CPSLTheme.text)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: CPSLTheme.controlSize)
+    }
+}
+
+private struct CPSLConversationListView: View {
     @ObservedObject var model: CPSLChatModel
 
     var body: some View {
-        HStack(spacing: CPSLTheme.medium) {
-            Text("Conversations")
-                .font(CPSLTheme.headerFont)
-                .foregroundStyle(CPSLTheme.text)
-
-            Spacer()
-
-            Button {
-                model.closeDrawer()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(CPSLTheme.iconSmallFont)
-                    .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-                    .contentShape(Rectangle())
+        if model.conversations.isEmpty {
+            CPSLEmptyConversationListView()
+        } else {
+            List {
+                ForEach(model.conversations) { conversation in
+                    CPSLConversationRowView(
+                        title: conversation.title,
+                        updatedAt: conversation.updatedAt,
+                        isSelected: conversation.id == model.selectedConversationID
+                    ) {
+                        model.selectConversation(id: conversation.id)
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            model.deleteConversation(id: conversation.id)
+                        } label: {
+                            Label("Remove", systemImage: "trash")
+                        }
+                        .disabled(model.isRunning)
+                    }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+                }
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(CPSLTheme.text)
-            .accessibilityLabel("Close conversations")
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
         }
+    }
+}
+
+private struct CPSLEmptyConversationListView: View {
+    var body: some View {
+        Text("No conversations")
+            .font(CPSLTheme.supportingFont)
+            .foregroundStyle(CPSLTheme.mutedText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, CPSLTheme.medium)
     }
 }
 
@@ -122,7 +133,11 @@ private struct CPSLConversationRowView: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            if !isSelected {
+                action()
+            }
+        } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(CPSLTheme.supportingMediumFont)
@@ -130,7 +145,7 @@ private struct CPSLConversationRowView: View {
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(updatedAt, style: .relative)
+                Text(updatedAt, format: .dateTime.month().day().year())
                     .font(CPSLTheme.captionFont)
                     .foregroundStyle(CPSLTheme.secondaryText)
             }
@@ -142,6 +157,5 @@ private struct CPSLConversationRowView: View {
         .buttonStyle(.plain)
         .background(isSelected ? CPSLTheme.elevated : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
-        .disabled(isSelected)
     }
 }

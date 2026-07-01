@@ -107,13 +107,13 @@ enum CPSLChatRole: String, Codable, Equatable, Sendable {
     }
 }
 
-struct CPSLChatMessage: Identifiable, Equatable, Sendable {
+nonisolated struct CPSLChatMessage: Identifiable, Equatable, Sendable {
     let id: UUID
     let role: CPSLChatRole
     let title: String?
     var body: String
 
-    init(id: UUID = UUID(), role: CPSLChatRole, title: String?, body: String) {
+    nonisolated init(id: UUID = UUID(), role: CPSLChatRole, title: String?, body: String) {
         self.id = id
         self.role = role
         self.title = title

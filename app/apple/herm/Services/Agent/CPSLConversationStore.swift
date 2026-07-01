@@ -1,9 +1,9 @@
 import Foundation
 import SQLite3
 
-private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-
 actor CPSLConversationStore {
+    private nonisolated static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
     let databaseURL: URL
     let usesICloudContainer: Bool
 
@@ -32,7 +32,7 @@ actor CPSLConversationStore {
             throw CPSLConversationStoreError.openFailed(message)
         }
         sqlite3_busy_timeout(database, 5_000)
-        try migrate()
+        try Self.migrate(database: database)
     }
 
     deinit {
@@ -248,14 +248,21 @@ actor CPSLConversationStore {
         )
     }
 
+    func deleteConversation(id: String) throws {
+        try execute(
+            "DELETE FROM conversations WHERE id = ?",
+            bindings: [.text(id)]
+        )
+    }
+
     func providerMessages(conversationID: String) throws -> [CPSLOpenAIMessage] {
         try loadNodes(conversationID: conversationID).compactMap(\.providerMessage)
     }
 
-    private func migrate() throws {
-        try execute("PRAGMA journal_mode=DELETE")
-        try execute("PRAGMA synchronous=FULL")
-        try execute("PRAGMA foreign_keys=ON")
+    private nonisolated static func migrate(database: OpaquePointer?) throws {
+        try execute("PRAGMA journal_mode=DELETE", database: database)
+        try execute("PRAGMA synchronous=FULL", database: database)
+        try execute("PRAGMA foreign_keys=ON", database: database)
         try execute(
             """
             CREATE TABLE IF NOT EXISTS conversations (
@@ -268,12 +275,13 @@ actor CPSLConversationStore {
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )
-            """
+            """,
+            database: database
         )
-        try addColumnIfMissing(table: "conversations", column: "root_node_id", definition: "TEXT")
-        try addColumnIfMissing(table: "conversations", column: "current_node_id", definition: "TEXT")
-        try addColumnIfMissing(table: "conversations", column: "model", definition: "TEXT")
-        try addColumnIfMissing(table: "conversations", column: "system_prompt", definition: "TEXT")
+        try addColumnIfMissing(table: "conversations", column: "root_node_id", definition: "TEXT", database: database)
+        try addColumnIfMissing(table: "conversations", column: "current_node_id", definition: "TEXT", database: database)
+        try addColumnIfMissing(table: "conversations", column: "model", definition: "TEXT", database: database)
+        try addColumnIfMissing(table: "conversations", column: "system_prompt", definition: "TEXT", database: database)
         try execute(
             """
             CREATE TABLE IF NOT EXISTS nodes (
@@ -290,18 +298,19 @@ actor CPSLConversationStore {
                 FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
                 FOREIGN KEY(parent_id) REFERENCES nodes(id) ON DELETE SET NULL
             )
-            """
+            """,
+            database: database
         )
-        try addColumnIfMissing(table: "nodes", column: "title", definition: "TEXT")
-        try addColumnIfMissing(table: "nodes", column: "model", definition: "TEXT")
-        try addColumnIfMissing(table: "nodes", column: "provider_message_json", definition: "TEXT")
-        try backfillLegacyConversationPointers()
-        try execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique ON nodes(conversation_id, sequence)")
-        try execute("CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)")
-        try execute("CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at)")
+        try addColumnIfMissing(table: "nodes", column: "title", definition: "TEXT", database: database)
+        try addColumnIfMissing(table: "nodes", column: "model", definition: "TEXT", database: database)
+        try addColumnIfMissing(table: "nodes", column: "provider_message_json", definition: "TEXT", database: database)
+        try backfillLegacyConversationPointers(database: database)
+        try execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique ON nodes(conversation_id, sequence)", database: database)
+        try execute("CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)", database: database)
+        try execute("CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at)", database: database)
     }
 
-    private func backfillLegacyConversationPointers() throws {
+    private nonisolated static func backfillLegacyConversationPointers(database: OpaquePointer?) throws {
         try execute(
             """
             UPDATE conversations
@@ -313,7 +322,8 @@ actor CPSLConversationStore {
                 LIMIT 1
             )
             WHERE NULLIF(root_node_id, '') IS NULL
-            """
+            """,
+            database: database
         )
         try execute(
             """
@@ -326,24 +336,30 @@ actor CPSLConversationStore {
                 LIMIT 1
             )
             WHERE NULLIF(current_node_id, '') IS NULL
-            """
+            """,
+            database: database
         )
-        try execute("UPDATE conversations SET system_prompt = '' WHERE system_prompt IS NULL")
+        try execute("UPDATE conversations SET system_prompt = '' WHERE system_prompt IS NULL", database: database)
     }
 
-    private func addColumnIfMissing(table: String, column: String, definition: String) throws {
+    private nonisolated static func addColumnIfMissing(
+        table: String,
+        column: String,
+        definition: String,
+        database: OpaquePointer?
+    ) throws {
         guard !table.contains("\""), !column.contains("\""), !definition.contains(";") else {
             throw CPSLConversationStoreError.sqlite("Invalid migration identifier.")
         }
 
-        let columns = try query("PRAGMA table_info(\"\(table)\")") { statement in
+        let columns = try query("PRAGMA table_info(\"\(table)\")", database: database) { statement in
             columnString(statement, 1) ?? ""
         }
         guard !columns.contains(column) else {
             return
         }
 
-        try execute("ALTER TABLE \"\(table)\" ADD COLUMN \"\(column)\" \(definition)")
+        try execute("ALTER TABLE \"\(table)\" ADD COLUMN \"\(column)\" \(definition)", database: database)
     }
 
     private func nextSequence(conversationID: String) throws -> Int {
@@ -402,19 +418,7 @@ actor CPSLConversationStore {
     }
 
     private func execute(_ sql: String, bindings: [CPSLSQLiteBinding] = []) throws {
-        let statement = try prepare(sql, bindings: bindings)
-        defer {
-            sqlite3_finalize(statement)
-        }
-        while true {
-            let result = sqlite3_step(statement)
-            if result == SQLITE_DONE {
-                return
-            }
-            if result != SQLITE_ROW {
-                throw lastError()
-            }
-        }
+        try Self.execute(sql, bindings: bindings, database: database)
     }
 
     private func withTransaction(_ work: () throws -> Void) throws {
@@ -433,7 +437,36 @@ actor CPSLConversationStore {
         bindings: [CPSLSQLiteBinding] = [],
         row: (OpaquePointer?) throws -> T
     ) throws -> [T] {
-        let statement = try prepare(sql, bindings: bindings)
+        try Self.query(sql, bindings: bindings, database: database, row: row)
+    }
+
+    private nonisolated static func execute(
+        _ sql: String,
+        bindings: [CPSLSQLiteBinding] = [],
+        database: OpaquePointer?
+    ) throws {
+        let statement = try prepare(sql, bindings: bindings, database: database)
+        defer {
+            sqlite3_finalize(statement)
+        }
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE {
+                return
+            }
+            if result != SQLITE_ROW {
+                throw lastError(database: database)
+            }
+        }
+    }
+
+    private nonisolated static func query<T>(
+        _ sql: String,
+        bindings: [CPSLSQLiteBinding] = [],
+        database: OpaquePointer?,
+        row: (OpaquePointer?) throws -> T
+    ) throws -> [T] {
+        let statement = try prepare(sql, bindings: bindings, database: database)
         defer {
             sqlite3_finalize(statement)
         }
@@ -446,23 +479,32 @@ actor CPSLConversationStore {
             } else if result == SQLITE_DONE {
                 return values
             } else {
-                throw lastError()
+                throw lastError(database: database)
             }
         }
     }
 
-    private func prepare(_ sql: String, bindings: [CPSLSQLiteBinding]) throws -> OpaquePointer? {
+    private nonisolated static func prepare(
+        _ sql: String,
+        bindings: [CPSLSQLiteBinding],
+        database: OpaquePointer?
+    ) throws -> OpaquePointer? {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw lastError()
+            throw lastError(database: database)
         }
         for (index, binding) in bindings.enumerated() {
-            try bind(binding, to: statement, at: Int32(index + 1))
+            try bind(binding, to: statement, at: Int32(index + 1), database: database)
         }
         return statement
     }
 
-    private func bind(_ binding: CPSLSQLiteBinding, to statement: OpaquePointer?, at index: Int32) throws {
+    private nonisolated static func bind(
+        _ binding: CPSLSQLiteBinding,
+        to statement: OpaquePointer?,
+        at index: Int32,
+        database: OpaquePointer?
+    ) throws {
         let result: Int32
         switch binding {
         case .null:
@@ -475,7 +517,7 @@ actor CPSLConversationStore {
             result = sqlite3_bind_double(statement, index, value.timeIntervalSince1970)
         }
         guard result == SQLITE_OK else {
-            throw lastError()
+            throw lastError(database: database)
         }
     }
 
@@ -495,7 +537,7 @@ actor CPSLConversationStore {
         )
     }
 
-    private func lastError() -> CPSLConversationStoreError {
+    private nonisolated static func lastError(database: OpaquePointer?) -> CPSLConversationStoreError {
         let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown SQLite error"
         return .sqlite(message)
     }
@@ -610,7 +652,7 @@ private nonisolated struct CPSLConversationDatabaseLocation {
     }
 }
 
-private func columnString(_ statement: OpaquePointer?, _ index: Int32) -> String? {
+private nonisolated func columnString(_ statement: OpaquePointer?, _ index: Int32) -> String? {
     guard sqlite3_column_type(statement, index) != SQLITE_NULL,
           let text = sqlite3_column_text(statement, index)
     else {
@@ -619,6 +661,6 @@ private func columnString(_ statement: OpaquePointer?, _ index: Int32) -> String
     return String(cString: text)
 }
 
-private func columnDate(_ statement: OpaquePointer?, _ index: Int32) -> Date {
+private nonisolated func columnDate(_ statement: OpaquePointer?, _ index: Int32) -> Date {
     Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
 }

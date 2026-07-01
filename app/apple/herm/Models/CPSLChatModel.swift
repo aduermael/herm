@@ -83,6 +83,16 @@ final class CPSLChatModel: ObservableObject {
         }
     }
 
+    func deleteConversation(id: String) {
+        guard !isRunning else {
+            return
+        }
+
+        Task {
+            await deleteStoredConversation(id: id)
+        }
+    }
+
     func submitPrompt() {
         let input = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty, !isRunning else {
@@ -232,6 +242,29 @@ final class CPSLChatModel: ObservableObject {
             conversations = try await store.loadSummaries()
             isDrawerOpen = false
             isFileBrowserOpen = false
+        } catch {
+            appendErrorMessage(title: "Conversation", body: error.localizedDescription)
+        }
+    }
+
+    private func deleteStoredConversation(id: String) async {
+        let store: CPSLConversationStore
+        do {
+            store = try await loadStore()
+        } catch {
+            appendErrorMessage(title: "Storage", body: error.localizedDescription)
+            return
+        }
+
+        do {
+            try await store.deleteConversation(id: id)
+            conversations = try await store.loadSummaries()
+            if selectedConversationID == id {
+                selectedConversationID = nil
+                currentNodeID = nil
+                currentSystemPrompt = nil
+                messages = []
+            }
         } catch {
             appendErrorMessage(title: "Conversation", body: error.localizedDescription)
         }
