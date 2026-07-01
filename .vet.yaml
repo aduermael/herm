@@ -40,6 +40,7 @@ languages:
       - app/apple/herm/...
     exclude:
       - "**/DerivedData/**"
+      - "**/Generated/**"
       - "**/GeneratedAssetSymbols.swift"
     rules:
       max-function-parameters:

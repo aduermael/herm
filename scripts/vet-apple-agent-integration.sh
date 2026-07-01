@@ -53,6 +53,8 @@ required_files=(
   app/apple/herm/herm.entitlements
   app/apple/herm/herm-macOS.entitlements
   app/apple/herm.xcodeproj/project.pbxproj
+  scripts/generate-apple-env-constants.sh
+  scripts/generate-apple-env-constants.swift
   scripts/dev-apple-macos.sh
   scripts/vet-apple-agent-config.swift
   scripts/vet-apple-agent-tool-formatting.swift
@@ -67,26 +69,24 @@ done
 
 require_match '^\.env$' .gitignore
 require_match '^\.env\.local$' .gitignore
-require_match '\.env\.local' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
-require_match 'appendingPathComponent\("Resources", isDirectory: true\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
-require_match 'sourceCheckoutURLs\(sourceFilePath: #filePath\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
-require_match 'source checkout \.env URLs were not derived from #filePath' scripts/vet-apple-agent-config.swift
+require_match 'app/apple/herm/Generated/CPSLEnvConstants\.swift' .gitignore
+require_match 'CPSLEnvConstants\.values' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'generated constants should load as the default config' scripts/vet-apple-agent-config.swift
 require_match 'OPENAI_BASE_URL=' app/apple/herm/Resources/env.example
 require_match 'OPENAI_API_KEY=' app/apple/herm/Resources/env.example
 require_match 'OPENAI_MODEL=' app/apple/herm/Resources/env.example
 require_match 'OpenAI-compatible Chat Completions' docs/apple-agent-config.md
-require_match 'Do not ship real API tokens in the app bundle' docs/apple-agent-config.md
-require_match 'Application Support' docs/apple-agent-config.md
+require_match 'Do not ship real API tokens in the app bundle as resource files' docs/apple-agent-config.md
 require_match 'scripts/dev-apple-macos\.sh.*repo root' docs/apple-agent-config.md
-require_match 'compiled source path' docs/apple-agent-config.md
-require_match 'Debug-only' docs/apple-agent-config.md
-require_match 'Release builds remove' docs/apple-agent-config.md
+require_match 'Generate Env Constants' docs/apple-agent-config.md
+require_match 'Debug and Release' docs/apple-agent-config.md
+require_match 'rebuild the app' docs/apple-agent-config.md
 require_match 'OPENAI_BASE_URL' docs/apple-agent-config.md
 require_match 'OPENAI_API_KEY' docs/apple-agent-config.md
 require_match 'OPENAI_MODEL' docs/apple-agent-config.md
 require_match 'invalidValue\("OPENAI_BASE_URL"\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'make\(' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
-require_match 'CPSLEnvLoader\.parse' scripts/vet-apple-agent-config.swift
+require_match 'parseEnv' scripts/generate-apple-env-constants.swift
 require_match '\["http", "https"\]\.contains\(scheme\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'OPENAI_MODEL.*!= nil' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'XAI_MODEL.*!= nil' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
@@ -106,11 +106,10 @@ require_match '^[[:space:]]*\.env,' app/apple/herm.xcodeproj/project.pbxproj
 require_match '^[[:space:]]*\.env\.local,' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Resources/\.env' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Resources/\.env\.local' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'Copy Debug \.env' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'CONFIGURATION.*Debug' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'TARGET_BUILD_DIR.*UNLOCALIZED_RESOURCES_FOLDER_PATH' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'SRCROOT.*/herm/Resources' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'SRCROOT.*/../../' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'Generated/CPSLEnvConstants\.swift' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'Generate Env Constants' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'generate-apple-env-constants\.sh' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'CPSLEnvConstants\.swift in Sources' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'source_entitlements_path=.*herm-macOS.entitlements' scripts/dev-apple-macos.sh
 require_match 'sign_entitlements_path=.source_entitlements_path' scripts/dev-apple-macos.sh
 require_match 'cd "\$root"' scripts/dev-apple-macos.sh
@@ -198,9 +197,37 @@ if command -v plutil >/dev/null 2>&1; then
   plutil -lint app/apple/herm/herm.entitlements app/apple/herm/herm-macOS.entitlements app/apple/herm.xcodeproj/project.pbxproj >/dev/null
 fi
 
+tmp_env_dir=""
+if command -v swift >/dev/null 2>&1; then
+  tmp_env_dir="$(mktemp -d)"
+  trap 'if [[ -n "$tmp_env_dir" ]]; then rm -rf "$tmp_env_dir"; fi' EXIT
+  printf '%s\n' \
+    '# comment' \
+    'export OPENAI_BASE_URL = "https://api.x.ai/v1"' \
+    "OPENAI_API_KEY='token=value'" \
+    'OPENAI_MODEL=base-model # inline comment' \
+    'HASHED_VALUE="model#variant"' \
+    'IGNORED_LINE' \
+    'EMPTY_VALUE=' \
+    >"$tmp_env_dir/.env"
+  printf '%s\n' \
+    'OPENAI_MODEL=local-model' \
+    >"$tmp_env_dir/.env.local"
+  swift scripts/generate-apple-env-constants.swift \
+    "$tmp_env_dir/CPSLEnvConstants.swift" \
+    "$tmp_env_dir/.env" \
+    "$tmp_env_dir/.env.local"
+  require_match '"OPENAI_BASE_URL": "https://api.x.ai/v1"' "$tmp_env_dir/CPSLEnvConstants.swift"
+  require_match '"OPENAI_API_KEY": "token=value"' "$tmp_env_dir/CPSLEnvConstants.swift"
+  require_match '"OPENAI_MODEL": "local-model"' "$tmp_env_dir/CPSLEnvConstants.swift"
+  require_match '"HASHED_VALUE": "model#variant"' "$tmp_env_dir/CPSLEnvConstants.swift"
+  require_match '"EMPTY_VALUE": ""' "$tmp_env_dir/CPSLEnvConstants.swift"
+  reject_match 'base-model|IGNORED_LINE' "$tmp_env_dir/CPSLEnvConstants.swift"
+fi
+
 if command -v swiftc >/dev/null 2>&1; then
   swiftc -typecheck app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
-  swiftc -typecheck app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+  swiftc -typecheck app/apple/herm/Services/Agent/CPSLAgentConfig.swift "$tmp_env_dir/CPSLEnvConstants.swift"
   swiftc app/apple/herm/Services/Agent/CPSLAgentConfig.swift scripts/vet-apple-agent-config.swift -o /tmp/herm-vet-agent-config
   /tmp/herm-vet-agent-config
   swiftc \
@@ -221,7 +248,7 @@ if command -v swiftc >/dev/null 2>&1; then
       -o /tmp/herm-vet-conversation-store
     /tmp/herm-vet-conversation-store
   fi
-  swiftc -parse "${swift_files[@]}"
+  swiftc -parse "$tmp_env_dir/CPSLEnvConstants.swift" "${swift_files[@]}"
 fi
 
 echo "apple agent integration checks passed"

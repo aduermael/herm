@@ -25,6 +25,7 @@ tools/edit-file/edit-file
 # Local provider credentials
 .env
 .env.local
+app/apple/herm/Generated/CPSLEnvConstants.swift
 
 # OS
 .DS_Store
