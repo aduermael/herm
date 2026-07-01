@@ -28,12 +28,19 @@ The loader checks these locations, with later files overriding earlier values:
 - The app bundle resource directory: `.env`, `env`, `.env.local`
 - Application Support for the bundle identifier: `.env`, `.env.local`
 - User Application Support: `.env`, `.env.local`
+- From the source checkout path embedded by the Swift compiler:
+  `app/apple/herm/Resources/.env`, `app/apple/herm/Resources/.env.local`,
+  `app/apple/herm/.env`, `app/apple/herm/.env.local`, repo-root `.env`,
+  repo-root `.env.local`
 - From a repo-root working directory: `app/apple/herm/Resources/.env`,
   `app/apple/herm/Resources/.env.local`
 - The current working directory: `.env`, `.env.local`
 - Process environment values
 
 For macOS development, `scripts/dev-apple-macos.sh` changes to the repo root
-before launching the app, so a repo-root `.env` is available. For iOS simulator
-or device builds, place the file in the app container's Application Support
-directory or inject the values through the debug process environment.
+before launching the app, so a repo-root `.env` is available. Xcode debug
+launches can also find a repo-root or `app/apple/herm/Resources/.env` file from
+the compiled source path without packaging that file into the app bundle. For
+iOS simulator or device builds outside a local source checkout, place the file
+in the app container's Application Support directory or inject the values
+through the debug process environment.

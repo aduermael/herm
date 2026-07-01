@@ -153,6 +153,8 @@ nonisolated enum CPSLEnvLoader {
             urls.append(supportURL.appendingPathComponent(".env.local"))
         }
 
+        urls.append(contentsOf: sourceCheckoutURLs(sourceFilePath: #filePath))
+
         let currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         let sourceResourcesURL = currentDirectoryURL
             .appendingPathComponent("app", isDirectory: true)
@@ -164,6 +166,27 @@ nonisolated enum CPSLEnvLoader {
         urls.append(currentDirectoryURL.appendingPathComponent(".env"))
         urls.append(currentDirectoryURL.appendingPathComponent(".env.local"))
         return urls
+    }
+
+    static func sourceCheckoutURLs(sourceFilePath: String) -> [URL] {
+        let sourceFileURL = URL(fileURLWithPath: sourceFilePath)
+        let hermDirectoryURL = sourceFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let repoRootURL = hermDirectoryURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+
+        return [
+            hermDirectoryURL.appendingPathComponent("Resources", isDirectory: true).appendingPathComponent(".env"),
+            hermDirectoryURL.appendingPathComponent("Resources", isDirectory: true).appendingPathComponent(".env.local"),
+            hermDirectoryURL.appendingPathComponent(".env"),
+            hermDirectoryURL.appendingPathComponent(".env.local"),
+            repoRootURL.appendingPathComponent(".env"),
+            repoRootURL.appendingPathComponent(".env.local")
+        ]
     }
 
     static func hasProcessEnvironmentFallback(environment: [String: String]) -> Bool {

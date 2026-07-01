@@ -7,6 +7,7 @@ private struct CPSLAgentConfigChecks {
         try assertConfigPrefersFileValues()
         try assertEnvironmentFallbacks()
         try assertSourceResourcesEnvLoad()
+        try assertSourceCheckoutURLs()
         try assertInvalidBaseURLFails()
         try assertBaseURLQueryFails()
         try assertBaseURLCredentialsFail()
@@ -108,6 +109,21 @@ private struct CPSLAgentConfigChecks {
               config.model == "source-model"
         else {
             throw CheckFailure("source Resources/.env was not loaded from repo-style working directory")
+        }
+    }
+
+    private static func assertSourceCheckoutURLs() throws {
+        let sourceFilePath = "/tmp/herm-checkout/app/apple/herm/Services/Agent/CPSLAgentConfig.swift"
+        let urls = CPSLEnvLoader.sourceCheckoutURLs(sourceFilePath: sourceFilePath).map(\.path)
+
+        guard urls.contains("/tmp/herm-checkout/app/apple/herm/Resources/.env"),
+              urls.contains("/tmp/herm-checkout/app/apple/herm/Resources/.env.local"),
+              urls.contains("/tmp/herm-checkout/app/apple/herm/.env"),
+              urls.contains("/tmp/herm-checkout/app/apple/herm/.env.local"),
+              urls.contains("/tmp/herm-checkout/.env"),
+              urls.contains("/tmp/herm-checkout/.env.local")
+        else {
+            throw CheckFailure("source checkout .env URLs were not derived from #filePath")
         }
     }
 

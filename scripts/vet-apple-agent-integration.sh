@@ -69,6 +69,8 @@ require_match '^\.env$' .gitignore
 require_match '^\.env\.local$' .gitignore
 require_match '\.env\.local' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'appendingPathComponent\("Resources", isDirectory: true\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'sourceCheckoutURLs\(sourceFilePath: #filePath\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'source checkout \.env URLs were not derived from #filePath' scripts/vet-apple-agent-config.swift
 require_match 'OPENAI_BASE_URL=' app/apple/herm/Resources/env.example
 require_match 'OPENAI_API_KEY=' app/apple/herm/Resources/env.example
 require_match 'OPENAI_MODEL=' app/apple/herm/Resources/env.example
@@ -76,6 +78,7 @@ require_match 'OpenAI-compatible Chat Completions' docs/apple-agent-config.md
 require_match 'Do not ship real API tokens in the app bundle' docs/apple-agent-config.md
 require_match 'Application Support' docs/apple-agent-config.md
 require_match 'scripts/dev-apple-macos\.sh.*repo root' docs/apple-agent-config.md
+require_match 'compiled source path' docs/apple-agent-config.md
 require_match 'OPENAI_BASE_URL' docs/apple-agent-config.md
 require_match 'OPENAI_API_KEY' docs/apple-agent-config.md
 require_match 'OPENAI_MODEL' docs/apple-agent-config.md
