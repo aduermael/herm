@@ -21,8 +21,8 @@ struct CPSLChatTimelineView: View {
                     }
                 }
                 .padding(.horizontal, CPSLTheme.contentHorizontalInset)
-                .padding(.top, topInset + CPSLTheme.messageVerticalSpacing)
-                .padding(.bottom, bottomInset + CPSLTheme.messageVerticalSpacing)
+                .padding(.top, topInset)
+                .padding(.bottom, bottomInset)
             }
             .scrollPosition($scrollPosition)
             .scrollDismissesKeyboard(.interactively)

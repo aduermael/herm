@@ -21,7 +21,7 @@ struct CPSLChatScreen: View {
                 CPSLConversationDrawerView(
                     model: model,
                     topInset: CPSLTheme.medium,
-                    bottomInset: contentBottomInset
+                    bottomInset: CPSLTheme.medium
                 )
                 .ignoresSafeArea(.container, edges: .vertical)
                 .allowsHitTesting(model.isDrawerOpen)
@@ -31,6 +31,7 @@ struct CPSLChatScreen: View {
                 CPSLMainContentStage(
                     model: model,
                     promptDismissRequest: $promptDismissRequest,
+                    contentTopInset: contentTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
                     contentBottomInset: contentBottomInset
                 )
                 .offset(x: model.isDrawerOpen ? proxy.size.width : 0)
@@ -78,11 +79,16 @@ struct CPSLChatScreen: View {
         }
         return max(0, width - CPSLTheme.controlSize - CPSLTheme.medium * 2)
     }
+
+    private func contentTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
+        topSafeAreaInset + CPSLTheme.topChromeInset
+    }
 }
 
 private struct CPSLMainContentStage: View {
     @ObservedObject var model: CPSLChatModel
     @Binding var promptDismissRequest: Int
+    let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
 
     var body: some View {
@@ -90,9 +96,11 @@ private struct CPSLMainContentStage: View {
             CPSLPrimaryContentView(
                 model: model,
                 promptDismissRequest: $promptDismissRequest,
+                contentTopInset: contentTopInset,
                 contentBottomInset: contentBottomInset
             )
 
+            // TOP & BOTTOM GRADIENTS FOR NICE CONTENT FADE OUT
             CPSLScrollEdgeGlass(edge: .top, height: CPSLTheme.topBlendHeight)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .ignoresSafeArea(.container, edges: .top)
@@ -104,6 +112,7 @@ private struct CPSLMainContentStage: View {
                 .ignoresSafeArea(.container, edges: .bottom)
                 .allowsHitTesting(false)
 
+            // TOP RIGHT ACTION BUTTONS
             CPSLHeaderActionsView(model: model)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -114,6 +123,7 @@ private struct CPSLMainContentStage: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CPSLTheme.background.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
+            // PROMPTING AREA + BUTTONS ON TOP
             CPSLBottomChromeView(
                 model: model,
                 promptDismissRequest: $promptDismissRequest
@@ -125,6 +135,7 @@ private struct CPSLMainContentStage: View {
 private struct CPSLPrimaryContentView: View {
     @ObservedObject var model: CPSLChatModel
     @Binding var promptDismissRequest: Int
+    let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
 
     var body: some View {
@@ -132,19 +143,19 @@ private struct CPSLPrimaryContentView: View {
             if model.isFileBrowserOpen {
                 CPSLFileBrowserView(
                     model: model,
-                    topInset: CPSLTheme.topChromeInset,
+                    topInset: contentTopInset,
                     bottomInset: contentBottomInset
                 )
             } else {
                 CPSLChatTimelineView(
                     model: model,
-                    topInset: CPSLTheme.topChromeInset,
+                    topInset: contentTopInset,
                     bottomInset: contentBottomInset
                 )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(.container, edges: [.top, .bottom])
+        .ignoresSafeArea(.container, edges: .top)
         .contentShape(Rectangle())
         .onTapGesture {
             promptDismissRequest += 1
