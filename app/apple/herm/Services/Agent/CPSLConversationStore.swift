@@ -1,0 +1,624 @@
+import Foundation
+import SQLite3
+
+private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+actor CPSLConversationStore {
+    let databaseURL: URL
+    let usesICloudContainer: Bool
+
+    private var database: OpaquePointer?
+
+    init() throws {
+        let location = try CPSLConversationDatabaseLocation.resolve()
+        try self.init(location: location)
+    }
+
+    init(databaseURL: URL, usesICloudContainer: Bool) throws {
+        try self.init(
+            location: CPSLConversationDatabaseLocation(
+                url: databaseURL,
+                usesICloudContainer: usesICloudContainer
+            )
+        )
+    }
+
+    private init(location: CPSLConversationDatabaseLocation) throws {
+        databaseURL = location.url
+        usesICloudContainer = location.usesICloudContainer
+
+        if sqlite3_open(location.url.path, &database) != SQLITE_OK {
+            let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown SQLite error"
+            throw CPSLConversationStoreError.openFailed(message)
+        }
+        sqlite3_busy_timeout(database, 5_000)
+        try migrate()
+    }
+
+    deinit {
+        sqlite3_close(database)
+    }
+
+    func loadSummaries() throws -> [CPSLConversationSummary] {
+        try query(
+            """
+            SELECT id, title, current_node_id, model, created_at, updated_at
+            FROM conversations
+            ORDER BY updated_at DESC
+            """
+        ) { statement in
+            CPSLConversationSummary(
+                id: columnString(statement, 0) ?? "",
+                title: columnString(statement, 1) ?? "Untitled",
+                currentNodeID: columnString(statement, 2),
+                model: columnString(statement, 3),
+                createdAt: columnDate(statement, 4),
+                updatedAt: columnDate(statement, 5)
+            )
+        }
+    }
+
+    func loadNodes(conversationID: String) throws -> [CPSLStoredNode] {
+        try query(
+            """
+            SELECT id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at
+            FROM nodes
+            WHERE conversation_id = ?
+            ORDER BY sequence ASC, created_at ASC
+            """,
+            bindings: [.text(conversationID)]
+        ) { statement in
+            storedNode(from: statement)
+        }
+    }
+
+    func loadConversation(id: String) throws -> CPSLLoadedConversation? {
+        let loadedHeaders = try query(
+            """
+            SELECT id, title, current_node_id, model, system_prompt, created_at, updated_at
+            FROM conversations
+            WHERE id = ?
+            LIMIT 1
+            """,
+            bindings: [.text(id)]
+        ) { statement in
+            (
+                summary: CPSLConversationSummary(
+                    id: columnString(statement, 0) ?? "",
+                    title: columnString(statement, 1) ?? "Untitled",
+                    currentNodeID: columnString(statement, 2),
+                    model: columnString(statement, 3),
+                    createdAt: columnDate(statement, 5),
+                    updatedAt: columnDate(statement, 6)
+                ),
+                systemPrompt: columnString(statement, 4) ?? ""
+            )
+        }
+        guard let loadedHeader = loadedHeaders.first else {
+            return nil
+        }
+        return CPSLLoadedConversation(
+            summary: loadedHeader.summary,
+            systemPrompt: loadedHeader.systemPrompt,
+            nodes: try loadNodes(conversationID: id)
+        )
+    }
+
+    func createConversation(
+        userText: String,
+        model: String?,
+        systemPrompt: String
+    ) throws -> (summary: CPSLConversationSummary, userNode: CPSLStoredNode) {
+        let now = Date()
+        let conversationID = UUID().uuidString
+        let userNodeID = UUID().uuidString
+        let title = Self.generateTitle(from: userText)
+        let providerMessage = CPSLOpenAIMessage.user(userText)
+        let providerJSON = try encodeProviderMessage(providerMessage)
+
+        try withTransaction {
+            try execute(
+                """
+                INSERT INTO conversations (id, title, root_node_id, current_node_id, model, system_prompt, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                bindings: [
+                    .text(conversationID),
+                    .text(title),
+                    .text(userNodeID),
+                    .text(userNodeID),
+                    .nullableText(model),
+                    .text(systemPrompt),
+                    .date(now),
+                    .date(now)
+                ]
+            )
+            try execute(
+                """
+                INSERT INTO nodes (id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at)
+                VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, 0, ?)
+                """,
+                bindings: [
+                    .text(userNodeID),
+                    .text(conversationID),
+                    .text(CPSLChatRole.user.rawValue),
+                    .text(userText),
+                    .nullableText(model),
+                    .text(providerJSON),
+                    .date(now)
+                ]
+            )
+        }
+
+        let summary = CPSLConversationSummary(
+            id: conversationID,
+            title: title,
+            currentNodeID: userNodeID,
+            model: model,
+            createdAt: now,
+            updatedAt: now
+        )
+        let node = CPSLStoredNode(
+            id: userNodeID,
+            conversationID: conversationID,
+            parentID: nil,
+            role: .user,
+            title: nil,
+            body: userText,
+            model: model,
+            providerMessage: providerMessage,
+            sequence: 0,
+            createdAt: now
+        )
+        return (summary, node)
+    }
+
+    func appendNode(
+        conversationID: String,
+        parentID: String?,
+        role: CPSLChatRole,
+        title: String?,
+        body: String,
+        model: String?,
+        providerMessage: CPSLOpenAIMessage?
+    ) throws -> CPSLStoredNode {
+        var sequence = 0
+        let now = Date()
+        let nodeID = UUID().uuidString
+        let providerJSON = try providerMessage.map(encodeProviderMessage)
+
+        try withTransaction {
+            guard let parentID else {
+                throw CPSLConversationStoreError.parentRequired
+            }
+            try assertParentBelongsToConversation(parentID: parentID, conversationID: conversationID)
+            sequence = try nextSequence(conversationID: conversationID)
+            try execute(
+                """
+                INSERT INTO nodes (id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                bindings: [
+                    .text(nodeID),
+                    .text(conversationID),
+                    .nullableText(parentID),
+                    .text(role.rawValue),
+                    .nullableText(title),
+                    .text(body),
+                    .nullableText(model),
+                    .nullableText(providerJSON),
+                    .int(sequence),
+                    .date(now)
+                ]
+            )
+            try updateConversationCurrentNode(conversationID: conversationID, currentNodeID: nodeID, updatedAt: now)
+        }
+
+        return CPSLStoredNode(
+            id: nodeID,
+            conversationID: conversationID,
+            parentID: parentID,
+            role: role,
+            title: title,
+            body: body,
+            model: model,
+            providerMessage: providerMessage,
+            sequence: sequence,
+            createdAt: now
+        )
+    }
+
+    func updateNodeBody(id: String, body: String) throws {
+        try execute(
+            "UPDATE nodes SET body = ? WHERE id = ?",
+            bindings: [.text(body), .text(id)]
+        )
+        if let conversationID = try conversationID(forNode: id) {
+            try execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                bindings: [.date(Date()), .text(conversationID)]
+            )
+        }
+    }
+
+    func updateConversationModelIfMissing(conversationID: String, model: String) throws {
+        try execute(
+            "UPDATE conversations SET model = ? WHERE id = ? AND model IS NULL",
+            bindings: [.text(model), .text(conversationID)]
+        )
+    }
+
+    func providerMessages(conversationID: String) throws -> [CPSLOpenAIMessage] {
+        try loadNodes(conversationID: conversationID).compactMap(\.providerMessage)
+    }
+
+    private func migrate() throws {
+        try execute("PRAGMA journal_mode=DELETE")
+        try execute("PRAGMA synchronous=FULL")
+        try execute("PRAGMA foreign_keys=ON")
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                root_node_id TEXT,
+                current_node_id TEXT,
+                model TEXT,
+                system_prompt TEXT,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+        try addColumnIfMissing(table: "conversations", column: "root_node_id", definition: "TEXT")
+        try addColumnIfMissing(table: "conversations", column: "current_node_id", definition: "TEXT")
+        try addColumnIfMissing(table: "conversations", column: "model", definition: "TEXT")
+        try addColumnIfMissing(table: "conversations", column: "system_prompt", definition: "TEXT")
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS nodes (
+                id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                parent_id TEXT,
+                role TEXT NOT NULL,
+                title TEXT,
+                body TEXT NOT NULL,
+                model TEXT,
+                provider_message_json TEXT,
+                sequence INTEGER NOT NULL,
+                created_at REAL NOT NULL,
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(parent_id) REFERENCES nodes(id) ON DELETE SET NULL
+            )
+            """
+        )
+        try addColumnIfMissing(table: "nodes", column: "title", definition: "TEXT")
+        try addColumnIfMissing(table: "nodes", column: "model", definition: "TEXT")
+        try addColumnIfMissing(table: "nodes", column: "provider_message_json", definition: "TEXT")
+        try backfillLegacyConversationPointers()
+        try execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique ON nodes(conversation_id, sequence)")
+        try execute("CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)")
+        try execute("CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at)")
+    }
+
+    private func backfillLegacyConversationPointers() throws {
+        try execute(
+            """
+            UPDATE conversations
+            SET root_node_id = (
+                SELECT id
+                FROM nodes
+                WHERE nodes.conversation_id = conversations.id
+                ORDER BY sequence ASC, created_at ASC
+                LIMIT 1
+            )
+            WHERE NULLIF(root_node_id, '') IS NULL
+            """
+        )
+        try execute(
+            """
+            UPDATE conversations
+            SET current_node_id = (
+                SELECT id
+                FROM nodes
+                WHERE nodes.conversation_id = conversations.id
+                ORDER BY sequence DESC, created_at DESC
+                LIMIT 1
+            )
+            WHERE NULLIF(current_node_id, '') IS NULL
+            """
+        )
+        try execute("UPDATE conversations SET system_prompt = '' WHERE system_prompt IS NULL")
+    }
+
+    private func addColumnIfMissing(table: String, column: String, definition: String) throws {
+        guard !table.contains("\""), !column.contains("\""), !definition.contains(";") else {
+            throw CPSLConversationStoreError.sqlite("Invalid migration identifier.")
+        }
+
+        let columns = try query("PRAGMA table_info(\"\(table)\")") { statement in
+            columnString(statement, 1) ?? ""
+        }
+        guard !columns.contains(column) else {
+            return
+        }
+
+        try execute("ALTER TABLE \"\(table)\" ADD COLUMN \"\(column)\" \(definition)")
+    }
+
+    private func nextSequence(conversationID: String) throws -> Int {
+        let values = try query(
+            "SELECT COALESCE(MAX(sequence), -1) + 1 FROM nodes WHERE conversation_id = ?",
+            bindings: [.text(conversationID)]
+        ) { statement in
+            Int(sqlite3_column_int(statement, 0))
+        }
+        return values.first ?? 0
+    }
+
+    private func assertParentBelongsToConversation(parentID: String, conversationID: String) throws {
+        let values = try query(
+            "SELECT 1 FROM nodes WHERE id = ? AND conversation_id = ? LIMIT 1",
+            bindings: [.text(parentID), .text(conversationID)]
+        ) { _ in
+            true
+        }
+        if values.first != true {
+            throw CPSLConversationStoreError.parentConversationMismatch
+        }
+    }
+
+    private func conversationID(forNode id: String) throws -> String? {
+        try query(
+            "SELECT conversation_id FROM nodes WHERE id = ? LIMIT 1",
+            bindings: [.text(id)]
+        ) { statement in
+            columnString(statement, 0)
+        }
+        .first ?? nil
+    }
+
+    private func updateConversationCurrentNode(
+        conversationID: String,
+        currentNodeID: String,
+        updatedAt: Date
+    ) throws {
+        try execute(
+            "UPDATE conversations SET current_node_id = ?, updated_at = ? WHERE id = ?",
+            bindings: [.text(currentNodeID), .date(updatedAt), .text(conversationID)]
+        )
+    }
+
+    private func encodeProviderMessage(_ message: CPSLOpenAIMessage) throws -> String {
+        let data = try JSONEncoder().encode(message)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func decodeProviderMessage(_ json: String?) -> CPSLOpenAIMessage? {
+        guard let json, let data = json.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(CPSLOpenAIMessage.self, from: data)
+    }
+
+    private func execute(_ sql: String, bindings: [CPSLSQLiteBinding] = []) throws {
+        let statement = try prepare(sql, bindings: bindings)
+        defer {
+            sqlite3_finalize(statement)
+        }
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_DONE {
+                return
+            }
+            if result != SQLITE_ROW {
+                throw lastError()
+            }
+        }
+    }
+
+    private func withTransaction(_ work: () throws -> Void) throws {
+        try execute("BEGIN IMMEDIATE TRANSACTION")
+        do {
+            try work()
+            try execute("COMMIT")
+        } catch {
+            try? execute("ROLLBACK")
+            throw error
+        }
+    }
+
+    private func query<T>(
+        _ sql: String,
+        bindings: [CPSLSQLiteBinding] = [],
+        row: (OpaquePointer?) throws -> T
+    ) throws -> [T] {
+        let statement = try prepare(sql, bindings: bindings)
+        defer {
+            sqlite3_finalize(statement)
+        }
+
+        var values: [T] = []
+        while true {
+            let result = sqlite3_step(statement)
+            if result == SQLITE_ROW {
+                values.append(try row(statement))
+            } else if result == SQLITE_DONE {
+                return values
+            } else {
+                throw lastError()
+            }
+        }
+    }
+
+    private func prepare(_ sql: String, bindings: [CPSLSQLiteBinding]) throws -> OpaquePointer? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw lastError()
+        }
+        for (index, binding) in bindings.enumerated() {
+            try bind(binding, to: statement, at: Int32(index + 1))
+        }
+        return statement
+    }
+
+    private func bind(_ binding: CPSLSQLiteBinding, to statement: OpaquePointer?, at index: Int32) throws {
+        let result: Int32
+        switch binding {
+        case .null:
+            result = sqlite3_bind_null(statement, index)
+        case .text(let value):
+            result = sqlite3_bind_text(statement, index, value, -1, sqliteTransient)
+        case .int(let value):
+            result = sqlite3_bind_int(statement, index, Int32(value))
+        case .date(let value):
+            result = sqlite3_bind_double(statement, index, value.timeIntervalSince1970)
+        }
+        guard result == SQLITE_OK else {
+            throw lastError()
+        }
+    }
+
+    private func storedNode(from statement: OpaquePointer?) -> CPSLStoredNode {
+        let providerJSON = columnString(statement, 7)
+        return CPSLStoredNode(
+            id: columnString(statement, 0) ?? "",
+            conversationID: columnString(statement, 1) ?? "",
+            parentID: columnString(statement, 2),
+            role: CPSLChatRole(rawValue: columnString(statement, 3) ?? "") ?? .assistant,
+            title: columnString(statement, 4),
+            body: columnString(statement, 5) ?? "",
+            model: columnString(statement, 6),
+            providerMessage: decodeProviderMessage(providerJSON),
+            sequence: Int(sqlite3_column_int(statement, 8)),
+            createdAt: columnDate(statement, 9)
+        )
+    }
+
+    private func lastError() -> CPSLConversationStoreError {
+        let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown SQLite error"
+        return .sqlite(message)
+    }
+
+    private static func generateTitle(from text: String) -> String {
+        let singleLine = text
+            .split(whereSeparator: \.isNewline)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard singleLine.count > 44 else {
+            return singleLine.isEmpty ? "Untitled" : singleLine
+        }
+        return "\(singleLine.prefix(41))..."
+    }
+}
+
+nonisolated struct CPSLLoadedConversation: Equatable, Sendable {
+    let summary: CPSLConversationSummary
+    let systemPrompt: String
+    let nodes: [CPSLStoredNode]
+}
+
+nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let currentNodeID: String?
+    let model: String?
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable {
+    let id: String
+    let conversationID: String
+    let parentID: String?
+    let role: CPSLChatRole
+    let title: String?
+    var body: String
+    let model: String?
+    let providerMessage: CPSLOpenAIMessage?
+    let sequence: Int
+    let createdAt: Date
+
+    var chatMessage: CPSLChatMessage {
+        CPSLChatMessage(id: UUID(uuidString: id) ?? UUID(), role: role, title: title, body: body)
+    }
+}
+
+nonisolated enum CPSLConversationStoreError: LocalizedError {
+    case openFailed(String)
+    case parentRequired
+    case parentConversationMismatch
+    case sqlite(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .openFailed(let message):
+            return "Could not open conversations database: \(message)"
+        case .parentRequired:
+            return "Conversation nodes must have a parent node."
+        case .parentConversationMismatch:
+            return "Parent node does not belong to the conversation."
+        case .sqlite(let message):
+            return "SQLite error: \(message)"
+        }
+    }
+}
+
+private nonisolated enum CPSLSQLiteBinding {
+    case null
+    case text(String)
+    case int(Int)
+    case date(Date)
+
+    static func nullableText(_ value: String?) -> CPSLSQLiteBinding {
+        value.map(CPSLSQLiteBinding.text) ?? .null
+    }
+}
+
+private nonisolated struct CPSLConversationDatabaseLocation {
+    let url: URL
+    let usesICloudContainer: Bool
+
+    static func resolve() throws -> CPSLConversationDatabaseLocation {
+        let fileManager = FileManager.default
+        if let ubiquityURL = fileManager.url(forUbiquityContainerIdentifier: nil) {
+            let directory = ubiquityURL
+                .appendingPathComponent("Documents", isDirectory: true)
+                .appendingPathComponent("Herm", isDirectory: true)
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            return CPSLConversationDatabaseLocation(
+                url: directory.appendingPathComponent("conversations.sqlite"),
+                usesICloudContainer: true
+            )
+        }
+
+        let supportURL = try fileManager.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let bundleID = Bundle.main.bundleIdentifier ?? "herm"
+        let directory = supportURL
+            .appendingPathComponent(bundleID, isDirectory: true)
+            .appendingPathComponent("Conversations", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return CPSLConversationDatabaseLocation(
+            url: directory.appendingPathComponent("conversations.sqlite"),
+            usesICloudContainer: false
+        )
+    }
+}
+
+private func columnString(_ statement: OpaquePointer?, _ index: Int32) -> String? {
+    guard sqlite3_column_type(statement, index) != SQLITE_NULL,
+          let text = sqlite3_column_text(statement, index)
+    else {
+        return nil
+    }
+    return String(cString: text)
+}
+
+private func columnDate(_ statement: OpaquePointer?, _ index: Int32) -> Date {
+    Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
+}

@@ -60,7 +60,7 @@ struct CPSLSandboxURLs {
     let workdir: URL
 }
 
-enum CPSLChatRole: String, Decodable {
+enum CPSLChatRole: String, Codable, Equatable, Sendable {
     case assistant
     case user
     case command
@@ -107,13 +107,14 @@ enum CPSLChatRole: String, Decodable {
     }
 }
 
-struct CPSLChatMessage: Identifiable {
-    let id = UUID()
+struct CPSLChatMessage: Identifiable, Equatable, Sendable {
+    let id: UUID
     let role: CPSLChatRole
     let title: String?
     var body: String
 
-    init(role: CPSLChatRole, title: String?, body: String) {
+    init(id: UUID = UUID(), role: CPSLChatRole, title: String?, body: String) {
+        self.id = id
         self.role = role
         self.title = title
         self.body = body

@@ -55,6 +55,16 @@ struct CPSLChatScreen: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if model.isDrawerOpen {
+                CPSLConversationDrawerView(
+                    model: model,
+                    topInset: CPSLTheme.large,
+                    bottomInset: contentBottomInset
+                )
+                .ignoresSafeArea(.container, edges: .vertical)
+                .zIndex(10)
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             bottomChrome
@@ -100,7 +110,7 @@ private struct CPSLHeaderView: View {
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
             CPSLHeaderIconButton(systemName: "line.3.horizontal", accessibilityLabel: "Menu") {
-                model.showComingSoon("coming soon")
+                model.toggleDrawer()
             }
 
             Spacer()

@@ -80,6 +80,7 @@ EOF
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 root=$(CDPATH= cd "$script_dir/.." && pwd -P)
+cd "$root"
 
 mode=run
 cpsl_mode=auto
@@ -180,6 +181,7 @@ app_path="$derived_data/Build/Products/$configuration/$target.app"
 binary_path="$app_path/Contents/MacOS/$target"
 xcframework_path="$root/.herm-cpsl/artifacts/apple/cpsl.xcframework"
 entitlements_path="$derived_data/Build/Intermediates.noindex/herm.build/$configuration/herm.build/$target.app.xcent"
+source_entitlements_path="$root/app/apple/herm/herm-macOS.entitlements"
 host_arch=$(uname -m)
 xcode_arch=$host_arch
 
@@ -240,7 +242,12 @@ else
 		CODE_SIGNING_REQUIRED=NO \
 		REGISTER_APP_GROUPS=NO \
 		build
-	ad_hoc_sign_app "$app_path" "$entitlements_path"
+	if [ -f "$entitlements_path" ]; then
+		sign_entitlements_path=$entitlements_path
+	else
+		sign_entitlements_path=$source_entitlements_path
+	fi
+	ad_hoc_sign_app "$app_path" "$sign_entitlements_path"
 fi
 
 [ -d "$app_path" ] || die "expected app was not built: $app_path"

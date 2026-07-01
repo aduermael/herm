@@ -22,6 +22,10 @@ tools/edit-file/edit-file
 .herm-apple/
 .agents/
 
+# Local provider credentials
+.env
+.env.local
+
 # OS
 .DS_Store
 .claude/worktrees/

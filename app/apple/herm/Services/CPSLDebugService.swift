@@ -50,6 +50,14 @@ actor CPSLDebugService {
     }
 
     func evaluate(_ command: String) async -> CPSLEvalServiceResult {
+        await evaluate(command, language: "bash")
+    }
+
+    func evaluateLuau(_ source: String) async -> CPSLEvalServiceResult {
+        await evaluate(source, language: "luau")
+    }
+
+    private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
         let sandboxURLs: CPSLSandboxURLs
         do {
             sandboxURLs = try ensureSandboxURLs()
@@ -62,7 +70,7 @@ actor CPSLDebugService {
             return Self.ffiFailure("Session init: \(sessionError)")
         }
 
-        guard let requestJSON = makeEvalRequestJSON(command: command) else {
+        guard let requestJSON = makeEvalRequestJSON(input: input, language: language) else {
             return Self.ffiFailure("Could not encode eval request JSON")
         }
 
@@ -244,7 +252,7 @@ actor CPSLDebugService {
                 ]
             ],
             "initial_cwd": "/workdir",
-            "language": "bash",
+            "language": "luau",
             "http": [
                 "mode": "policy",
                 "allow_domains": [] as [String],
@@ -254,10 +262,10 @@ actor CPSLDebugService {
         return jsonString(config)
     }
 
-    private func makeEvalRequestJSON(command: String) -> String? {
+    private func makeEvalRequestJSON(input: String, language: String) -> String? {
         let request: [String: Any] = [
-            "language": "bash",
-            "input": command,
+            "language": language,
+            "input": input,
             "timeout_ms": Int(Self.evalTimeoutMilliseconds)
         ]
         return jsonString(request)
