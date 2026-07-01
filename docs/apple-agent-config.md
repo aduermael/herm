@@ -20,8 +20,11 @@ Local credential files are ignored by git and excluded from the Xcode target:
 - `app/apple/herm/Resources/.env.local`
 
 `app/apple/herm/Resources/env.example` is a safe template and may be packaged.
-Do not ship real API tokens in the app bundle. A bundled `.env` can be useful
-for a local debug build, but it is not a safe production credential strategy.
+Do not ship real API tokens in the app bundle. The Xcode target has a Debug-only
+`Copy Debug .env` build phase that copies a local `.env`/`.env.local` into the
+app resources for simulator or device testing. Release builds remove those files
+from the built resources. This is a local testing convenience, not a production
+credential strategy.
 
 The loader checks these locations, with later files overriding earlier values:
 
@@ -40,7 +43,9 @@ The loader checks these locations, with later files overriding earlier values:
 For macOS development, `scripts/dev-apple-macos.sh` changes to the repo root
 before launching the app, so a repo-root `.env` is available. Xcode debug
 launches can also find a repo-root or `app/apple/herm/Resources/.env` file from
-the compiled source path without packaging that file into the app bundle. For
-iOS simulator or device builds outside a local source checkout, place the file
-in the app container's Application Support directory or inject the values
-through the debug process environment.
+the compiled source path. For iOS simulator or device Debug builds, the build
+phase copies the first matching file from `app/apple/herm/Resources`,
+`app/apple/herm`, or the repo root into the app bundle so the sandboxed app can
+read it. For production-style builds, place the file in the app container's
+Application Support directory or inject the values through the process
+environment.

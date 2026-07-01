@@ -129,6 +129,7 @@
 				85D75D2F2FE62B6F0095BAB2 /* Sources */,
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
 				85D75D312FE62B6F0095BAB2 /* Resources */,
+				85A100032FEA000000000003 /* Copy Debug .env */,
 				850B3BFC2FE8390E00A21FC8 /* Embed Frameworks */,
 			);
 			buildRules = (
@@ -214,6 +215,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh\"\n";
+		};
+		85A100032FEA000000000003 /* Copy Debug .env */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Debug .env";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"${CONFIGURATION}\" != \"Debug\" ]; then\n  rm -f \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/.env\" \"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/.env.local\"\n  exit 0\nfi\n\nresources_dir=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nmkdir -p \"${resources_dir}\"\n\nfor name in .env .env.local; do\n  rm -f \"${resources_dir}/${name}\"\n  for candidate in \"${SRCROOT}/herm/Resources/${name}\" \"${SRCROOT}/herm/${name}\" \"${SRCROOT}/../../${name}\"; do\n    if [ -f \"${candidate}\" ]; then\n      cp \"${candidate}\" \"${resources_dir}/${name}\"\n      break\n    fi\n  done\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

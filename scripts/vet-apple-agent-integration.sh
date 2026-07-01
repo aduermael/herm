@@ -79,6 +79,8 @@ require_match 'Do not ship real API tokens in the app bundle' docs/apple-agent-c
 require_match 'Application Support' docs/apple-agent-config.md
 require_match 'scripts/dev-apple-macos\.sh.*repo root' docs/apple-agent-config.md
 require_match 'compiled source path' docs/apple-agent-config.md
+require_match 'Debug-only' docs/apple-agent-config.md
+require_match 'Release builds remove' docs/apple-agent-config.md
 require_match 'OPENAI_BASE_URL' docs/apple-agent-config.md
 require_match 'OPENAI_API_KEY' docs/apple-agent-config.md
 require_match 'OPENAI_MODEL' docs/apple-agent-config.md
@@ -104,6 +106,11 @@ require_match '^[[:space:]]*\.env,' app/apple/herm.xcodeproj/project.pbxproj
 require_match '^[[:space:]]*\.env\.local,' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Resources/\.env' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Resources/\.env\.local' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'Copy Debug \.env' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'CONFIGURATION.*Debug' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'TARGET_BUILD_DIR.*UNLOCALIZED_RESOURCES_FOLDER_PATH' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'SRCROOT.*/herm/Resources' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'SRCROOT.*/../../' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'source_entitlements_path=.*herm-macOS.entitlements' scripts/dev-apple-macos.sh
 require_match 'sign_entitlements_path=.source_entitlements_path' scripts/dev-apple-macos.sh
 require_match 'cd "\$root"' scripts/dev-apple-macos.sh
