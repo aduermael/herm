@@ -79,6 +79,10 @@ enum CPSLChatRole: String, Codable, Equatable, Sendable {
         self == .command || self == .output || self == .error
     }
 
+    var rendersMarkdownBody: Bool {
+        self == .assistant || self == .user
+    }
+
     var isFramed: Bool {
         self != .assistant
     }

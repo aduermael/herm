@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct CPSLChatTimelineView: View {
@@ -207,6 +208,11 @@ private struct CPSLChatMessageView: View {
     private var messageBody: some View {
         if message.role == .command {
             CPSLCommandBlockBody(text: message.body, foreground: message.role.foreground)
+        } else if message.role.rendersMarkdownBody {
+            CPSLMarkdownMessageBody(
+                text: message.body,
+                foreground: message.role.foreground
+            )
         } else {
             Text(message.body)
                 .font(message.role.usesMonospaceBody ? CPSLTheme.monospacedBodyFont : CPSLTheme.bodyFont)
@@ -214,6 +220,335 @@ private struct CPSLChatMessageView: View {
                 .lineSpacing(message.role.usesMonospaceBody ? 0 : CPSLTheme.bodyLineSpacing)
                 .textSelection(.enabled)
         }
+    }
+}
+
+private struct CPSLMarkdownMessageBody: View {
+    let text: String
+    let foreground: Color
+
+    var body: some View {
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: CPSLTheme.small) {
+                ForEach(CPSLMarkdownBlock.blocks(from: text)) { block in
+                    CPSLMarkdownBlockView(block: block, foreground: foreground)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
+        }
+    }
+}
+
+private struct CPSLMarkdownBlock: Identifiable, Equatable {
+    enum Content: Equatable {
+        case heading(level: Int, text: String)
+        case paragraph(lines: [String])
+        case unorderedList(items: [String])
+        case orderedList(items: [OrderedListItem])
+        case codeBlock(language: String?, text: String)
+    }
+
+    private struct CodeFence {
+        let language: String?
+    }
+
+    let id: Int
+    let content: Content
+
+    static func blocks(from text: String) -> [CPSLMarkdownBlock] {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var blocks: [CPSLMarkdownBlock] = []
+        var paragraphLines: [String] = []
+        var index = 0
+
+        func append(_ content: Content) {
+            blocks.append(CPSLMarkdownBlock(id: blocks.count, content: content))
+        }
+
+        func flushParagraph() {
+            guard !paragraphLines.isEmpty else {
+                return
+            }
+            append(.paragraph(lines: paragraphLines))
+            paragraphLines.removeAll(keepingCapacity: true)
+        }
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+            if let codeFence = codeFence(from: line) {
+                flushParagraph()
+                index += 1
+
+                var codeLines: [String] = []
+                while index < lines.count {
+                    if isClosingCodeFence(lines[index]) {
+                        index += 1
+                        break
+                    }
+
+                    codeLines.append(lines[index])
+                    index += 1
+                }
+
+                append(.codeBlock(language: codeFence.language, text: codeLines.joined(separator: "\n")))
+                continue
+            }
+
+            if trimmedLine.isEmpty {
+                flushParagraph()
+                index += 1
+                continue
+            }
+
+            if let heading = heading(from: line) {
+                flushParagraph()
+                append(.heading(level: heading.level, text: heading.text))
+                index += 1
+                continue
+            }
+
+            if let item = unorderedListItem(from: line) {
+                flushParagraph()
+
+                var items = [item]
+                index += 1
+                while index < lines.count, let nextItem = unorderedListItem(from: lines[index]) {
+                    items.append(nextItem)
+                    index += 1
+                }
+
+                append(.unorderedList(items: items))
+                continue
+            }
+
+            if let item = orderedListItem(from: line) {
+                flushParagraph()
+
+                var items = [item]
+                index += 1
+                while index < lines.count, let nextItem = orderedListItem(from: lines[index]) {
+                    items.append(nextItem)
+                    index += 1
+                }
+
+                append(.orderedList(items: items))
+                continue
+            }
+
+            paragraphLines.append(line)
+            index += 1
+        }
+
+        flushParagraph()
+        return blocks.isEmpty ? [CPSLMarkdownBlock(id: 0, content: .paragraph(lines: [""]))] : blocks
+    }
+
+    private static func heading(from line: String) -> (level: Int, text: String)? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        var level = 0
+        var cursor = trimmedLine.startIndex
+
+        while cursor < trimmedLine.endIndex, trimmedLine[cursor] == "#", level < 6 {
+            level += 1
+            cursor = trimmedLine.index(after: cursor)
+        }
+
+        guard level > 0, cursor < trimmedLine.endIndex, isMarkdownWhitespace(trimmedLine[cursor]) else {
+            return nil
+        }
+
+        let textStart = trimmedLine.index(after: cursor)
+        let text = String(trimmedLine[textStart...]).trimmingCharacters(in: .whitespaces)
+        return text.isEmpty ? nil : (level, text)
+    }
+
+    private static func codeFence(from line: String) -> CodeFence? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        guard trimmedLine.hasPrefix("```") else {
+            return nil
+        }
+
+        let language = String(trimmedLine.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+        return CodeFence(language: language.isEmpty ? nil : language)
+    }
+
+    private static func isClosingCodeFence(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespaces).hasPrefix("```")
+    }
+
+    private static func unorderedListItem(from line: String) -> String? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        for marker in ["- ", "* ", "+ "] where trimmedLine.hasPrefix(marker) {
+            return String(trimmedLine.dropFirst(marker.count))
+        }
+
+        return nil
+    }
+
+    private static func orderedListItem(from line: String) -> OrderedListItem? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        var cursor = trimmedLine.startIndex
+        var numberText = ""
+
+        while cursor < trimmedLine.endIndex, trimmedLine[cursor].isWholeNumber {
+            numberText.append(trimmedLine[cursor])
+            cursor = trimmedLine.index(after: cursor)
+        }
+
+        guard !numberText.isEmpty,
+              cursor < trimmedLine.endIndex,
+              trimmedLine[cursor] == "."
+        else {
+            return nil
+        }
+
+        let afterDot = trimmedLine.index(after: cursor)
+        guard afterDot < trimmedLine.endIndex, isMarkdownWhitespace(trimmedLine[afterDot]) else {
+            return nil
+        }
+
+        let textStart = trimmedLine.index(after: afterDot)
+        return OrderedListItem(number: Int(numberText) ?? 1, text: String(trimmedLine[textStart...]))
+    }
+
+    private static func isMarkdownWhitespace(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
+    }
+}
+
+private struct OrderedListItem: Equatable {
+    let number: Int
+    let text: String
+}
+
+private struct CPSLMarkdownBlockView: View {
+    let block: CPSLMarkdownBlock
+    let foreground: Color
+
+    var body: some View {
+        switch block.content {
+        case .heading(let level, let text):
+            CPSLMarkdownInlineText(text: text, font: headingFont(for: level), foreground: foreground)
+                .padding(.top, level == 1 ? CPSLTheme.small : 0)
+        case .paragraph(let lines):
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    CPSLMarkdownInlineText(text: line, font: CPSLTheme.bodyFont, foreground: foreground)
+                }
+            }
+        case .unorderedList(let items):
+            CPSLMarkdownListView(
+                items: items.map { CPSLMarkdownListItem(marker: "\u{2022}", text: $0) },
+                foreground: foreground
+            )
+        case .orderedList(let items):
+            CPSLMarkdownListView(
+                items: items.map { CPSLMarkdownListItem(marker: "\($0.number).", text: $0.text) },
+                foreground: foreground
+            )
+        case .codeBlock(let language, let text):
+            CPSLMarkdownCodeBlockView(language: language, text: text, foreground: foreground)
+        }
+    }
+
+    private func headingFont(for level: Int) -> Font {
+        switch level {
+        case 1:
+            return CPSLTheme.headerFont
+        case 2:
+            return CPSLTheme.userFont(size: 19, weight: .semibold)
+        case 3:
+            return CPSLTheme.userFont(size: 17, weight: .semibold)
+        default:
+            return CPSLTheme.userFont(size: CPSLTheme.FontSize.body, weight: .semibold)
+        }
+    }
+}
+
+private struct CPSLMarkdownInlineText: View {
+    let text: String
+    let font: Font
+    let foreground: Color
+
+    var body: some View {
+        renderedText
+            .font(font)
+            .foregroundStyle(foreground)
+            .lineSpacing(CPSLTheme.bodyLineSpacing)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+    }
+
+    private var renderedText: Text {
+        guard let attributedText = try? AttributedString(
+            markdown: text,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        ) else {
+            return Text(text)
+        }
+
+        return Text(attributedText)
+    }
+}
+
+private struct CPSLMarkdownListItem: Equatable {
+    let marker: String
+    let text: String
+}
+
+private struct CPSLMarkdownListView: View {
+    let items: [CPSLMarkdownListItem]
+    let foreground: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                HStack(alignment: .firstTextBaseline, spacing: CPSLTheme.small) {
+                    Text(item.marker)
+                        .font(CPSLTheme.bodyFont)
+                        .foregroundStyle(foreground)
+                        .frame(minWidth: CPSLTheme.large, alignment: .trailing)
+
+                    CPSLMarkdownInlineText(text: item.text, font: CPSLTheme.bodyFont, foreground: foreground)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+private struct CPSLMarkdownCodeBlockView: View {
+    let language: String?
+    let text: String
+    let foreground: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
+            if let language {
+                Text(language)
+                    .font(CPSLTheme.captionMediumFont)
+                    .foregroundStyle(foreground.opacity(0.62))
+            }
+
+            Text(text)
+                .font(CPSLTheme.monospacedBodyFont)
+                .foregroundStyle(foreground)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(CPSLTheme.small)
+        .background(CPSLTheme.command)
+        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
     }
 }
 
