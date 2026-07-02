@@ -33,9 +33,9 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
         values: [String: String],
         environment: [String: String] = [:]
     ) throws -> CPSLAgentConfig {
+        let source = CPSLAgentConfigSource(values: values, environment: environment)
         guard let baseURLValue = firstValue(
-            in: values,
-            environment: environment,
+            in: source,
             keys: ["OPENAI_BASE_URL", "OPENAI_API_BASE_URL", "API_BASE_URL", "API_URL", "URL"]
         )
         else {
@@ -43,33 +43,31 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
         }
         let trimmedBaseURL = baseURLValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let baseURL = URL(string: trimmedBaseURL),
-              let scheme = baseURL.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              baseURL.host?.isEmpty == false,
-              baseURL.user == nil,
-              baseURL.password == nil,
-              baseURL.query == nil,
-              baseURL.fragment == nil
+                let scheme = baseURL.scheme?.lowercased(),
+                ["http", "https"].contains(scheme),
+                baseURL.host?.isEmpty == false,
+                baseURL.user == nil,
+                baseURL.password == nil,
+                baseURL.query == nil,
+                baseURL.fragment == nil
         else {
             throw CPSLAgentConfigError.invalidValue("OPENAI_BASE_URL")
         }
 
         guard let token = firstValue(
-            in: values,
-            environment: environment,
+            in: source,
             keys: ["OPENAI_API_KEY", "API_KEY", "TOKEN", "XAI_API_KEY"]
         ),
-              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             throw CPSLAgentConfigError.missingValue("OPENAI_API_KEY")
         }
 
         guard let model = firstValue(
-            in: values,
-            environment: environment,
+            in: source,
             keys: ["OPENAI_MODEL", "MODEL", "XAI_MODEL"]
         ),
-              !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             throw CPSLAgentConfigError.missingValue("OPENAI_MODEL")
         }
@@ -79,37 +77,31 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
             token: token.trimmingCharacters(in: .whitespacesAndNewlines),
             model: model.trimmingCharacters(in: .whitespacesAndNewlines),
             maxToolRounds: positiveIntValue(
-                in: values,
-                environment: environment,
+                in: source,
                 keys: ["HERM_MAX_TOOL_ROUNDS", "MAX_TOOL_ROUNDS"],
                 defaultValue: defaultMaxToolRounds
             ),
             maxOutputTokens: positiveIntValue(
-                in: values,
-                environment: environment,
+                in: source,
                 keys: ["HERM_MAX_OUTPUT_TOKENS", "MAX_OUTPUT_TOKENS"],
                 defaultValue: defaultMaxOutputTokens
             ),
             contextWindowTokens: optionalPositiveIntValue(
-                in: values,
-                environment: environment,
+                in: source,
                 keys: ["HERM_CONTEXT_WINDOW_TOKENS", "CONTEXT_WINDOW_TOKENS"]
             ),
             exploreSubAgentTurns: positiveIntValue(
-                in: values,
-                environment: environment,
+                in: source,
                 keys: ["HERM_EXPLORE_SUBAGENT_TURNS", "EXPLORE_SUBAGENT_TURNS"],
                 defaultValue: defaultExploreSubAgentTurns
             ),
             generalSubAgentTurns: positiveIntValue(
-                in: values,
-                environment: environment,
+                in: source,
                 keys: ["HERM_GENERAL_SUBAGENT_TURNS", "GENERAL_SUBAGENT_TURNS"],
                 defaultValue: defaultGeneralSubAgentTurns
             ),
             maxAgentDepth: nonNegativeIntValue(
-                in: values,
-                environment: environment,
+                in: source,
                 keys: ["HERM_MAX_AGENT_DEPTH", "MAX_AGENT_DEPTH"],
                 defaultValue: defaultMaxAgentDepth
             )
@@ -117,16 +109,15 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
     }
 
     private static func firstValue(
-        in values: [String: String],
-        environment: [String: String],
+        in source: CPSLAgentConfigSource,
         keys: [String]
     ) -> String? {
         for key in keys {
-            if let value = values[key], !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let value = source.values[key], !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return value
             }
-            if let value = environment[key],
-               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let value = source.environment[key],
+                    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return value
             }
         }
@@ -134,22 +125,20 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
     }
 
     private static func positiveIntValue(
-        in values: [String: String],
-        environment: [String: String],
+        in source: CPSLAgentConfigSource,
         keys: [String],
         defaultValue: Int
     ) -> Int {
-        optionalPositiveIntValue(in: values, environment: environment, keys: keys) ?? defaultValue
+        optionalPositiveIntValue(in: source, keys: keys) ?? defaultValue
     }
 
     private static func optionalPositiveIntValue(
-        in values: [String: String],
-        environment: [String: String],
+        in source: CPSLAgentConfigSource,
         keys: [String]
     ) -> Int? {
-        guard let rawValue = firstValue(in: values, environment: environment, keys: keys),
-              let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
-              value > 0
+        guard let rawValue = firstValue(in: source, keys: keys),
+                let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+                value > 0
         else {
             return nil
         }
@@ -157,14 +146,13 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
     }
 
     private static func nonNegativeIntValue(
-        in values: [String: String],
-        environment: [String: String],
+        in source: CPSLAgentConfigSource,
         keys: [String],
         defaultValue: Int
     ) -> Int {
-        guard let rawValue = firstValue(in: values, environment: environment, keys: keys),
-              let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
-              value >= 0
+        guard let rawValue = firstValue(in: source, keys: keys),
+                let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+                value >= 0
         else {
             return defaultValue
         }
@@ -185,6 +173,11 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
             environment["MODEL"] != nil ||
             environment["XAI_MODEL"] != nil
     }
+}
+
+private nonisolated struct CPSLAgentConfigSource {
+    let values: [String: String]
+    let environment: [String: String]
 }
 
 nonisolated enum CPSLAgentConfigError: LocalizedError {

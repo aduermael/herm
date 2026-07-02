@@ -4,12 +4,13 @@ import CPSL
 
 actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
+    private nonisolated static let textPreviewByteLimit = 1_000_000
 
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
     private var evaluatingSessionID: Int?
     private var sandboxURLs: CPSLSandboxURLs?
-    private var currentVirtualDirectory = "/workdir"
+    private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
 
     deinit {
         if let session {
@@ -47,6 +48,61 @@ actor CPSLDebugService {
             return CPSLDirectoryListing(entries: entries, error: nil)
         } catch {
             return CPSLDirectoryListing(entries: [], error: error.localizedDescription)
+        }
+    }
+
+    func previewFile(_ entry: CPSLFileEntry) -> CPSLFilePreviewLoadResult {
+        guard !entry.isDirectory else {
+            return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
+        }
+
+        do {
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            let hostURL = hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
+            let values = try hostURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            guard Self.isHostURL(hostURL, inside: sandboxURLs.root) else {
+                return CPSLFilePreviewLoadResult(
+                    preview: nil,
+                    error: "File preview is only available inside the CPSL filesystem."
+                )
+            }
+            guard values.isDirectory != true else {
+                return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
+            }
+
+            switch hostURL.pathExtension.lowercased() {
+            case "pdf":
+                return CPSLFilePreviewLoadResult(
+                    preview: CPSLFilePreview(name: entry.name, path: entry.path, kind: .pdf(hostURL)),
+                    error: nil
+                )
+            case "txt":
+                guard (values.fileSize ?? 0) <= Self.textPreviewByteLimit else {
+                    return CPSLFilePreviewLoadResult(
+                        preview: nil,
+                        error: "Text preview is limited to 1 MB."
+                    )
+                }
+                let data = try Data(contentsOf: hostURL)
+                guard let text = String(data: data, encoding: .utf8) else {
+                    return CPSLFilePreviewLoadResult(
+                        preview: nil,
+                        error: "Only UTF-8 text files can be previewed."
+                    )
+                }
+                return CPSLFilePreviewLoadResult(
+                    preview: CPSLFilePreview(name: entry.name, path: entry.path, kind: .text(text)),
+                    error: nil
+                )
+            default:
+                return CPSLFilePreviewLoadResult(
+                    preview: nil,
+                    error: "Preview is available for TXT and PDF files for now."
+                )
+            }
+        } catch {
+            return CPSLFilePreviewLoadResult(preview: nil, error: error.localizedDescription)
         }
     }
 
@@ -119,7 +175,7 @@ actor CPSLDebugService {
             if session?.id == activeSession.id {
                 // cpsl_eval may still be blocked; abandon and intentionally leak this session.
                 session = nil
-                currentVirtualDirectory = "/workdir"
+                currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
             if evaluatingSessionID == activeSession.id {
                 evaluatingSessionID = nil
@@ -130,12 +186,6 @@ actor CPSLDebugService {
 
     private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) -> URL {
         let normalized = Self.normalizedVirtualPath(virtualPath)
-        if normalized == "/workdir" || normalized.hasPrefix("/workdir/") {
-            return Self.appendingVirtualPath(
-                normalized.dropFirst("/workdir".count),
-                to: sandboxURLs.workdir
-            )
-        }
         return Self.appendingVirtualPath(normalized.dropFirst(), to: sandboxURLs.root)
     }
 
@@ -194,6 +244,12 @@ actor CPSLDebugService {
         return url
     }
 
+    private nonisolated static func isHostURL(_ url: URL, inside rootURL: URL) -> Bool {
+        let rootPath = rootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return path == rootPath || path.hasPrefix("\(rootPath)/")
+    }
+
     private nonisolated static func virtualChildPath(parent: String, child: String) -> String {
         parent == "/" ? "/\(child)" : "\(parent)/\(child)"
     }
@@ -203,8 +259,7 @@ actor CPSLDebugService {
             return nil
         }
         guard let configJSON = makeSessionConfigJSON(
-            rootPath: sandboxURLs.root.resolvingSymlinksInPath().path,
-            workdirPath: sandboxURLs.workdir.resolvingSymlinksInPath().path
+            rootPath: sandboxURLs.root.resolvingSymlinksInPath().path
         ) else {
             return "Could not encode session config JSON"
         }
@@ -220,7 +275,7 @@ actor CPSLDebugService {
 
         nextSessionID += 1
         session = CPSLSessionHandle(id: nextSessionID, pointer: newSession)
-        currentVirtualDirectory = "/workdir"
+        currentVirtualDirectory = CPSLVirtualPath.initialDirectory
         return nil
     }
 
@@ -240,8 +295,7 @@ actor CPSLDebugService {
         let appURL = supportURL.appendingPathComponent(bundleID, isDirectory: true)
         let sandboxURL = appURL.appendingPathComponent("CPSLDebugSandbox", isDirectory: true)
         let rootURL = sandboxURL.appendingPathComponent("root", isDirectory: true)
-        let workdirURL = sandboxURL.appendingPathComponent("workdir", isDirectory: true)
-        let sandboxURLs = CPSLSandboxURLs(root: rootURL, workdir: workdirURL)
+        let sandboxURLs = CPSLSandboxURLs(root: rootURL)
 
         try ensureSandboxScaffold(sandboxURLs)
         return sandboxURLs
@@ -254,18 +308,17 @@ actor CPSLDebugService {
             "bin",
             "etc",
             "home",
+            "home/herm",
             "root",
             "tmp",
             "usr",
-            "var",
-            "workdir"
+            "var"
         ]
 
         for name in directoryNames {
             let url = name.isEmpty ? sandboxURLs.root : sandboxURLs.root.appendingPathComponent(name, isDirectory: true)
             try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        try fileManager.createDirectory(at: sandboxURLs.workdir, withIntermediateDirectories: true)
 
         try writeFileIfMissing(
             sandboxURLs.root.appendingPathComponent("etc/hosts", isDirectory: false),
@@ -273,7 +326,7 @@ actor CPSLDebugService {
         )
         try writeFileIfMissing(
             sandboxURLs.root.appendingPathComponent("etc/passwd", isDirectory: false),
-            contents: "root:x:0:0:root:/root:/bin/sh\n"
+            contents: "root:x:0:0:root:/root:/bin/sh\nherm:x:501:20:Herm:/home/herm:/bin/sh\n"
         )
     }
 
@@ -284,21 +337,16 @@ actor CPSLDebugService {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func makeSessionConfigJSON(rootPath: String, workdirPath: String) -> String? {
+    private func makeSessionConfigJSON(rootPath: String) -> String? {
         let config: [String: Any] = [
             "mounts": [
                 [
                     "host": rootPath,
                     "virtual": "/",
                     "mode": "rw"
-                ],
-                [
-                    "host": workdirPath,
-                    "virtual": "/workdir",
-                    "mode": "rw"
                 ]
             ],
-            "initial_cwd": "/workdir",
+            "initial_cwd": CPSLVirtualPath.initialDirectory,
             "language": "luau",
             "http": [
                 "mode": "policy",

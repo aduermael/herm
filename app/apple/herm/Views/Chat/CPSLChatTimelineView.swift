@@ -90,31 +90,28 @@ struct CPSLChatTimelineView: View {
 
         if didResize {
             preserveVisibleScrollPosition(
-                oldState: oldState,
-                newState: newState,
-                pinnedToBottom: shouldPreserveBottom,
-                animated: isViewportExpanding
+                CPSLTimelineScrollPreservation(
+                    oldState: oldState,
+                    newState: newState,
+                    pinnedToBottom: shouldPreserveBottom,
+                    animated: isViewportExpanding
+                )
             )
         } else {
             isPinnedToBottom = newState.isPinnedToBottom
         }
     }
 
-    private func preserveVisibleScrollPosition(
-        oldState: CPSLTimelineScrollState,
-        newState: CPSLTimelineScrollState,
-        pinnedToBottom: Bool,
-        animated: Bool
-    ) {
-        let viewportDelta = oldState.viewportHeight - newState.viewportHeight
-        let preservedY = oldState.contentOffsetY + viewportDelta
-        let targetY = pinnedToBottom ? newState.maxContentOffsetY : min(
+    private func preserveVisibleScrollPosition(_ preservation: CPSLTimelineScrollPreservation) {
+        let viewportDelta = preservation.oldState.viewportHeight - preservation.newState.viewportHeight
+        let preservedY = preservation.oldState.contentOffsetY + viewportDelta
+        let targetY = preservation.pinnedToBottom ? preservation.newState.maxContentOffsetY : min(
             max(preservedY, 0),
-            newState.maxContentOffsetY
+            preservation.newState.maxContentOffsetY
         )
 
-        isPinnedToBottom = pinnedToBottom || newState.isPinnedToBottom
-        if animated {
+        isPinnedToBottom = preservation.pinnedToBottom || preservation.newState.isPinnedToBottom
+        if preservation.animated {
             withAnimation(.easeOut(duration: 0.2)) {
                 scrollPosition.scrollTo(y: targetY)
             }
@@ -122,6 +119,13 @@ struct CPSLChatTimelineView: View {
             scrollPosition.scrollTo(y: targetY)
         }
     }
+}
+
+private struct CPSLTimelineScrollPreservation {
+    let oldState: CPSLTimelineScrollState
+    let newState: CPSLTimelineScrollState
+    let pinnedToBottom: Bool
+    let animated: Bool
 }
 
 private struct CPSLTimelineScrollState: Equatable {
@@ -586,8 +590,8 @@ private struct CPSLMarkdownBlock: Identifiable, Equatable {
         }
 
         guard !numberText.isEmpty,
-              cursor < trimmedLine.endIndex,
-              trimmedLine[cursor] == "."
+                cursor < trimmedLine.endIndex,
+                trimmedLine[cursor] == "."
         else {
             return nil
         }
@@ -606,9 +610,9 @@ private struct CPSLMarkdownBlock: Identifiable, Equatable {
         startingAt index: Int
     ) -> (table: CPSLMarkdownTable, nextIndex: Int)? {
         guard index + 1 < lines.count,
-              let headerCells = tableCells(from: lines[index]),
-              headerCells.contains(where: { !$0.isEmpty }),
-              isTableSeparatorLine(lines[index + 1], columnCount: headerCells.count)
+                let headerCells = tableCells(from: lines[index]),
+                headerCells.contains(where: { !$0.isEmpty }),
+                isTableSeparatorLine(lines[index + 1], columnCount: headerCells.count)
         else {
             return nil
         }
@@ -705,8 +709,8 @@ private struct CPSLMarkdownBlock: Identifiable, Equatable {
 
     private static func isTableSeparatorLine(_ line: String, columnCount: Int) -> Bool {
         guard let cells = tableCells(from: line),
-              cells.count == columnCount,
-              columnCount > 0
+                cells.count == columnCount,
+                columnCount > 0
         else {
             return false
         }
@@ -968,67 +972,5 @@ private struct CPSLMarkdownListView: View {
                 .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
             }
         }
-    }
-}
-
-private struct CPSLMarkdownCodeBlockView: View {
-    let language: String?
-    let text: String
-    let foreground: Color
-    let fillsAvailableWidth: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
-            if let language {
-                Text(language)
-                    .font(CPSLTheme.captionMediumFont)
-                    .foregroundStyle(foreground.opacity(0.62))
-            }
-
-            Text(text)
-                .font(CPSLTheme.monospacedBodyFont)
-                .foregroundStyle(foreground)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
-        }
-        .padding(CPSLTheme.small)
-        .background(CPSLTheme.command)
-        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
-    }
-}
-
-private struct CPSLCommandBlockBody: View {
-    let text: String
-    let foreground: Color
-
-    @State private var contentHeight: CGFloat = 0
-
-    var body: some View {
-        ScrollView(.vertical, showsIndicators: contentHeight > CPSLTheme.commandBlockMaxHeight) {
-            Text(text)
-                .font(CPSLTheme.monospacedBodyFont)
-                .foregroundStyle(foreground)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: CPSLCommandBlockHeightKey.self, value: proxy.size.height)
-                    }
-                )
-        }
-        .frame(height: contentHeight > 0 ? min(contentHeight, CPSLTheme.commandBlockMaxHeight) : nil)
-        .scrollBounceBehavior(.basedOnSize)
-        .onPreferenceChange(CPSLCommandBlockHeightKey.self) { height in
-            contentHeight = height
-        }
-    }
-}
-
-private struct CPSLCommandBlockHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }

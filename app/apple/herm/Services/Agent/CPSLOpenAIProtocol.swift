@@ -111,7 +111,7 @@ nonisolated enum CPSLOpenAIStreamEvent: Equatable, Sendable {
     case toolCallDelta
 }
 
-nonisolated struct CPSLOpenAIChatRequest: Encodable {
+nonisolated struct CPSLOpenAIChatRequest: Encodable, Sendable {
     let model: String
     let messages: [CPSLOpenAIMessage]
     let tools: [CPSLOpenAITool]?
@@ -129,7 +129,7 @@ nonisolated struct CPSLOpenAIChatRequest: Encodable {
     }
 }
 
-nonisolated struct CPSLOpenAITool: Encodable {
+nonisolated struct CPSLOpenAITool: Encodable, Sendable {
     let type: String
     let function: CPSLOpenAIToolFunction
 
@@ -141,13 +141,13 @@ nonisolated struct CPSLOpenAITool: Encodable {
             type: "function",
             function: CPSLOpenAIToolFunction(
                 name: "local_sandbox_exec",
-                description: "Execute Luau source in CPSL, a Unix-like local environment with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Current CPSL directory for this request: \(directory). Relative paths resolve from that directory. Luau is the command interface instead of Bash and the only supported execution language. Include intent: a short high-level user-facing action phrase like Exploring files, Reading settings, or Checking results. Intent must not mention code, sandbox, workdir, paths, tool names, or implementation details. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside CPSL workspace paths.",
+                description: "Execute Luau source in CPSL, a Unix-like local environment with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Current CPSL directory for this request: \(directory). Relative paths resolve from that directory. Use /home/herm for durable user-created files and /tmp for temporary files; other Unix-style directories under / remain available when the task calls for them. Luau is the command interface instead of Bash and the only supported execution language. Include intent: a short high-level user-facing action phrase like Exploring files, Reading settings, or Checking results. Intent must not mention code, sandbox details, paths, tool names, or implementation details. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside the CPSL virtual filesystem.",
                 parameters: CPSLOpenAIToolParameters(
                     type: "object",
                     properties: [
                         "intent": CPSLOpenAIToolParameter(
                             type: "string",
-                            description: "Short high-level status phrase shown to the user, such as Exploring files or Checking results. Do not mention code, sandbox, workdir, paths, tool names, or implementation details."
+                            description: "Short high-level status phrase shown to the user, such as Exploring files or Checking results. Do not mention code, sandbox details, paths, tool names, or implementation details."
                         ),
                         "source": CPSLOpenAIToolParameter(
                             type: "string",
@@ -198,13 +198,13 @@ nonisolated struct CPSLOpenAITool: Encodable {
     }
 }
 
-nonisolated struct CPSLOpenAIToolFunction: Encodable {
+nonisolated struct CPSLOpenAIToolFunction: Encodable, Sendable {
     let name: String
     let description: String
     let parameters: CPSLOpenAIToolParameters
 }
 
-nonisolated struct CPSLOpenAIToolParameters: Encodable {
+nonisolated struct CPSLOpenAIToolParameters: Encodable, Sendable {
     let type: String
     let properties: [String: CPSLOpenAIToolParameter]
     let required: [String]
@@ -218,7 +218,7 @@ nonisolated struct CPSLOpenAIToolParameters: Encodable {
     }
 }
 
-nonisolated struct CPSLOpenAIToolParameter: Encodable {
+nonisolated struct CPSLOpenAIToolParameter: Encodable, Sendable {
     let type: String
     let description: String
 }
@@ -253,8 +253,8 @@ nonisolated final class CPSLOpenAIStreamAccumulator {
             chunk = try decoder.decode(CPSLOpenAIChatChunk.self, from: data)
         } catch {
             if let envelope = try? decoder.decode(CPSLOpenAIErrorEnvelope.self, from: data),
-               let message = envelope.error.message?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !message.isEmpty {
+                    let message = envelope.error.message?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !message.isEmpty {
                 throw CPSLOpenAIError.provider(message)
             }
             throw CPSLOpenAIError.invalidStreamData

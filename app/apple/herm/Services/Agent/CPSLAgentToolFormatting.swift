@@ -11,10 +11,10 @@ nonisolated enum CPSLAgentToolFormatting {
 
     static func sandboxInput(from arguments: String) -> CPSLSandboxToolInput? {
         guard let data = arguments.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: ["source", "intent"]),
-              let source = object["source"] as? String,
-              !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                Set(object.keys).isSubset(of: ["source", "intent"]),
+                let source = object["source"] as? String,
+                !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return nil
         }
@@ -28,10 +28,10 @@ nonisolated enum CPSLAgentToolFormatting {
 
     static func agentInput(from arguments: String) -> CPSLAgentToolInput? {
         guard let data = arguments.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: ["task", "mode"]),
-              let task = object["task"] as? String,
-              !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                Set(object.keys).isSubset(of: ["task", "mode"]),
+                let task = object["task"] as? String,
+                !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
             return nil
         }
@@ -200,8 +200,8 @@ nonisolated enum CPSLAgentToolFormatting {
             payload["ffi_error"] = ffiError
         }
         guard JSONSerialization.isValidJSONObject(payload),
-              let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8)
+                let data = try? JSONSerialization.data(withJSONObject: payload),
+                let json = String(data: data, encoding: .utf8)
         else {
             return #"{"ok":false,"error":"Could not encode tool result."}"#
         }

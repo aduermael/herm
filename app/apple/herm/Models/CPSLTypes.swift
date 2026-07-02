@@ -57,10 +57,16 @@ nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
 
 struct CPSLSandboxURLs {
     let root: URL
-    let workdir: URL
 }
 
-enum CPSLChatRole: String, Codable, Equatable, Sendable {
+nonisolated enum CPSLVirtualPath {
+    static let root = "/"
+    static let home = "/home/herm"
+    static let temporary = "/tmp"
+    static let initialDirectory = home
+}
+
+nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     case assistant
     case user
     case command
@@ -145,5 +151,23 @@ struct CPSLFileEntry: Identifiable, Equatable, Sendable {
 
 struct CPSLDirectoryListing: Sendable {
     let entries: [CPSLFileEntry]
+    let error: String?
+}
+
+enum CPSLFilePreviewKind: Equatable, Sendable {
+    case text(String)
+    case pdf(URL)
+}
+
+struct CPSLFilePreview: Identifiable, Equatable, Sendable {
+    var id: String { path }
+
+    let name: String
+    let path: String
+    let kind: CPSLFilePreviewKind
+}
+
+struct CPSLFilePreviewLoadResult: Sendable {
+    let preview: CPSLFilePreview?
     let error: String?
 }

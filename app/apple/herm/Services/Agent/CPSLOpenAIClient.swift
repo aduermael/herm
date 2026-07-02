@@ -13,17 +13,15 @@ actor CPSLOpenAIClient {
     }
 
     func streamChat(
-        messages: [CPSLOpenAIMessage],
-        tools: [CPSLOpenAITool],
-        maxTokens: Int?,
+        _ streamRequest: CPSLOpenAIStreamRequest,
         onEvent: @escaping (CPSLOpenAIStreamEvent) async -> Void
     ) async throws -> CPSLOpenAICompletion {
         let requestBody = CPSLOpenAIChatRequest(
             model: config.model,
-            messages: messages,
-            tools: tools.isEmpty ? nil : tools,
-            toolChoice: tools.isEmpty ? nil : "auto",
-            maxCompletionTokens: maxTokens,
+            messages: streamRequest.messages,
+            tools: streamRequest.tools.isEmpty ? nil : streamRequest.tools,
+            toolChoice: streamRequest.tools.isEmpty ? nil : "auto",
+            maxCompletionTokens: streamRequest.maxTokens,
             stream: true
         )
 
@@ -80,4 +78,10 @@ actor CPSLOpenAIClient {
             .appendingPathComponent("chat")
             .appendingPathComponent("completions")
     }
+}
+
+nonisolated struct CPSLOpenAIStreamRequest: Sendable {
+    let messages: [CPSLOpenAIMessage]
+    let tools: [CPSLOpenAITool]
+    let maxTokens: Int?
 }

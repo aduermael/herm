@@ -5,6 +5,11 @@ private enum CPSLDrawerMotion {
     static let animation = Animation.easeOut(duration: duration)
 }
 
+private enum CPSLOverlayMotion {
+    static let duration = 0.2
+    static let animation = Animation.easeOut(duration: duration)
+}
+
 struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
@@ -45,6 +50,7 @@ struct CPSLChatScreen: View {
                 .padding(.top, CPSLTheme.medium)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
                 .zIndex(2)
+
             }
             .onAppear {
                 drawerProgress = drawerTargetProgress
@@ -131,9 +137,21 @@ private struct CPSLMainContentStage: View {
                     promptDismissRequest += 1
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .zIndex(3)
+
+            if model.isFileBrowserOpen {
+                CPSLFileBrowserOverlay(
+                    model: model,
+                    topInset: CPSLTheme.topChromeInset,
+                    bottomInset: contentBottomInset
+                )
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .zIndex(4)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CPSLTheme.background.ignoresSafeArea())
+        .animation(CPSLOverlayMotion.animation, value: model.isFileBrowserOpen)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // PROMPTING AREA + BUTTONS ON TOP
             CPSLBottomChromeView(
@@ -151,26 +169,34 @@ private struct CPSLPrimaryContentView: View {
     let contentBottomInset: CGFloat
 
     var body: some View {
-        Group {
-            if model.isFileBrowserOpen {
-                CPSLFileBrowserView(
-                    model: model,
-                    topInset: contentTopInset,
-                    bottomInset: contentBottomInset
-                )
-            } else {
-                CPSLChatTimelineView(
-                    model: model,
-                    topInset: contentTopInset,
-                    bottomInset: contentBottomInset
-                )
-            }
-        }
+        CPSLChatTimelineView(
+            model: model,
+            topInset: contentTopInset,
+            bottomInset: contentBottomInset
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .top)
         .contentShape(Rectangle())
         .onTapGesture {
             promptDismissRequest += 1
+        }
+    }
+}
+
+private struct CPSLFileBrowserOverlay: View {
+    @ObservedObject var model: CPSLChatModel
+    let topInset: CGFloat
+    let bottomInset: CGFloat
+
+    var body: some View {
+        CPSLFileOverlayStage(
+            metrics: CPSLFileOverlayStageMetrics(
+                topInset: topInset,
+                bottomInset: bottomInset,
+                dimOpacity: 0.001
+            )
+        ) {
+            CPSLFileBrowserView(model: model)
         }
     }
 }

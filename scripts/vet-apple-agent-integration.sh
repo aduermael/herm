@@ -40,9 +40,15 @@ swift_files=(
   app/apple/herm/Services/CPSLDebugService.swift
   app/apple/herm/Models/CPSLTypes.swift
   app/apple/herm/Models/CPSLChatModel.swift
+  app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+  app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
   app/apple/herm/Views/Chat/CPSLConversationDrawerView.swift
   app/apple/herm/Views/Chat/CPSLChatScreen.swift
+  app/apple/herm/Views/Chat/CPSLChatTimelineCodeViews.swift
   app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+  app/apple/herm/Views/Files/CPSLFileOverlayPanel.swift
+  app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+  app/apple/herm/Views/Files/CPSLFilePreviewOverlay.swift
 )
 
 required_files=(
@@ -152,8 +158,8 @@ require_match 'CREATE INDEX IF NOT EXISTS idx_nodes_parent' app/apple/herm/Servi
 
 require_match 'maxToolRounds: positiveIntValue' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'defaultMaxToolRounds = 200' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
-require_match 'tools: tools\.isEmpty \? nil : tools' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
-require_match 'maxCompletionTokens: maxTokens' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'tools: streamRequest\.tools\.isEmpty \? nil : streamRequest\.tools' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'maxCompletionTokens: streamRequest\.maxTokens' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'appendingPathComponent\("chat"\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'appendingPathComponent\("completions"\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'encodeNil\(forKey: \.content\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
@@ -176,7 +182,7 @@ require_match 'Luau essentials' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSLOpenAIError\.provider' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'CPSLOpenAIError\.invalidToolCall' scripts/vet-apple-openai-protocol.swift
 require_match 'validatedCompletion\(\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
-require_match 'toolChoice: tools\.isEmpty \? nil : "auto"' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'toolChoice: streamRequest\.tools\.isEmpty \? nil : "auto"' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'stream: true' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'text/event-stream' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'evaluateLuau' app/apple/herm/Services/CPSLDebugService.swift
@@ -184,16 +190,16 @@ require_match 'currentVirtualDirectory' app/apple/herm/Services/CPSLDebugService
 require_match 'func currentDirectory\(\) -> String' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'restoreCurrentDirectory' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'shellDoubleQuoted' app/apple/herm/Services/CPSLDebugService.swift
-require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'requestDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'requestDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'promptPathLiteral' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
 require_match 'localSandboxExec\(currentDirectory' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match '"language": "luau"' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"language": language' app/apple/herm/Services/CPSLDebugService.swift
-require_match 'CPSLAgentToolFormatting\.providerContent' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'CPSLAgentToolFormatting\.displayBody' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'CPSLAgentToolFormatting\.agentInput' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'CPSLAgentToolFormatting\.providerContent' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'CPSLAgentToolFormatting\.displayBody' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'CPSLAgentToolFormatting\.agentInput' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'nonNegativeIntValue' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'Set\(object\.keys\)\.isSubset\(of: \["source", "intent"\]\)' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
 require_match 'unknown fields should not decode' scripts/vet-apple-agent-tool-formatting.swift
@@ -205,23 +211,88 @@ require_match 'model\.selectConversation\(id: conversation\.id\)' app/apple/herm
 require_match 'isRunning = true' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'defer \{' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'typewriterTask = nil' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Provider returned an empty response' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Reached maximum tool rounds' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'synthesizeAfterToolLimit' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'role: \.toolStatus' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'lastToolStatusState = toolResult\.isError \? \.failed : \.succeeded' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'toolStatus\.state = lastToolStatusState' app/apple/herm/Models/CPSLChatModel.swift
-reject_match 'toolStatusHasFailure' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'role: \.hidden' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'runSubAgent' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Provider returned an empty response' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'Reached maximum tool rounds' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'synthesizeAfterToolLimit' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'role: \.toolStatus' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'lastToolStatusState = toolResult\.isError \? \.failed : \.succeeded' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'toolStatus\.state = lastToolStatusState' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+reject_match 'toolStatusHasFailure' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'role: \.hidden' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'runSubAgent' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'copyConversationJSONToPasteboard' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Copy conversation JSON' app/apple/herm/Views/Chat/CPSLChatScreen.swift
-require_match 'let errorNode = try await store\.appendNode' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'appendProviderLoopError' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'appendAgentError' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'persistStreamingAssistantIfNeeded' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'onParentIDChange\(parentID\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'struct CPSLProviderLoopContext' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
+require_match 'struct CPSLPendingConversationContext' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
+require_match 'let errorNode = try await context\.store\.appendNode' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'appendProviderLoopError' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'appendAgentError' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'persistStreamingAssistantIfNeeded' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'onParentIDChange\(context\.parentID\)' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'model: nil' app/apple/herm/Models/CPSLChatModel.swift
+
+require_match 'static let home = "/home/herm"' app/apple/herm/Models/CPSLTypes.swift
+require_match 'static let temporary = "/tmp"' app/apple/herm/Models/CPSLTypes.swift
+require_match 'static let initialDirectory = home' app/apple/herm/Models/CPSLTypes.swift
+require_match '"home/herm"' app/apple/herm/Services/CPSLDebugService.swift
+require_match '"tmp"' app/apple/herm/Services/CPSLDebugService.swift
+require_match '"etc"' app/apple/herm/Services/CPSLDebugService.swift
+require_match '"initial_cwd": CPSLVirtualPath\.initialDirectory' app/apple/herm/Services/CPSLDebugService.swift
+require_match '"virtual": "/"' app/apple/herm/Services/CPSLDebugService.swift
+reject_match 'workdir|/workdir' \
+  app/apple/herm/Services/CPSLDebugService.swift \
+  app/apple/herm/Models/CPSLChatModel.swift \
+  app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
+  app/apple/herm/Views/Files/CPSLFileBrowserView.swift \
+  app/apple/herm/Views/Chat/CPSLChatScreen.swift
+
+require_match 'Use /home/herm as the default home' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Use /home/herm for durable user-created files' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'other Unix-style directories under / remain available' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'private func isBrowserPathAllowed' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'normalized == CPSLVirtualPath\.home' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'normalized\.hasPrefix.*CPSLVirtualPath\.home.*/' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'normalized == CPSLVirtualPath\.temporary' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'normalized\.hasPrefix.*CPSLVirtualPath\.temporary.*/' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'if normalized == CPSLVirtualPath\.home \|\| normalized == CPSLVirtualPath\.temporary' app/apple/herm/Models/CPSLChatModel.swift
+
+require_match 'private struct CPSLFileLocationsView' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'title: "Home"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'systemName: "house\.fill"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'title: "Temporary"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'title: "iCloud"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'systemName: "icloud\.fill"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'title: "Cloud Drives"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'Button\("Connect"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'case googleDrive' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'case dropbox' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'case oneDrive' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+
+require_match 'CPSLChatTimelineView' app/apple/herm/Views/Chat/CPSLChatScreen.swift
+require_match 'private struct CPSLFileBrowserOverlay' app/apple/herm/Views/Chat/CPSLChatScreen.swift
+require_match 'transition\(\.move\(edge: \.trailing\)\.combined\(with: \.opacity\)\)' app/apple/herm/Views/Chat/CPSLChatScreen.swift
+require_match 'static let duration = 0\.2' app/apple/herm/Views/Chat/CPSLChatScreen.swift
+require_match 'struct CPSLFileOverlayPanel' app/apple/herm/Views/Files/CPSLFileOverlayPanel.swift
+require_match 'struct CPSLFileOverlayStage' app/apple/herm/Views/Files/CPSLFileOverlayPanel.swift
+require_match 'dimOpacity: 0\.001' app/apple/herm/Views/Chat/CPSLChatScreen.swift
+
+require_match 'func previewFile' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'case "txt"' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'case "pdf"' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'textPreviewByteLimit = 1_000_000' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'filePreview = preview' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'func closeFilePreview' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'CPSLFilePreviewContentView\(preview: preview\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'struct CPSLFilePreviewHeaderTitle' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'model\.closeFilePreview\(\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'struct CPSLFilePreviewContentView' app/apple/herm/Views/Files/CPSLFilePreviewOverlay.swift
+require_match 'CPSLTextFilePreview' app/apple/herm/Views/Files/CPSLFilePreviewOverlay.swift
+require_match 'CPSLPDFFilePreview' app/apple/herm/Views/Files/CPSLFilePreviewOverlay.swift
+reject_match 'isFullscreen|Full Screen|arrow\.up\.left\.and\.arrow\.down\.right|arrow\.down\.right\.and\.arrow\.up\.left' \
+  app/apple/herm/Views/Files/CPSLFilePreviewOverlay.swift \
+  app/apple/herm/Views/Files/CPSLFileOverlayPanel.swift \
+  app/apple/herm/Views/Files/CPSLFileBrowserView.swift \
+  app/apple/herm/Views/Chat/CPSLChatScreen.swift
 
 reject_match 'web_search|web_search_preview|server.*tool|parallel_tool_calls|stream_options' \
   app/apple/herm/Services/Agent/CPSLOpenAIClient.swift \

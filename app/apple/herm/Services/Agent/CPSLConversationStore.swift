@@ -189,16 +189,12 @@ actor CPSLConversationStore {
     func appendNode(
         conversationID: String,
         parentID: String?,
-        role: CPSLChatRole,
-        title: String?,
-        body: String,
-        model: String?,
-        providerMessage: CPSLOpenAIMessage?
+        draft: CPSLNodeAppendDraft
     ) throws -> CPSLStoredNode {
         var sequence = 0
         let now = Date()
         let nodeID = UUID().uuidString
-        let providerJSON = try providerMessage.map(encodeProviderMessage)
+        let providerJSON = try draft.providerMessage.map(encodeProviderMessage)
 
         try withTransaction {
             guard let parentID else {
@@ -215,10 +211,10 @@ actor CPSLConversationStore {
                     .text(nodeID),
                     .text(conversationID),
                     .nullableText(parentID),
-                    .text(role.rawValue),
-                    .nullableText(title),
-                    .text(body),
-                    .nullableText(model),
+                    .text(draft.role.rawValue),
+                    .nullableText(draft.title),
+                    .text(draft.body),
+                    .nullableText(draft.model),
                     .nullableText(providerJSON),
                     .int(sequence),
                     .date(now)
@@ -231,11 +227,11 @@ actor CPSLConversationStore {
             id: nodeID,
             conversationID: conversationID,
             parentID: parentID,
-            role: role,
-            title: title,
-            body: body,
-            model: model,
-            providerMessage: providerMessage,
+            role: draft.role,
+            title: draft.title,
+            body: draft.body,
+            model: draft.model,
+            providerMessage: draft.providerMessage,
             sequence: sequence,
             createdAt: now
         )
@@ -365,10 +361,10 @@ actor CPSLConversationStore {
             """,
             database: database
         )
-        try addColumnIfMissing(table: "conversations", column: "root_node_id", definition: "TEXT", database: database)
-        try addColumnIfMissing(table: "conversations", column: "current_node_id", definition: "TEXT", database: database)
-        try addColumnIfMissing(table: "conversations", column: "model", definition: "TEXT", database: database)
-        try addColumnIfMissing(table: "conversations", column: "system_prompt", definition: "TEXT", database: database)
+        try addColumnIfMissing(.init(table: "conversations", column: "root_node_id", definition: "TEXT"), database: database)
+        try addColumnIfMissing(.init(table: "conversations", column: "current_node_id", definition: "TEXT"), database: database)
+        try addColumnIfMissing(.init(table: "conversations", column: "model", definition: "TEXT"), database: database)
+        try addColumnIfMissing(.init(table: "conversations", column: "system_prompt", definition: "TEXT"), database: database)
         try execute(
             """
             CREATE TABLE IF NOT EXISTS nodes (
@@ -388,9 +384,9 @@ actor CPSLConversationStore {
             """,
             database: database
         )
-        try addColumnIfMissing(table: "nodes", column: "title", definition: "TEXT", database: database)
-        try addColumnIfMissing(table: "nodes", column: "model", definition: "TEXT", database: database)
-        try addColumnIfMissing(table: "nodes", column: "provider_message_json", definition: "TEXT", database: database)
+        try addColumnIfMissing(.init(table: "nodes", column: "title", definition: "TEXT"), database: database)
+        try addColumnIfMissing(.init(table: "nodes", column: "model", definition: "TEXT"), database: database)
+        try addColumnIfMissing(.init(table: "nodes", column: "provider_message_json", definition: "TEXT"), database: database)
         try backfillLegacyConversationPointers(database: database)
         try execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique ON nodes(conversation_id, sequence)", database: database)
         try execute("CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)", database: database)
@@ -430,23 +426,27 @@ actor CPSLConversationStore {
     }
 
     private nonisolated static func addColumnIfMissing(
-        table: String,
-        column: String,
-        definition: String,
+        _ column: CPSLSQLiteColumnMigration,
         database: OpaquePointer?
     ) throws {
-        guard !table.contains("\""), !column.contains("\""), !definition.contains(";") else {
+        guard !column.table.contains("\""),
+                !column.name.contains("\""),
+                !column.definition.contains(";")
+        else {
             throw CPSLConversationStoreError.sqlite("Invalid migration identifier.")
         }
 
-        let columns = try query("PRAGMA table_info(\"\(table)\")", database: database) { statement in
+        let columns = try query(.init("PRAGMA table_info(\"\(column.table)\")"), database: database) { statement in
             columnString(statement, 1) ?? ""
         }
-        guard !columns.contains(column) else {
+        guard !columns.contains(column.name) else {
             return
         }
 
-        try execute("ALTER TABLE \"\(table)\" ADD COLUMN \"\(column)\" \(definition)", database: database)
+        try execute(
+            "ALTER TABLE \"\(column.table)\" ADD COLUMN \"\(column.name)\" \(column.definition)",
+            database: database
+        )
     }
 
     private func nextSequence(conversationID: String) throws -> Int {
@@ -524,7 +524,7 @@ actor CPSLConversationStore {
         bindings: [CPSLSQLiteBinding] = [],
         row: (OpaquePointer?) throws -> T
     ) throws -> [T] {
-        try Self.query(sql, bindings: bindings, database: database, row: row)
+        try Self.query(.init(sql, bindings: bindings), database: database, row: row)
     }
 
     private nonisolated static func execute(
@@ -548,12 +548,11 @@ actor CPSLConversationStore {
     }
 
     private nonisolated static func query<T>(
-        _ sql: String,
-        bindings: [CPSLSQLiteBinding] = [],
+        _ request: CPSLSQLiteStatementRequest,
         database: OpaquePointer?,
         row: (OpaquePointer?) throws -> T
     ) throws -> [T] {
-        let statement = try prepare(sql, bindings: bindings, database: database)
+        let statement = try prepare(request.sql, bindings: request.bindings, database: database)
         defer {
             sqlite3_finalize(statement)
         }
@@ -581,27 +580,32 @@ actor CPSLConversationStore {
             throw lastError(database: database)
         }
         for (index, binding) in bindings.enumerated() {
-            try bind(binding, to: statement, at: Int32(index + 1), database: database)
+            try bind(
+                CPSLSQLiteBindOperation(
+                    binding: binding,
+                    statement: statement,
+                    index: Int32(index + 1)
+                ),
+                database: database
+            )
         }
         return statement
     }
 
     private nonisolated static func bind(
-        _ binding: CPSLSQLiteBinding,
-        to statement: OpaquePointer?,
-        at index: Int32,
+        _ operation: CPSLSQLiteBindOperation,
         database: OpaquePointer?
     ) throws {
         let result: Int32
-        switch binding {
+        switch operation.binding {
         case .null:
-            result = sqlite3_bind_null(statement, index)
+            result = sqlite3_bind_null(operation.statement, operation.index)
         case .text(let value):
-            result = sqlite3_bind_text(statement, index, value, -1, sqliteTransient)
+            result = sqlite3_bind_text(operation.statement, operation.index, value, -1, sqliteTransient)
         case .int(let value):
-            result = sqlite3_bind_int(statement, index, Int32(value))
+            result = sqlite3_bind_int(operation.statement, operation.index, Int32(value))
         case .date(let value):
-            result = sqlite3_bind_double(statement, index, value.timeIntervalSince1970)
+            result = sqlite3_bind_double(operation.statement, operation.index, value.timeIntervalSince1970)
         }
         guard result == SQLITE_OK else {
             throw lastError(database: database)
@@ -641,13 +645,11 @@ actor CPSLConversationStore {
     }
 }
 
-nonisolated struct CPSLLoadedConversation: Equatable, Sendable {
+nonisolated struct CPSLLoadedConversation: Equatable, Sendable, Encodable {
     let summary: CPSLConversationSummary
     let systemPrompt: String
     let nodes: [CPSLStoredNode]
 }
-
-extension CPSLLoadedConversation: Encodable {}
 
 nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable, Encodable {
     let id: String
@@ -684,6 +686,34 @@ nonisolated struct CPSLNodeAppendDraft: Equatable, Sendable {
     let body: String
     let model: String?
     let providerMessage: CPSLOpenAIMessage?
+}
+
+private nonisolated struct CPSLSQLiteColumnMigration {
+    let table: String
+    let name: String
+    let definition: String
+
+    init(table: String, column: String, definition: String) {
+        self.table = table
+        name = column
+        self.definition = definition
+    }
+}
+
+private nonisolated struct CPSLSQLiteStatementRequest {
+    let sql: String
+    let bindings: [CPSLSQLiteBinding]
+
+    init(_ sql: String, bindings: [CPSLSQLiteBinding] = []) {
+        self.sql = sql
+        self.bindings = bindings
+    }
+}
+
+private nonisolated struct CPSLSQLiteBindOperation {
+    let binding: CPSLSQLiteBinding
+    let statement: OpaquePointer?
+    let index: Int32
 }
 
 nonisolated enum CPSLConversationStoreError: LocalizedError {
@@ -757,7 +787,7 @@ private nonisolated struct CPSLConversationDatabaseLocation {
 
 private nonisolated func columnString(_ statement: OpaquePointer?, _ index: Int32) -> String? {
     guard sqlite3_column_type(statement, index) != SQLITE_NULL,
-          let text = sqlite3_column_text(statement, index)
+            let text = sqlite3_column_text(statement, index)
     else {
         return nil
     }
