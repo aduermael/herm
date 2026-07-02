@@ -13,7 +13,9 @@ cpsl_xcframework_remove_stray_links "$placeholder_dir" "$link_path"
 
 # Xcode validates the linked XCFramework path before any build phase runs, so a
 # tracked bootstrap directory must exist on fresh clones. Locally, repair broken
-# symlinks or unexpected contents before building the real artifact.
+# symlinks or unexpected contents before building the real artifact. This repair
+# only helps command-line helpers that run before xcodebuild starts; Xcode itself
+# cannot run this script until after the path is already valid.
 if [ -L "$link_path" ]; then
 	if [ ! -e "$link_path" ]; then
 		rm "$link_path"
@@ -35,16 +37,13 @@ fi
 	exit 1
 }
 
-if [ -L "$link_path" ]; then
-	current_target=$(CDPATH= cd "$(dirname "$link_path")" && readlink "$link_path" || printf '')
-	if [ "$current_target" = "$built_path" ]; then
-		exit 0
-	fi
-fi
-
 if [ -d "$link_path" ] && cpsl_xcframework_is_placeholder "$link_path"; then
 	cpsl_xcframework_set_skip_worktree "$herm_root"
 fi
 
-rm -rf "$link_path"
-ln -s "$built_path" "$link_path"
+if [ -L "$link_path" ]; then
+	rm "$link_path"
+elif [ -e "$link_path" ]; then
+	rm -rf "$link_path"
+fi
+cp -R "$built_path" "$link_path"

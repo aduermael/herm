@@ -214,8 +214,8 @@ runs before compilation. On every build it runs:
 
 That helper calls `ensure-cpsl-apple-xcframework.sh` to build or reuse
 `.herm-cpsl/artifacts/apple/cpsl.xcframework` and its PDFium sidecar
-libraries, then symlinks the Xcode-linked path at
-`scripts/cpsl-xcframework-placeholder/cpsl.xcframework` to the built artifact.
+libraries, then copies the built XCFramework into the Xcode-linked path at
+`scripts/cpsl-xcframework-placeholder/cpsl.xcframework`.
 
 The phase is marked always-out-of-date so Xcode invokes the script each build,
 but the ensure script itself is cheap when nothing changed: it reuses
@@ -232,10 +232,17 @@ Xcode validates linked XCFrameworks before any target runs. A tracked bootstrap
 placeholder at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework`
 satisfies that check on fresh clones. The ensure script then builds the real
 XCFramework under gitignored `.herm-cpsl/artifacts/apple/`, and the Xcode helper
-replaces the placeholder path with a local symlink to that artifact during the
-build. The link step marks the tracked bootstrap files `skip-worktree` so
-`git status` stays clean while the symlink is present. Do not commit the
-symlink; only the bootstrap directory belongs in git.
+replaces the placeholder path with a local copy of that artifact during the
+build. The copy step marks the tracked bootstrap files `skip-worktree` so
+`git status` stays clean while the local copy is present. Do not commit the
+local copy; only the bootstrap directory belongs in git.
+
+If a local checkout has an older broken symlink at the placeholder path, restore
+the bootstrap directory once before opening Xcode:
+
+```sh
+scripts/bootstrap-cpsl-xcframework-placeholder.sh
+```
 
 ### First-build prerequisites
 

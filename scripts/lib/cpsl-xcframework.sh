@@ -136,33 +136,62 @@ cpsl_xcframework_bootstrap_placeholder() {
 <key>AvailableLibraries</key>
 <array>
 <dict>
-<key>BinaryPath</key><string>libcpsl.dylib</string>
-<key>HeadersPath</key><string>Headers</string>
-<key>LibraryIdentifier</key><string>$slice_id_macos</string>
-<key>LibraryPath</key><string>libcpsl.dylib</string>
-<key>SupportedArchitectures</key><array><string>arm64</string><string>x86_64</string></array>
-<key>SupportedPlatform</key><string>macos</string>
+<key>BinaryPath</key>
+<string>libcpsl.dylib</string>
+<key>HeadersPath</key>
+<string>Headers</string>
+<key>LibraryIdentifier</key>
+<string>$slice_id_macos</string>
+<key>LibraryPath</key>
+<string>libcpsl.dylib</string>
+<key>SupportedArchitectures</key>
+<array>
+<string>arm64</string>
+<string>x86_64</string>
+</array>
+<key>SupportedPlatform</key>
+<string>macos</string>
 </dict>
 <dict>
-<key>BinaryPath</key><string>libcpsl.dylib</string>
-<key>HeadersPath</key><string>Headers</string>
-<key>LibraryIdentifier</key><string>$slice_id_ios_simulator</string>
-<key>LibraryPath</key><string>libcpsl.dylib</string>
-<key>SupportedArchitectures</key><array><string>arm64</string><string>x86_64</string></array>
-<key>SupportedPlatform</key><string>ios</string>
-<key>SupportedPlatformVariant</key><string>simulator</string>
+<key>BinaryPath</key>
+<string>libcpsl.dylib</string>
+<key>HeadersPath</key>
+<string>Headers</string>
+<key>LibraryIdentifier</key>
+<string>$slice_id_ios_simulator</string>
+<key>LibraryPath</key>
+<string>libcpsl.dylib</string>
+<key>SupportedArchitectures</key>
+<array>
+<string>arm64</string>
+<string>x86_64</string>
+</array>
+<key>SupportedPlatform</key>
+<string>ios</string>
+<key>SupportedPlatformVariant</key>
+<string>simulator</string>
 </dict>
 <dict>
-<key>BinaryPath</key><string>libcpsl.dylib</string>
-<key>HeadersPath</key><string>Headers</string>
-<key>LibraryIdentifier</key><string>$slice_id_ios_device</string>
-<key>LibraryPath</key><string>libcpsl.dylib</string>
-<key>SupportedArchitectures</key><array><string>arm64</string></array>
-<key>SupportedPlatform</key><string>ios</string>
+<key>BinaryPath</key>
+<string>libcpsl.dylib</string>
+<key>HeadersPath</key>
+<string>Headers</string>
+<key>LibraryIdentifier</key>
+<string>$slice_id_ios_device</string>
+<key>LibraryPath</key>
+<string>libcpsl.dylib</string>
+<key>SupportedArchitectures</key>
+<array>
+<string>arm64</string>
+</array>
+<key>SupportedPlatform</key>
+<string>ios</string>
 </dict>
 </array>
-<key>CFBundlePackageType</key><string>XFWK</string>
-<key>XCFrameworkFormatVersion</key><string>1.0</string>
+<key>CFBundlePackageType</key>
+<string>XFWK</string>
+<key>XCFrameworkFormatVersion</key>
+<string>1.0</string>
 </dict>
 </plist>
 EOF
@@ -181,7 +210,7 @@ cpsl_xcframework_for_each_tracked_placeholder_file() {
 
 	[ -d "$herm_root/.git" ] || return 0
 
-	git -C "$herm_root" ls-files -z "$(cpsl_xcframework_placeholder_prefix)" | while IFS= read -r -d '' path; do
+	git -C "$herm_root" ls-files "$(cpsl_xcframework_placeholder_prefix)" | while IFS= read -r path; do
 		[ -n "$path" ] || continue
 		"$action" "$herm_root" "$path"
 	done
@@ -219,7 +248,7 @@ cpsl_xcframework_remove_stray_links() {
 	[ -d "$placeholder_dir" ] || return 0
 
 	for entry in "$placeholder_dir"/cpsl*.xcframework; do
-		[ -e "$entry" ] || continue
+		[ -e "$entry" ] || [ -L "$entry" ] || continue
 		[ "$entry" = "$link_path" ] && continue
 		rm -rf "$entry"
 	done
