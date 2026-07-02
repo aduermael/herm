@@ -230,7 +230,8 @@ private struct CPSLChatMessageView: View {
         } else if message.role.rendersMarkdownBody {
             CPSLMarkdownMessageBody(
                 text: message.body,
-                foreground: message.role.foreground
+                foreground: message.role.foreground,
+                fillsAvailableWidth: message.role.isFullWidth
             )
         } else {
             Text(message.body)
@@ -397,6 +398,7 @@ private struct CPSLToolDebugBlock: View {
 private struct CPSLMarkdownMessageBody: View {
     let text: String
     let foreground: Color
+    let fillsAvailableWidth: Bool
 
     var body: some View {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -404,10 +406,14 @@ private struct CPSLMarkdownMessageBody: View {
         } else {
             VStack(alignment: .leading, spacing: CPSLTheme.small) {
                 ForEach(CPSLMarkdownBlock.blocks(from: text)) { block in
-                    CPSLMarkdownBlockView(block: block, foreground: foreground)
+                    CPSLMarkdownBlockView(
+                        block: block,
+                        foreground: foreground,
+                        fillsAvailableWidth: fillsAvailableWidth
+                    )
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
             .textSelection(.enabled)
         }
     }
@@ -419,6 +425,7 @@ private struct CPSLMarkdownBlock: Identifiable, Equatable {
         case paragraph(lines: [String])
         case unorderedList(items: [String])
         case orderedList(items: [OrderedListItem])
+        case table(CPSLMarkdownTable)
         case codeBlock(language: String?, text: String)
     }
 
@@ -480,6 +487,13 @@ private struct CPSLMarkdownBlock: Identifiable, Equatable {
                 flushParagraph()
                 append(.heading(level: heading.level, text: heading.text))
                 index += 1
+                continue
+            }
+
+            if let parsedTable = table(from: lines, startingAt: index) {
+                flushParagraph()
+                append(.table(parsedTable.table))
+                index = parsedTable.nextIndex
                 continue
             }
 
@@ -587,6 +601,123 @@ private struct CPSLMarkdownBlock: Identifiable, Equatable {
         return OrderedListItem(number: Int(numberText) ?? 1, text: String(trimmedLine[textStart...]))
     }
 
+    private static func table(
+        from lines: [String],
+        startingAt index: Int
+    ) -> (table: CPSLMarkdownTable, nextIndex: Int)? {
+        guard index + 1 < lines.count,
+              let headerCells = tableCells(from: lines[index]),
+              headerCells.contains(where: { !$0.isEmpty }),
+              isTableSeparatorLine(lines[index + 1], columnCount: headerCells.count)
+        else {
+            return nil
+        }
+
+        var rows: [CPSLMarkdownTableRow] = []
+        var cursor = index + 2
+        while cursor < lines.count, let cells = tableCells(from: lines[cursor]) {
+            rows.append(CPSLMarkdownTableRow(id: rows.count, cells: cells))
+            cursor += 1
+        }
+
+        return (CPSLMarkdownTable(headers: headerCells, rows: rows), cursor)
+    }
+
+    private static func tableCells(from line: String) -> [String]? {
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        guard trimmedLine.contains("|") else {
+            return nil
+        }
+
+        var cells: [String] = []
+        var currentCell = ""
+        var isEscaped = false
+        var codeSpanDelimiterLength = 0
+        var sawCellSeparator = false
+        var lastWasCellSeparator = false
+        var index = trimmedLine.startIndex
+
+        while index < trimmedLine.endIndex {
+            let character = trimmedLine[index]
+            if isEscaped {
+                if character != "|" {
+                    currentCell.append("\\")
+                }
+                currentCell.append(character)
+                isEscaped = false
+                lastWasCellSeparator = false
+                index = trimmedLine.index(after: index)
+            } else if character == "\\" {
+                isEscaped = true
+                lastWasCellSeparator = false
+                index = trimmedLine.index(after: index)
+            } else if character == "`" {
+                let delimiterLength = backtickRunLength(in: trimmedLine, startingAt: index)
+                currentCell += String(repeating: "`", count: delimiterLength)
+                if codeSpanDelimiterLength == 0 {
+                    codeSpanDelimiterLength = delimiterLength
+                } else if delimiterLength == codeSpanDelimiterLength {
+                    codeSpanDelimiterLength = 0
+                }
+                lastWasCellSeparator = false
+                index = trimmedLine.index(index, offsetBy: delimiterLength)
+            } else if character == "|", codeSpanDelimiterLength == 0 {
+                cells.append(currentCell.trimmingCharacters(in: .whitespaces))
+                currentCell = ""
+                sawCellSeparator = true
+                lastWasCellSeparator = true
+                index = trimmedLine.index(after: index)
+            } else {
+                currentCell.append(character)
+                lastWasCellSeparator = false
+                index = trimmedLine.index(after: index)
+            }
+        }
+
+        if isEscaped {
+            currentCell.append("\\")
+        }
+        cells.append(currentCell.trimmingCharacters(in: .whitespaces))
+
+        guard sawCellSeparator else {
+            return nil
+        }
+
+        if trimmedLine.first == "|", cells.first?.isEmpty == true {
+            cells.removeFirst()
+        }
+        if lastWasCellSeparator, cells.last?.isEmpty == true {
+            cells.removeLast()
+        }
+
+        return cells.isEmpty ? nil : cells
+    }
+
+    private static func backtickRunLength(in line: String, startingAt index: String.Index) -> Int {
+        var cursor = index
+        var count = 0
+        while cursor < line.endIndex, line[cursor] == "`" {
+            count += 1
+            cursor = line.index(after: cursor)
+        }
+        return count
+    }
+
+    private static func isTableSeparatorLine(_ line: String, columnCount: Int) -> Bool {
+        guard let cells = tableCells(from: line),
+              cells.count == columnCount,
+              columnCount > 0
+        else {
+            return false
+        }
+
+        return cells.allSatisfy { cell in
+            let trimmedCell = cell.trimmingCharacters(in: .whitespaces)
+            let dashCount = trimmedCell.filter { $0 == "-" }.count
+            return dashCount >= 3 && trimmedCell.allSatisfy { $0 == "-" || $0 == ":" }
+        }
+    }
+
     private static func isMarkdownWhitespace(_ character: Character) -> Bool {
         character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
     }
@@ -597,33 +728,86 @@ private struct OrderedListItem: Equatable {
     let text: String
 }
 
+private struct CPSLMarkdownTable: Equatable {
+    let headers: [String]
+    let rows: [CPSLMarkdownTableRow]
+
+    var columnCount: Int {
+        headers.count
+    }
+
+    func header(at column: Int) -> String {
+        cell(in: headers, at: column)
+    }
+
+    func cell(in row: CPSLMarkdownTableRow, at column: Int) -> String {
+        cell(in: row.cells, at: column)
+    }
+
+    private func cell(in cells: [String], at column: Int) -> String {
+        guard cells.indices.contains(column) else {
+            return ""
+        }
+        return cells[column]
+    }
+}
+
+private struct CPSLMarkdownTableRow: Identifiable, Equatable {
+    let id: Int
+    let cells: [String]
+}
+
 private struct CPSLMarkdownBlockView: View {
     let block: CPSLMarkdownBlock
     let foreground: Color
+    let fillsAvailableWidth: Bool
 
     var body: some View {
         switch block.content {
         case .heading(let level, let text):
-            CPSLMarkdownInlineText(text: text, font: headingFont(for: level), foreground: foreground)
+            CPSLMarkdownInlineText(
+                text: text,
+                font: headingFont(for: level),
+                foreground: foreground,
+                fillsAvailableWidth: fillsAvailableWidth
+            )
                 .padding(.top, level == 1 ? CPSLTheme.small : 0)
         case .paragraph(let lines):
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    CPSLMarkdownInlineText(text: line, font: CPSLTheme.bodyFont, foreground: foreground)
+                    CPSLMarkdownInlineText(
+                        text: line,
+                        font: CPSLTheme.bodyFont,
+                        foreground: foreground,
+                        fillsAvailableWidth: fillsAvailableWidth
+                    )
                 }
             }
         case .unorderedList(let items):
             CPSLMarkdownListView(
                 items: items.map { CPSLMarkdownListItem(marker: "\u{2022}", text: $0) },
-                foreground: foreground
+                foreground: foreground,
+                fillsAvailableWidth: fillsAvailableWidth
             )
         case .orderedList(let items):
             CPSLMarkdownListView(
                 items: items.map { CPSLMarkdownListItem(marker: "\($0.number).", text: $0.text) },
-                foreground: foreground
+                foreground: foreground,
+                fillsAvailableWidth: fillsAvailableWidth
+            )
+        case .table(let table):
+            CPSLMarkdownTableView(
+                table: table,
+                foreground: foreground,
+                fillsAvailableWidth: fillsAvailableWidth
             )
         case .codeBlock(let language, let text):
-            CPSLMarkdownCodeBlockView(language: language, text: text, foreground: foreground)
+            CPSLMarkdownCodeBlockView(
+                language: language,
+                text: text,
+                foreground: foreground,
+                fillsAvailableWidth: fillsAvailableWidth
+            )
         }
     }
 
@@ -641,10 +825,94 @@ private struct CPSLMarkdownBlockView: View {
     }
 }
 
+private struct CPSLMarkdownTableView: View {
+    let table: CPSLMarkdownTable
+    let foreground: Color
+    let fillsAvailableWidth: Bool
+
+    var body: some View {
+        if fillsAvailableWidth {
+            CPSLMarkdownTableScrollView(table: table, foreground: foreground)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                CPSLMarkdownTableGrid(table: table, foreground: foreground)
+                CPSLMarkdownTableScrollView(table: table, foreground: foreground)
+            }
+            .frame(maxWidth: CPSLTheme.framedMessageMaxWidth, alignment: .leading)
+        }
+    }
+}
+
+private struct CPSLMarkdownTableScrollView: View {
+    let table: CPSLMarkdownTable
+    let foreground: Color
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            CPSLMarkdownTableGrid(table: table, foreground: foreground)
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    }
+}
+
+private struct CPSLMarkdownTableGrid: View {
+    let table: CPSLMarkdownTable
+    let foreground: Color
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+            GridRow {
+                ForEach(0..<table.columnCount, id: \.self) { column in
+                    CPSLMarkdownTableCell(
+                        text: table.header(at: column),
+                        isHeader: true,
+                        foreground: foreground
+                    )
+                }
+            }
+
+            ForEach(table.rows) { row in
+                GridRow {
+                    ForEach(0..<table.columnCount, id: \.self) { column in
+                        CPSLMarkdownTableCell(
+                            text: table.cell(in: row, at: column),
+                            isHeader: false,
+                            foreground: foreground
+                        )
+                    }
+                }
+            }
+        }
+        .background(CPSLTheme.surface.opacity(0.52))
+        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
+    }
+}
+
+private struct CPSLMarkdownTableCell: View {
+    let text: String
+    let isHeader: Bool
+    let foreground: Color
+
+    var body: some View {
+        CPSLMarkdownInlineText(
+            text: text.isEmpty ? " " : text,
+            font: isHeader ? CPSLTheme.captionMediumFont : CPSLTheme.captionFont,
+            foreground: foreground,
+            fillsAvailableWidth: false
+        )
+        .padding(.horizontal, CPSLTheme.small)
+        .padding(.vertical, CPSLTheme.small / 2)
+        .frame(minWidth: 72, maxWidth: 220, alignment: .leading)
+        .background(isHeader ? CPSLTheme.elevated.opacity(0.42) : Color.clear)
+    }
+}
+
 private struct CPSLMarkdownInlineText: View {
     let text: String
     let font: Font
     let foreground: Color
+    let fillsAvailableWidth: Bool
 
     var body: some View {
         renderedText
@@ -653,7 +921,7 @@ private struct CPSLMarkdownInlineText: View {
             .lineSpacing(CPSLTheme.bodyLineSpacing)
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
             .layoutPriority(1)
     }
 
@@ -679,6 +947,7 @@ private struct CPSLMarkdownListItem: Equatable {
 private struct CPSLMarkdownListView: View {
     let items: [CPSLMarkdownListItem]
     let foreground: Color
+    let fillsAvailableWidth: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
@@ -689,9 +958,14 @@ private struct CPSLMarkdownListView: View {
                         .foregroundStyle(foreground)
                         .frame(minWidth: CPSLTheme.large, alignment: .trailing)
 
-                    CPSLMarkdownInlineText(text: item.text, font: CPSLTheme.bodyFont, foreground: foreground)
+                    CPSLMarkdownInlineText(
+                        text: item.text,
+                        font: CPSLTheme.bodyFont,
+                        foreground: foreground,
+                        fillsAvailableWidth: fillsAvailableWidth
+                    )
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
             }
         }
     }
@@ -701,6 +975,7 @@ private struct CPSLMarkdownCodeBlockView: View {
     let language: String?
     let text: String
     let foreground: Color
+    let fillsAvailableWidth: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
@@ -715,7 +990,7 @@ private struct CPSLMarkdownCodeBlockView: View {
                 .foregroundStyle(foreground)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
         }
         .padding(CPSLTheme.small)
         .background(CPSLTheme.command)
