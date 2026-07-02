@@ -35,7 +35,7 @@ private struct CPSLConversationDrawerContent: View {
             CPSLDrawerAppHeader()
 
             Spacer()
-                .frame(height: CPSLTheme.large + CPSLTheme.medium)
+                .frame(height: CPSLTheme.medium)
 
             Button {
                 model.startNewConversation()
@@ -76,7 +76,7 @@ private struct CPSLDrawerAppHeader: View {
             .font(CPSLTheme.headerFont)
             .foregroundStyle(CPSLTheme.text)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: CPSLTheme.controlSize)
+            .frame(height: CPSLTheme.controlSize, alignment: .bottom)
     }
 }
 
@@ -145,7 +145,7 @@ private struct CPSLConversationRowView: View {
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(updatedAt, format: .dateTime.month().day().year())
+                Text(updatedAt, format: .dateTime.month().day().year().hour().minute())
                     .font(CPSLTheme.captionFont)
                     .foregroundStyle(CPSLTheme.secondaryText)
             }

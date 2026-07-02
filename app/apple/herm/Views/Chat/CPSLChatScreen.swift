@@ -1,13 +1,14 @@
 import SwiftUI
 
 private enum CPSLDrawerMotion {
-    static let duration = 0.28
-    static let animation = Animation.easeInOut(duration: duration)
+    static let duration = 0.2
+    static let animation = Animation.easeOut(duration: duration)
 }
 
 struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
+    @State private var drawerProgress: CGFloat = 0
 
     private var contentBottomInset: CGFloat {
         CPSLTheme.medium
@@ -20,13 +21,12 @@ struct CPSLChatScreen: View {
 
                 CPSLConversationDrawerView(
                     model: model,
-                    topInset: CPSLTheme.medium,
+                    topInset: drawerTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
                     bottomInset: CPSLTheme.medium
                 )
                 .ignoresSafeArea(.container, edges: .vertical)
                 .allowsHitTesting(model.isDrawerOpen)
                 .offset(x: drawerOffset(width: proxy.size.width))
-                .animation(CPSLDrawerMotion.animation, value: model.isDrawerOpen)
 
                 CPSLMainContentStage(
                     model: model,
@@ -34,9 +34,8 @@ struct CPSLChatScreen: View {
                     contentTopInset: contentTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
                     contentBottomInset: contentBottomInset
                 )
-                .offset(x: model.isDrawerOpen ? proxy.size.width : 0)
+                .offset(x: mainContentOffset(width: proxy.size.width))
                 .allowsHitTesting(!model.isDrawerOpen)
-                .animation(CPSLDrawerMotion.animation, value: model.isDrawerOpen)
                 .zIndex(1)
 
                 CPSLDrawerToggleButton(isOpen: model.isDrawerOpen) {
@@ -45,8 +44,15 @@ struct CPSLChatScreen: View {
                 .padding(.leading, CPSLTheme.medium)
                 .padding(.top, CPSLTheme.medium)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
-                .animation(CPSLDrawerMotion.animation, value: model.isDrawerOpen)
                 .zIndex(2)
+            }
+            .onAppear {
+                drawerProgress = drawerTargetProgress
+            }
+            .onChange(of: model.isDrawerOpen) { _, _ in
+                withAnimation(CPSLDrawerMotion.animation) {
+                    drawerProgress = drawerTargetProgress
+                }
             }
         }
         .alert(
@@ -67,17 +73,23 @@ struct CPSLChatScreen: View {
     }
 
     private func drawerOffset(width: CGFloat) -> CGFloat {
-        guard !model.isDrawerOpen else {
-            return 0
-        }
-        return -CPSLConversationDrawerLayout.width(in: width)
+        -CPSLConversationDrawerLayout.width(in: width) * (1 - drawerProgress)
+    }
+
+    private func mainContentOffset(width: CGFloat) -> CGFloat {
+        width * drawerProgress
     }
 
     private func drawerToggleOffset(width: CGFloat) -> CGFloat {
-        guard model.isDrawerOpen else {
-            return 0
-        }
-        return max(0, width - CPSLTheme.controlSize - CPSLTheme.medium * 2)
+        max(0, width - CPSLTheme.controlSize - CPSLTheme.medium * 2) * drawerProgress
+    }
+
+    private var drawerTargetProgress: CGFloat {
+        model.isDrawerOpen ? 1 : 0
+    }
+
+    private func drawerTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
+        topSafeAreaInset + CPSLTheme.medium
     }
 
     private func contentTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
