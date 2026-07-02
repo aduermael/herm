@@ -103,6 +103,7 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
         self != .hidden
     }
 
+    @MainActor
     var fill: Color {
         switch self {
         case .assistant:
@@ -122,6 +123,7 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
         }
     }
 
+    @MainActor
     var foreground: Color {
         CPSLTheme.text
     }
