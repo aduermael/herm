@@ -214,8 +214,9 @@ runs before compilation. On every build it runs:
 
 That helper calls `ensure-cpsl-apple-xcframework.sh` to build or reuse
 `.herm-cpsl/artifacts/apple/cpsl.xcframework` and its PDFium sidecar
-libraries, then copies the built XCFramework into the Xcode-linked path at
-`scripts/cpsl-xcframework-placeholder/cpsl.xcframework`.
+libraries, then links the built XCFramework into the Xcode-linked path at
+`scripts/cpsl-xcframework-placeholder/cpsl.xcframework` when that local copy is
+missing or stale.
 
 The phase is marked always-out-of-date so Xcode invokes the script each build,
 but the ensure script itself is cheap when nothing changed: it reuses
@@ -223,7 +224,9 @@ but the ensure script itself is cheap when nothing changed: it reuses
 (iOS device, iOS simulator, macOS) and staleness inputs are not newer than
 `Info.plist`. It rebuilds when the artifact is missing, incomplete, or stale
 because files under `scripts/cpsl-patches/`, `scripts/build-cpsl-apple-xcframework.sh`,
-or `scripts/apply-cpsl-patches.sh` changed.
+or `scripts/apply-cpsl-patches.sh` changed. The link helper also records a
+fingerprint of the copied XCFramework so repeated Xcode builds skip the
+`rm -rf`/`cp -R` relink step when the cached artifact has not changed.
 
 Xcode builds always produce the full iOS+macOS XCFramework and PDFium sidecar
 set, even when the active destination only needs one platform.
@@ -232,8 +235,8 @@ Xcode validates linked XCFrameworks before any target runs. A tracked bootstrap
 placeholder at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework`
 satisfies that check on fresh clones. The ensure script then builds the real
 XCFramework under gitignored `.herm-cpsl/artifacts/apple/`, and the Xcode helper
-replaces the placeholder path with a local copy of that artifact during the
-build. The copy step marks the tracked bootstrap files `skip-worktree` so
+replaces the placeholder path with a local copy of that artifact when needed
+during the build. The copy step marks the tracked bootstrap files `skip-worktree` so
 `git status` stays clean while the local copy is present. Do not commit the
 local copy; only the bootstrap directory belongs in git.
 
