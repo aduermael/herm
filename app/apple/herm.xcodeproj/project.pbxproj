@@ -24,7 +24,7 @@
 		850B3BFA2FE8390E00A21FC8 /* cpsl.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */; };
 		850B3BFB2FE8390E00A21FC8 /* cpsl.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		85A100012FEA000000000001 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 85A100002FEA000000000001 /* libsqlite3.tbd */; };
-		85A100052FEA000000000005 /* CPSLEnvConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A100042FEA000000000004 /* CPSLEnvConstants.swift */; };
+		85A100052FEA000000000005 /* herm/Generated/CPSLEnvConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,7 +54,7 @@
 /* Begin PBXFileReference section */
 		850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = cpsl.xcframework; path = "../../scripts/cpsl-xcframework-placeholder/cpsl.xcframework"; sourceTree = "<group>"; };
 		85A100002FEA000000000001 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
-		85A100042FEA000000000004 /* CPSLEnvConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = herm/Generated/CPSLEnvConstants.swift; sourceTree = SOURCE_ROOT; };
+		85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = herm/Generated/CPSLEnvConstants.swift; sourceTree = SOURCE_ROOT; };
 		85D75D332FE62B6F0095BAB2 /* herm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = herm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -99,7 +99,7 @@
 		10B2D4362FF5768800E04BA4 /* Generated Sources */ = {
 			isa = PBXGroup;
 			children = (
-				85A100042FEA000000000004 /* CPSLEnvConstants.swift */,
+				85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */,
 			);
 			name = "Generated Sources";
 			sourceTree = "<group>";
@@ -255,7 +255,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				85A100052FEA000000000005 /* CPSLEnvConstants.swift in Sources */,
+				85A100052FEA000000000005 /* herm/Generated/CPSLEnvConstants.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

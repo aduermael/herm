@@ -104,6 +104,19 @@ actor CPSLConversationStore {
         )
     }
 
+#if DEBUG
+    func exportConversationJSON(id: String) throws -> String {
+        guard let conversation = try loadConversation(id: id) else {
+            throw CPSLConversationStoreError.conversationNotFound
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(conversation)
+        return String(decoding: data, as: UTF8.self)
+    }
+#endif
+
     func createConversation(
         userText: String,
         model: String?,
@@ -226,6 +239,80 @@ actor CPSLConversationStore {
             sequence: sequence,
             createdAt: now
         )
+    }
+
+    func appendNodes(
+        conversationID: String,
+        parentID: String?,
+        drafts: [CPSLNodeAppendDraft]
+    ) throws -> [CPSLStoredNode] {
+        guard !drafts.isEmpty else {
+            return []
+        }
+
+        let now = Date()
+        let prepared = try drafts.map { draft in
+            (
+                id: UUID().uuidString,
+                draft: draft,
+                providerJSON: try draft.providerMessage.map(encodeProviderMessage)
+            )
+        }
+        var insertedNodes: [CPSLStoredNode] = []
+
+        try withTransaction {
+            guard let parentID else {
+                throw CPSLConversationStoreError.parentRequired
+            }
+            try assertParentBelongsToConversation(parentID: parentID, conversationID: conversationID)
+
+            var sequence = try nextSequence(conversationID: conversationID)
+            var currentParentID = parentID
+            for item in prepared {
+                try execute(
+                    """
+                    INSERT INTO nodes (id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    bindings: [
+                        .text(item.id),
+                        .text(conversationID),
+                        .nullableText(currentParentID),
+                        .text(item.draft.role.rawValue),
+                        .nullableText(item.draft.title),
+                        .text(item.draft.body),
+                        .nullableText(item.draft.model),
+                        .nullableText(item.providerJSON),
+                        .int(sequence),
+                        .date(now)
+                    ]
+                )
+                insertedNodes.append(
+                    CPSLStoredNode(
+                        id: item.id,
+                        conversationID: conversationID,
+                        parentID: currentParentID,
+                        role: item.draft.role,
+                        title: item.draft.title,
+                        body: item.draft.body,
+                        model: item.draft.model,
+                        providerMessage: item.draft.providerMessage,
+                        sequence: sequence,
+                        createdAt: now
+                    )
+                )
+                currentParentID = item.id
+                sequence += 1
+            }
+
+            try updateConversationCurrentNode(
+                conversationID: conversationID,
+                currentNodeID: currentParentID,
+                updatedAt: now
+            )
+        }
+
+        return insertedNodes
     }
 
     func updateNodeBody(id: String, body: String) throws {
@@ -560,7 +647,9 @@ nonisolated struct CPSLLoadedConversation: Equatable, Sendable {
     let nodes: [CPSLStoredNode]
 }
 
-nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable {
+extension CPSLLoadedConversation: Encodable {}
+
+nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable, Encodable {
     let id: String
     let title: String
     let currentNodeID: String?
@@ -569,7 +658,7 @@ nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable {
     let updatedAt: Date
 }
 
-nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable {
+nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Encodable {
     let id: String
     let conversationID: String
     let parentID: String?
@@ -581,12 +670,24 @@ nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable {
     let sequence: Int
     let createdAt: Date
 
-    var chatMessage: CPSLChatMessage {
-        CPSLChatMessage(id: UUID(uuidString: id) ?? UUID(), role: role, title: title, body: body)
+    var chatMessage: CPSLChatMessage? {
+        guard role.isVisible else {
+            return nil
+        }
+        return CPSLChatMessage(id: UUID(uuidString: id) ?? UUID(), role: role, title: title, body: body)
     }
 }
 
+nonisolated struct CPSLNodeAppendDraft: Equatable, Sendable {
+    let role: CPSLChatRole
+    let title: String?
+    let body: String
+    let model: String?
+    let providerMessage: CPSLOpenAIMessage?
+}
+
 nonisolated enum CPSLConversationStoreError: LocalizedError {
+    case conversationNotFound
     case openFailed(String)
     case parentRequired
     case parentConversationMismatch
@@ -594,6 +695,8 @@ nonisolated enum CPSLConversationStoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .conversationNotFound:
+            return "Conversation was not found."
         case .openFailed(let message):
             return "Could not open conversations database: \(message)"
         case .parentRequired:

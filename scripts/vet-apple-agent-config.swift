@@ -24,7 +24,13 @@ private struct CPSLAgentConfigChecks {
 
         guard config.baseURL.absoluteString == "https://api.x.ai/v1",
               config.token == "generated-token",
-              config.model == "generated-model"
+              config.model == "generated-model",
+              config.maxToolRounds == 200,
+              config.maxOutputTokens == 16_384,
+              config.contextWindowTokens == nil,
+              config.exploreSubAgentTurns == 15,
+              config.generalSubAgentTurns == 20,
+              config.maxAgentDepth == 1
         else {
             throw CheckFailure("generated constants should load as the default config")
         }
@@ -35,18 +41,23 @@ private struct CPSLAgentConfigChecks {
             values: [
                 "OPENAI_BASE_URL": " https://api.x.ai/v1 ",
                 "OPENAI_API_KEY": " file-token ",
-                "OPENAI_MODEL": " file-model "
+                "OPENAI_MODEL": " file-model ",
+                "HERM_MAX_TOOL_ROUNDS": "77",
+                "HERM_CONTEXT_WINDOW_TOKENS": "64000"
             ],
             environment: [
                 "OPENAI_BASE_URL": "https://wrong.example/v1",
                 "OPENAI_API_KEY": "env-token",
-                "OPENAI_MODEL": "env-model"
+                "OPENAI_MODEL": "env-model",
+                "HERM_MAX_TOOL_ROUNDS": "12"
             ]
         )
 
         guard config.baseURL.absoluteString == "https://api.x.ai/v1",
               config.token == "file-token",
-              config.model == "file-model"
+              config.model == "file-model",
+              config.maxToolRounds == 77,
+              config.contextWindowTokens == 64_000
         else {
             throw CheckFailure("generated .env values should win over process environment")
         }
@@ -58,13 +69,21 @@ private struct CPSLAgentConfigChecks {
             environment: [
                 "API_URL": "https://compatible.example/v1",
                 "TOKEN": "env-token",
-                "OPENAI_MODEL": "env-model"
+                "OPENAI_MODEL": "env-model",
+                "MAX_OUTPUT_TOKENS": "4096",
+                "EXPLORE_SUBAGENT_TURNS": "9",
+                "GENERAL_SUBAGENT_TURNS": "11",
+                "MAX_AGENT_DEPTH": "0"
             ]
         )
 
         guard config.baseURL.absoluteString == "https://compatible.example/v1",
               config.token == "env-token",
               config.model == "env-model",
+              config.maxOutputTokens == 4_096,
+              config.exploreSubAgentTurns == 9,
+              config.generalSubAgentTurns == 11,
+              config.maxAgentDepth == 0,
               CPSLAgentConfig.hasProcessEnvironmentFallback(environment: ["MODEL": "env-model"])
         else {
             throw CheckFailure("environment fallback keys did not resolve")

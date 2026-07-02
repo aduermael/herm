@@ -75,6 +75,8 @@ require_match 'generated constants should load as the default config' scripts/ve
 require_match 'OPENAI_BASE_URL=' app/apple/herm/Resources/env.example
 require_match 'OPENAI_API_KEY=' app/apple/herm/Resources/env.example
 require_match 'OPENAI_MODEL=' app/apple/herm/Resources/env.example
+require_match 'HERM_MAX_TOOL_ROUNDS=200' app/apple/herm/Resources/env.example
+require_match 'HERM_MAX_OUTPUT_TOKENS=16384' app/apple/herm/Resources/env.example
 require_match 'OpenAI-compatible Chat Completions' docs/apple-agent-config.md
 require_match 'Do not ship real API tokens in the app bundle as resource files' docs/apple-agent-config.md
 require_match 'scripts/dev-apple-macos\.sh.*repo root' docs/apple-agent-config.md
@@ -148,11 +150,17 @@ require_match 'parentConversationMismatch' scripts/vet-apple-conversation-store.
 require_match 'CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'CREATE INDEX IF NOT EXISTS idx_nodes_parent' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 
-require_match 'tools: \[CPSLOpenAITool.localSandboxExec\]' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'maxToolRounds: positiveIntValue' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'defaultMaxToolRounds = 200' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'tools: tools\.isEmpty \? nil : tools' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'maxCompletionTokens: maxTokens' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'appendingPathComponent\("chat"\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'appendingPathComponent\("completions"\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'encodeNil\(forKey: \.content\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'name: "local_sandbox_exec"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'name: "agent"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'availableTools\(allowsSubagents' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'maxCompletionTokens = "max_completion_tokens"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Never guess sandbox tool signatures' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'fs\.help\(\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Declare variables with local' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
@@ -162,16 +170,28 @@ require_match 'Luau essentials' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSLOpenAIError\.provider' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'CPSLOpenAIError\.invalidToolCall' scripts/vet-apple-openai-protocol.swift
 require_match 'validatedCompletion\(\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
-require_match 'toolChoice: "auto"' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'toolChoice: tools\.isEmpty \? nil : "auto"' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'stream: true' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'text/event-stream' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'evaluateLuau' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'currentVirtualDirectory' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'func currentDirectory\(\) -> String' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'restoreCurrentDirectory' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'shellDoubleQuoted' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'Current sandbox directory' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'requestDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'promptPathLiteral' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
+require_match 'localSandboxExec\(currentDirectory' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match '"language": "luau"' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"language": language' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'CPSLAgentToolFormatting\.providerContent' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSLAgentToolFormatting\.displayBody' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'object\.keys\.sorted\(\) == \["source"\]' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
+require_match 'CPSLAgentToolFormatting\.agentInput' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'nonNegativeIntValue' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'Set\(object\.keys\)\.isSubset\(of: \["source", "intent"\]\)' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
 require_match 'unknown fields should not decode' scripts/vet-apple-agent-tool-formatting.swift
+require_match 'agent tool input was not decoded' scripts/vet-apple-agent-tool-formatting.swift
 require_match 'truncatedText' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
 require_match 'ffi_error' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
 require_match 'func selectConversation\(id: String\)' app/apple/herm/Models/CPSLChatModel.swift
@@ -180,7 +200,13 @@ require_match 'isRunning = true' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'defer \{' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'typewriterTask = nil' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Provider returned an empty response' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Stopped after.*tool rounds' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Reached maximum tool rounds' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'synthesizeAfterToolLimit' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'role: \.toolStatus' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'role: \.hidden' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'runSubAgent' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'copyConversationJSONToPasteboard' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Copy conversation JSON' app/apple/herm/Views/Chat/CPSLChatScreen.swift
 require_match 'let errorNode = try await store\.appendNode' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'appendProviderLoopError' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'appendAgentError' app/apple/herm/Models/CPSLChatModel.swift
@@ -226,7 +252,9 @@ if command -v swift >/dev/null 2>&1; then
 fi
 
 if command -v swiftc >/dev/null 2>&1; then
-  swiftc -typecheck app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+  swiftc -typecheck \
+    app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
+    app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
   swiftc -typecheck app/apple/herm/Services/Agent/CPSLAgentConfig.swift "$tmp_env_dir/CPSLEnvConstants.swift"
   swiftc app/apple/herm/Services/Agent/CPSLAgentConfig.swift scripts/vet-apple-agent-config.swift -o /tmp/herm-vet-agent-config
   /tmp/herm-vet-agent-config
@@ -236,7 +264,11 @@ if command -v swiftc >/dev/null 2>&1; then
     scripts/vet-apple-agent-tool-formatting.swift \
     -o /tmp/herm-vet-agent-tool-formatting
   /tmp/herm-vet-agent-tool-formatting
-  swiftc app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift scripts/vet-apple-openai-protocol.swift -o /tmp/herm-vet-openai-protocol
+  swiftc \
+    app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
+    app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift \
+    scripts/vet-apple-openai-protocol.swift \
+    -o /tmp/herm-vet-openai-protocol
   /tmp/herm-vet-openai-protocol
   if [[ "$(uname -s)" == "Darwin" ]]; then
     swiftc \

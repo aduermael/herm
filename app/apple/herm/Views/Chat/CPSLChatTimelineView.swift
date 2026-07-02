@@ -180,7 +180,8 @@ private struct CPSLChatMessageView: View {
     private var messageContent: some View {
         if message.role.isFramed {
             messageStack
-                .padding(CPSLTheme.medium)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, verticalPadding)
                 .background(message.role.fill)
                 .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.messageRadius, style: .continuous))
                 .frame(
@@ -191,6 +192,14 @@ private struct CPSLChatMessageView: View {
             messageStack
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private var horizontalPadding: CGFloat {
+        message.role == .toolStatus ? CPSLTheme.small : CPSLTheme.medium
+    }
+
+    private var verticalPadding: CGFloat {
+        message.role == .toolStatus ? CPSLTheme.small / 2 : CPSLTheme.medium
     }
 
     private var messageStack: some View {
@@ -208,6 +217,16 @@ private struct CPSLChatMessageView: View {
     private var messageBody: some View {
         if message.role == .command {
             CPSLCommandBlockBody(text: message.body, foreground: message.role.foreground)
+        } else if message.role == .toolStatus {
+            if let payload = CPSLToolStatusPayload.decode(from: message.body) {
+                CPSLToolStatusBody(payload: payload)
+            } else {
+                Text(message.body)
+                    .font(CPSLTheme.supportingFont)
+                    .foregroundStyle(message.role.foreground)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         } else if message.role.rendersMarkdownBody {
             CPSLMarkdownMessageBody(
                 text: message.body,
@@ -222,6 +241,158 @@ private struct CPSLChatMessageView: View {
         }
     }
 }
+
+private struct CPSLToolStatusBody: View {
+    let payload: CPSLToolStatusPayload
+
+#if DEBUG
+    @State private var isExpanded = false
+#endif
+
+    var body: some View {
+#if DEBUG
+        DisclosureGroup(isExpanded: $isExpanded) {
+            CPSLToolStatusDebugDetails(invocations: payload.invocations)
+                .padding(.top, CPSLTheme.small)
+        } label: {
+            CPSLToolStatusLine(payload: payload)
+        }
+        .disclosureGroupStyle(.automatic)
+#else
+        CPSLToolStatusLine(payload: payload)
+#endif
+    }
+}
+
+private struct CPSLToolStatusLine: View {
+    let payload: CPSLToolStatusPayload
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            CPSLToolStatusIcon(state: payload.state)
+
+            Text(payload.summary)
+                .font(CPSLTheme.supportingMediumFont)
+                .foregroundStyle(CPSLTheme.text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: CPSLTheme.large, alignment: .center)
+    }
+}
+
+private struct CPSLToolStatusIcon: View {
+    let state: CPSLToolStatusState
+
+    var body: some View {
+        icon
+            .font(CPSLTheme.iconMediumFont)
+            .foregroundStyle(iconColor)
+            .frame(width: CPSLTheme.large, height: CPSLTheme.large)
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        if state == .running {
+            TimelineView(.animation) { timeline in
+                Image(systemName: iconName)
+                    .rotationEffect(.degrees(rotation(at: timeline.date)))
+            }
+        } else {
+            Image(systemName: iconName)
+        }
+    }
+
+    private var iconName: String {
+        switch state {
+        case .running:
+            return "gearshape.fill"
+        case .succeeded:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch state {
+        case .running:
+            return CPSLTheme.secondaryText
+        case .succeeded:
+            return CPSLTheme.success
+        case .failed:
+            return CPSLTheme.danger
+        }
+    }
+
+    private func rotation(at date: Date) -> Double {
+        let cycle = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9)
+        return cycle / 0.9 * 360
+    }
+}
+
+#if DEBUG
+private struct CPSLToolStatusDebugDetails: View {
+    let invocations: [CPSLToolStatusInvocation]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.medium) {
+            if invocations.isEmpty {
+                Text("No completed tool calls yet.")
+                    .font(CPSLTheme.captionFont)
+                    .foregroundStyle(CPSLTheme.secondaryText)
+            } else {
+                ForEach(invocations) { invocation in
+                    CPSLToolStatusInvocationDebugView(invocation: invocation)
+                }
+            }
+        }
+    }
+}
+
+private struct CPSLToolStatusInvocationDebugView: View {
+    let invocation: CPSLToolStatusInvocation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small) {
+            HStack(spacing: CPSLTheme.small) {
+                Image(systemName: invocation.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(invocation.isError ? CPSLTheme.danger : CPSLTheme.success)
+                Text(invocation.isError ? "Failed step" : "Completed step")
+                    .font(CPSLTheme.captionMediumFont)
+                    .foregroundStyle(CPSLTheme.text)
+            }
+
+            CPSLToolDebugBlock(title: "Input", text: invocation.input)
+            CPSLToolDebugBlock(title: "Output", text: invocation.output)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CPSLToolDebugBlock: View {
+    let title: String
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
+            Text(title)
+                .font(CPSLTheme.captionMediumFont)
+                .foregroundStyle(CPSLTheme.secondaryText)
+
+            Text(text.isEmpty ? "(empty)" : text)
+                .font(CPSLTheme.monospacedBodyFont)
+                .foregroundStyle(CPSLTheme.text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(CPSLTheme.small)
+        .background(CPSLTheme.command)
+        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
+    }
+}
+#endif
 
 private struct CPSLMarkdownMessageBody: View {
     let text: String

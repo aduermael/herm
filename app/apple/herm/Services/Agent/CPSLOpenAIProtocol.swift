@@ -114,8 +114,9 @@ nonisolated enum CPSLOpenAIStreamEvent: Equatable, Sendable {
 nonisolated struct CPSLOpenAIChatRequest: Encodable {
     let model: String
     let messages: [CPSLOpenAIMessage]
-    let tools: [CPSLOpenAITool]
-    let toolChoice: String
+    let tools: [CPSLOpenAITool]?
+    let toolChoice: String?
+    let maxCompletionTokens: Int?
     let stream: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -123,6 +124,7 @@ nonisolated struct CPSLOpenAIChatRequest: Encodable {
         case messages
         case tools
         case toolChoice = "tool_choice"
+        case maxCompletionTokens = "max_completion_tokens"
         case stream
     }
 }
@@ -131,24 +133,69 @@ nonisolated struct CPSLOpenAITool: Encodable {
     let type: String
     let function: CPSLOpenAIToolFunction
 
-    static let localSandboxExec = CPSLOpenAITool(
+    static func localSandboxExec(currentDirectory: String) -> CPSLOpenAITool {
+        let directory = CPSLAgentToolFormatting.promptPathLiteral(
+            normalizedToolDirectory(currentDirectory)
+        )
+        return CPSLOpenAITool(
+            type: "function",
+            function: CPSLOpenAIToolFunction(
+                name: "local_sandbox_exec",
+                description: "Execute native Luau source in the local sandbox. Current sandbox directory for this request: \(directory). Relative paths resolve from that directory. Include intent: a short high-level user-facing action phrase like Exploring files, Reading settings, or Checking results. Intent must not mention code, sandbox, workdir, paths, tool names, or implementation details. Never guess sandbox tool signatures: call help() and each tool's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not invoke lua, luau, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside sandbox workspace paths.",
+                parameters: CPSLOpenAIToolParameters(
+                    type: "object",
+                    properties: [
+                        "intent": CPSLOpenAIToolParameter(
+                            type: "string",
+                            description: "Short high-level status phrase shown to the user, such as Exploring files or Checking results. Do not mention code, sandbox, workdir, paths, tool names, or implementation details."
+                        ),
+                        "source": CPSLOpenAIToolParameter(
+                            type: "string",
+                            description: "Native Luau source to execute directly in the local sandbox. Relative paths resolve from the current sandbox directory in the tool description."
+                        )
+                    ],
+                    required: ["intent", "source"],
+                    additionalProperties: false
+                )
+            )
+        )
+    }
+
+    static let agent = CPSLOpenAITool(
         type: "function",
         function: CPSLOpenAIToolFunction(
-            name: "local_sandbox_exec",
-            description: "Execute native Luau source in the local sandbox at /workdir. Never guess sandbox tool signatures: call help() and each tool's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not invoke lua, luau, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside sandbox workspace paths.",
+            name: "agent",
+            description: "Spawn a focused sub-agent with its own turn budget. Use mode explore for research and reading. Use mode general for sandbox execution cycles or implementation-style work. Sub-agents return a concise result to this conversation and cannot access host shell tools.",
             parameters: CPSLOpenAIToolParameters(
                 type: "object",
                 properties: [
-                    "source": CPSLOpenAIToolParameter(
+                    "task": CPSLOpenAIToolParameter(
                         type: "string",
-                        description: "Native Luau source to execute directly in the sandbox at /workdir."
+                        description: "A clear, self-contained task for the sub-agent."
+                    ),
+                    "mode": CPSLOpenAIToolParameter(
+                        type: "string",
+                        description: "Either explore or general. Explore is for research; general is for execution-heavy work."
                     )
                 ],
-                required: ["source"],
+                required: ["task", "mode"],
                 additionalProperties: false
             )
         )
     )
+
+    static func availableTools(allowsSubagents: Bool, currentDirectory: String) -> [CPSLOpenAITool] {
+        let localSandboxExec = localSandboxExec(currentDirectory: currentDirectory)
+        return allowsSubagents ? [localSandboxExec, .agent] : [localSandboxExec]
+    }
+
+    private static func normalizedToolDirectory(_ directory: String) -> String {
+        let trimmed = directory.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return "/"
+        }
+        return trimmed.hasPrefix("/") ? trimmed : "/\(trimmed)"
+    }
 }
 
 nonisolated struct CPSLOpenAIToolFunction: Encodable {

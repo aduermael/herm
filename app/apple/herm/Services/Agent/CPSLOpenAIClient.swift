@@ -14,13 +14,16 @@ actor CPSLOpenAIClient {
 
     func streamChat(
         messages: [CPSLOpenAIMessage],
+        tools: [CPSLOpenAITool],
+        maxTokens: Int?,
         onEvent: @escaping (CPSLOpenAIStreamEvent) async -> Void
     ) async throws -> CPSLOpenAICompletion {
         let requestBody = CPSLOpenAIChatRequest(
             model: config.model,
             messages: messages,
-            tools: [CPSLOpenAITool.localSandboxExec],
-            toolChoice: "auto",
+            tools: tools.isEmpty ? nil : tools,
+            toolChoice: tools.isEmpty ? nil : "auto",
+            maxCompletionTokens: maxTokens,
             stream: true
         )
 

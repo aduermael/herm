@@ -9,6 +9,7 @@ actor CPSLDebugService {
     private var nextSessionID = 0
     private var evaluatingSessionID: Int?
     private var sandboxURLs: CPSLSandboxURLs?
+    private var currentVirtualDirectory = "/workdir"
 
     deinit {
         if let session {
@@ -57,6 +58,23 @@ actor CPSLDebugService {
         await evaluate(source, language: "luau")
     }
 
+    func currentDirectory() -> String {
+        currentVirtualDirectory
+    }
+
+    func restoreCurrentDirectory(_ directory: String) async -> String? {
+        let targetDirectory = Self.normalizedVirtualPath(directory, trimsOuterWhitespace: false)
+        guard currentVirtualDirectory != targetDirectory else {
+            return nil
+        }
+
+        let result = await evaluate("cd \(Self.shellDoubleQuoted(targetDirectory))", language: "bash")
+        guard result.ok == true else {
+            return result.errorMessage ?? result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
     private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
         let sandboxURLs: CPSLSandboxURLs
         do {
@@ -93,11 +111,15 @@ actor CPSLDebugService {
             if evaluatingSessionID == activeSession.id {
                 evaluatingSessionID = nil
             }
+            if let cwd = result.cwd, !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                currentVirtualDirectory = Self.normalizedVirtualPath(cwd, trimsOuterWhitespace: false)
+            }
             return result
         case .timedOut:
             if session?.id == activeSession.id {
                 // cpsl_eval may still be blocked; abandon and intentionally leak this session.
                 session = nil
+                currentVirtualDirectory = "/workdir"
             }
             if evaluatingSessionID == activeSession.id {
                 evaluatingSessionID = nil
@@ -117,8 +139,13 @@ actor CPSLDebugService {
         return Self.appendingVirtualPath(normalized.dropFirst(), to: sandboxURLs.root)
     }
 
-    private nonisolated static func normalizedVirtualPath(_ path: String) -> String {
-        var normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    private nonisolated static func normalizedVirtualPath(
+        _ path: String,
+        trimsOuterWhitespace: Bool = true
+    ) -> String {
+        var normalized = trimsOuterWhitespace
+            ? path.trimmingCharacters(in: .whitespacesAndNewlines)
+            : path
         if normalized.isEmpty {
             normalized = "/"
         }
@@ -138,6 +165,25 @@ actor CPSLDebugService {
             }
         }
         return components.isEmpty ? "/" : "/\(components.joined(separator: "/"))"
+    }
+
+    private nonisolated static func shellDoubleQuoted(_ value: String) -> String {
+        var escaped = ""
+        for character in value {
+            switch character {
+            case "\\":
+                escaped += "\\\\"
+            case "\"":
+                escaped += "\\\""
+            case "$":
+                escaped += "\\$"
+            case "`":
+                escaped += "\\`"
+            default:
+                escaped.append(character)
+            }
+        }
+        return "\"\(escaped)\""
     }
 
     private nonisolated static func appendingVirtualPath<T: StringProtocol>(_ relativePath: T, to baseURL: URL) -> URL {
@@ -174,6 +220,7 @@ actor CPSLDebugService {
 
         nextSessionID += 1
         session = CPSLSessionHandle(id: nextSessionID, pointer: newSession)
+        currentVirtualDirectory = "/workdir"
         return nil
     }
 

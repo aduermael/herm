@@ -1,9 +1,21 @@
 import Foundation
 
 nonisolated struct CPSLAgentConfig: Equatable, Sendable {
+    static let defaultMaxToolRounds = 200
+    static let defaultMaxOutputTokens = 16_384
+    static let defaultExploreSubAgentTurns = 15
+    static let defaultGeneralSubAgentTurns = 20
+    static let defaultMaxAgentDepth = 1
+
     let baseURL: URL
     let token: String
     let model: String
+    let maxToolRounds: Int
+    let maxOutputTokens: Int
+    let contextWindowTokens: Int?
+    let exploreSubAgentTurns: Int
+    let generalSubAgentTurns: Int
+    let maxAgentDepth: Int
 
     static func load() throws -> CPSLAgentConfig {
         let environment = ProcessInfo.processInfo.environment
@@ -65,7 +77,42 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
         return CPSLAgentConfig(
             baseURL: baseURL,
             token: token.trimmingCharacters(in: .whitespacesAndNewlines),
-            model: model.trimmingCharacters(in: .whitespacesAndNewlines)
+            model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+            maxToolRounds: positiveIntValue(
+                in: values,
+                environment: environment,
+                keys: ["HERM_MAX_TOOL_ROUNDS", "MAX_TOOL_ROUNDS"],
+                defaultValue: defaultMaxToolRounds
+            ),
+            maxOutputTokens: positiveIntValue(
+                in: values,
+                environment: environment,
+                keys: ["HERM_MAX_OUTPUT_TOKENS", "MAX_OUTPUT_TOKENS"],
+                defaultValue: defaultMaxOutputTokens
+            ),
+            contextWindowTokens: optionalPositiveIntValue(
+                in: values,
+                environment: environment,
+                keys: ["HERM_CONTEXT_WINDOW_TOKENS", "CONTEXT_WINDOW_TOKENS"]
+            ),
+            exploreSubAgentTurns: positiveIntValue(
+                in: values,
+                environment: environment,
+                keys: ["HERM_EXPLORE_SUBAGENT_TURNS", "EXPLORE_SUBAGENT_TURNS"],
+                defaultValue: defaultExploreSubAgentTurns
+            ),
+            generalSubAgentTurns: positiveIntValue(
+                in: values,
+                environment: environment,
+                keys: ["HERM_GENERAL_SUBAGENT_TURNS", "GENERAL_SUBAGENT_TURNS"],
+                defaultValue: defaultGeneralSubAgentTurns
+            ),
+            maxAgentDepth: nonNegativeIntValue(
+                in: values,
+                environment: environment,
+                keys: ["HERM_MAX_AGENT_DEPTH", "MAX_AGENT_DEPTH"],
+                defaultValue: defaultMaxAgentDepth
+            )
         )
     }
 
@@ -84,6 +131,44 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
             }
         }
         return nil
+    }
+
+    private static func positiveIntValue(
+        in values: [String: String],
+        environment: [String: String],
+        keys: [String],
+        defaultValue: Int
+    ) -> Int {
+        optionalPositiveIntValue(in: values, environment: environment, keys: keys) ?? defaultValue
+    }
+
+    private static func optionalPositiveIntValue(
+        in values: [String: String],
+        environment: [String: String],
+        keys: [String]
+    ) -> Int? {
+        guard let rawValue = firstValue(in: values, environment: environment, keys: keys),
+              let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              value > 0
+        else {
+            return nil
+        }
+        return value
+    }
+
+    private static func nonNegativeIntValue(
+        in values: [String: String],
+        environment: [String: String],
+        keys: [String],
+        defaultValue: Int
+    ) -> Int {
+        guard let rawValue = firstValue(in: values, environment: environment, keys: keys),
+              let value = Int(rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
+              value >= 0
+        else {
+            return defaultValue
+        }
+        return value
     }
 
     static func hasProcessEnvironmentFallback(environment: [String: String]) -> Bool {

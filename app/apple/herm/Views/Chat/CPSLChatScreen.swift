@@ -193,6 +193,12 @@ private struct CPSLHeaderActionsView: View {
         HStack(spacing: CPSLTheme.medium) {
             Spacer()
 
+#if DEBUG
+            CPSLChromeIconButton(systemName: "doc.on.doc", accessibilityLabel: "Copy conversation JSON") {
+                model.copyConversationJSONToPasteboard()
+            }
+#endif
+
             CPSLChromeIconButton(systemName: "square.and.pencil", accessibilityLabel: "New conversation") {
                 model.startNewConversation()
             }

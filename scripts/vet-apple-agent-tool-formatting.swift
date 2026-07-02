@@ -4,6 +4,7 @@ import Foundation
 private struct CPSLAgentToolFormattingChecks {
     static func main() throws {
         try assertToolArgumentsAndDisplayBody()
+        try assertAgentToolArguments()
         try assertProviderContentJSON()
         try assertTruncation()
     }
@@ -14,7 +15,7 @@ private struct CPSLAgentToolFormattingChecks {
             type: "function",
             function: CPSLOpenAIFunctionCall(
                 name: "local_sandbox_exec",
-                arguments: #"{"source":"print(\"ok\")"}"#
+                arguments: #"{"intent":"Checking results","source":"print(\"ok\")"}"#
             )
         )
 
@@ -35,6 +36,56 @@ private struct CPSLAgentToolFormattingChecks {
         guard body == "local_sandbox_exec\n\nprint(\"ok\")" else {
             throw CheckFailure("tool call display body was unexpected: \(body)")
         }
+        guard CPSLAgentToolFormatting.summary(for: toolCall) == "Checking results" else {
+            throw CheckFailure("tool status summary should use the high-level intent")
+        }
+        let listToolCall = CPSLOpenAIToolCall(
+            id: "call_2",
+            type: "function",
+            function: CPSLOpenAIFunctionCall(
+                name: "local_sandbox_exec",
+                arguments: #"{"source":"print(fs.list(\"/workdir\"))"}"#
+            )
+        )
+        guard CPSLAgentToolFormatting.summary(for: listToolCall) == "Exploring files" else {
+            throw CheckFailure("tool status fallback should infer a high-level file intent")
+        }
+        guard CPSLAgentToolFormatting.statusSentence(
+            from: "I will inspect the relevant files",
+            fallback: "Fallback"
+        ) == "I will inspect the relevant files" else {
+            throw CheckFailure("plain-language status sentence was not normalized")
+        }
+        guard CPSLAgentToolFormatting.statusSentence(
+            from: "local result = fs.read('/workdir/file')",
+            fallback: "Fallback"
+        ) == "Fallback" else {
+            throw CheckFailure("code-like status sentence should be replaced")
+        }
+        guard CPSLAgentToolFormatting.statusSentence(
+            from: "```luau\nprint(\"ok\")\n```",
+            fallback: "Fallback"
+        ) == "Fallback" else {
+            throw CheckFailure("fenced code status sentence should be replaced")
+        }
+        guard CPSLAgentToolFormatting.statusSentence(
+            from: "Calling `agent` to inspect the files",
+            fallback: "Fallback"
+        ) == "Fallback" else {
+            throw CheckFailure("tool-name status sentence should be replaced")
+        }
+        guard CPSLAgentToolFormatting.statusSentence(
+            from: "Reading app/apple/herm/Models/CPSLChatModel.swift",
+            fallback: "Fallback"
+        ) == "Fallback" else {
+            throw CheckFailure("path-like status sentence should be replaced")
+        }
+        guard CPSLAgentToolFormatting.statusSentence(
+            from: "Checking Package.swift",
+            fallback: "Fallback"
+        ) == "Fallback" else {
+            throw CheckFailure("file-name status sentence should be replaced")
+        }
 
         let display = CPSLAgentToolFormatting.displayBody(
             CPSLAgentToolOutput(
@@ -53,6 +104,23 @@ private struct CPSLAgentToolFormattingChecks {
               display.contains("ffi failed")
         else {
             throw CheckFailure("tool display body omitted result sections")
+        }
+    }
+
+    private static func assertAgentToolArguments() throws {
+        guard let input = CPSLAgentToolFormatting.agentInput(
+            from: #"{"task":"Read the storage code","mode":"explore"}"#
+        ),
+              input.task == "Read the storage code",
+              input.mode == .explore
+        else {
+            throw CheckFailure("agent tool input was not decoded")
+        }
+        guard CPSLAgentToolFormatting.agentInput(from: #"{"task":"x","mode":"invalid"}"#) == nil else {
+            throw CheckFailure("invalid agent mode should not decode")
+        }
+        guard CPSLAgentToolFormatting.agentInput(from: #"{"task":"x","mode":"explore","extra":true}"#) == nil else {
+            throw CheckFailure("agent tool arguments with unknown fields should not decode")
         }
     }
 

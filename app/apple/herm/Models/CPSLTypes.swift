@@ -66,13 +66,15 @@ enum CPSLChatRole: String, Codable, Equatable, Sendable {
     case command
     case output
     case error
+    case toolStatus
+    case hidden
 
     var isTrailingAligned: Bool {
         self == .user
     }
 
     var isFullWidth: Bool {
-        self == .assistant || self == .command
+        self == .assistant || self == .command || self == .toolStatus
     }
 
     var usesMonospaceBody: Bool {
@@ -91,6 +93,10 @@ enum CPSLChatRole: String, Codable, Equatable, Sendable {
         self != .assistant
     }
 
+    var isVisible: Bool {
+        self != .hidden
+    }
+
     var fill: Color {
         switch self {
         case .assistant:
@@ -103,6 +109,10 @@ enum CPSLChatRole: String, Codable, Equatable, Sendable {
             return CPSLTheme.surface
         case .error:
             return CPSLTheme.error
+        case .toolStatus:
+            return CPSLTheme.surface
+        case .hidden:
+            return .clear
         }
     }
 
@@ -111,7 +121,7 @@ enum CPSLChatRole: String, Codable, Equatable, Sendable {
     }
 }
 
-nonisolated struct CPSLChatMessage: Identifiable, Equatable, Sendable {
+nonisolated struct CPSLChatMessage: Identifiable, Equatable, Sendable, Codable {
     let id: UUID
     let role: CPSLChatRole
     let title: String?
