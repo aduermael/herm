@@ -39,13 +39,14 @@ final class CPSLChatModel: ObservableObject {
     private let systemPrompt = """
     You are Herm, an AI agent running inside an iOS/macOS app.
     You support OpenAI-compatible chat completions only. Server-side provider tools, including web search, are not available.
+    CPSL is your execution environment: a Unix-like local environment with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Luau is the interface instead of Bash, and it is the only supported execution language.
     Your client-side tools are local_sandbox_exec and agent. Use tools only when they materially help with the user's request.
     Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Exploring files", "Reading settings", or "Checking results". Do not mention code, sandbox, workdir, paths, tool names, or implementation details in intent.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
-    local_sandbox_exec runs native Luau source in the local sandbox. The current sandbox directory is supplied in each request. Never guess sandbox tool signatures: call help() and each tool's help function, such as fs.help(), before using APIs.
+    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs.
     agent spawns a focused sub-agent with its own turn budget. Use explore mode for research and reading. Use general mode for execution-heavy or implementation-style work. Keep sub-agent tasks narrow and self-contained.
     Luau essentials: declare variables with local, use 1-based indexing, concatenate strings with .., use ~= for not-equal, and use pcall(fn) for recoverable errors.
-    Do not invoke lua, luau, Bash, Python, shell commands, package managers, background services, host Lua APIs, or paths outside the sandbox.
+    Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or paths outside CPSL.
     Do not ask the provider to browse the web, do not imply host shell access, and do not share local files unless the user explicitly requests file content.
     """
 
@@ -432,7 +433,7 @@ final class CPSLChatModel: ObservableObject {
     ) async throws {
         var toolStatusNodeID: String?
         var toolStatus = CPSLToolStatusPayload.running()
-        var toolStatusHasFailure = false
+        var lastToolStatusState: CPSLToolStatusState = .succeeded
 
         for iteration in 0..<config.maxToolRounds {
             let sandboxDirectory = await service.currentDirectory()
@@ -547,9 +548,7 @@ final class CPSLChatModel: ObservableObject {
                     requestDirectory: sandboxDirectory
                 )
                 executedToolCalls.append((toolCall, toolResult))
-                if toolResult.isError {
-                    toolStatusHasFailure = true
-                }
+                lastToolStatusState = toolResult.isError ? .failed : .succeeded
 #if DEBUG
                 toolStatus.invocations.append(toolResult.debugInvocation)
                 toolStatus.summary = statusSummary
@@ -571,7 +570,7 @@ final class CPSLChatModel: ObservableObject {
                 onParentIDChange: onParentIDChange
             )
             toolStatus.summary = statusSummary
-            toolStatus.state = toolStatusHasFailure ? .failed : .succeeded
+            toolStatus.state = lastToolStatusState
             if let toolStatusNodeID {
                 try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: store)
             }
@@ -858,7 +857,7 @@ final class CPSLChatModel: ObservableObject {
         let remainingIterations = max(0, maxIterations - iteration)
         var lines = ["Session: approximately \(estimatedTokens) replay tokens in the current request."]
         lines.append(
-            "Current sandbox directory: \(CPSLAgentToolFormatting.promptPathLiteral(sandboxDirectory))."
+            "Current CPSL directory: \(CPSLAgentToolFormatting.promptPathLiteral(sandboxDirectory))."
         )
         if let contextWindowTokens, contextWindowTokens > 0 {
             let percent = Int((Double(estimatedTokens) * 100 / Double(contextWindowTokens)).rounded())
@@ -1235,7 +1234,7 @@ final class CPSLChatModel: ObservableObject {
                         subAgentSystemPrompt
                             + "\n\n<system-reminder>\n"
                             + "\(turnGuidance)\n"
-                            + "Current sandbox directory: \(CPSLAgentToolFormatting.promptPathLiteral(sandboxDirectory)).\n"
+                            + "Current CPSL directory: \(CPSLAgentToolFormatting.promptPathLiteral(sandboxDirectory)).\n"
                             + "</system-reminder>"
                     )
                 ] + providerMessages
@@ -1323,10 +1322,11 @@ final class CPSLChatModel: ObservableObject {
         maxAgentDepth: Int
     ) -> String {
         """
-        You are a Herm sub-agent running inside the same iOS/macOS sandboxed app.
+        You are a Herm sub-agent running inside the same iOS/macOS app.
         Complete the assigned task, then return a concise result. Do not ask questions.
         Mode: \(mode.rawValue). Turn budget: \(maxTurns). Agent depth: \(agentDepth)/\(maxAgentDepth).
-        You may use local_sandbox_exec for sandboxed Luau work. You have no host shell, package manager, browser, or provider-hosted capabilities.
+        CPSL is your execution environment: a Unix-like local environment with Luau as the command interface instead of Bash. Luau is the only supported execution language.
+        You may use local_sandbox_exec for CPSL work. You have no host shell, package manager, browser, or provider-hosted capabilities.
         """
     }
 

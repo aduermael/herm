@@ -141,7 +141,7 @@ nonisolated struct CPSLOpenAITool: Encodable {
             type: "function",
             function: CPSLOpenAIToolFunction(
                 name: "local_sandbox_exec",
-                description: "Execute native Luau source in the local sandbox. Current sandbox directory for this request: \(directory). Relative paths resolve from that directory. Include intent: a short high-level user-facing action phrase like Exploring files, Reading settings, or Checking results. Intent must not mention code, sandbox, workdir, paths, tool names, or implementation details. Never guess sandbox tool signatures: call help() and each tool's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not invoke lua, luau, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside sandbox workspace paths.",
+                description: "Execute Luau source in CPSL, a Unix-like local environment with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Current CPSL directory for this request: \(directory). Relative paths resolve from that directory. Luau is the command interface instead of Bash and the only supported execution language. Include intent: a short high-level user-facing action phrase like Exploring files, Reading settings, or Checking results. Intent must not mention code, sandbox, workdir, paths, tool names, or implementation details. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside CPSL workspace paths.",
                 parameters: CPSLOpenAIToolParameters(
                     type: "object",
                     properties: [
@@ -151,7 +151,7 @@ nonisolated struct CPSLOpenAITool: Encodable {
                         ),
                         "source": CPSLOpenAIToolParameter(
                             type: "string",
-                            description: "Native Luau source to execute directly in the local sandbox. Relative paths resolve from the current sandbox directory in the tool description."
+                            description: "Luau source to execute directly in CPSL. Relative paths resolve from the current CPSL directory in the tool description."
                         )
                     ],
                     required: ["intent", "source"],
@@ -165,7 +165,7 @@ nonisolated struct CPSLOpenAITool: Encodable {
         type: "function",
         function: CPSLOpenAIToolFunction(
             name: "agent",
-            description: "Spawn a focused sub-agent with its own turn budget. Use mode explore for research and reading. Use mode general for sandbox execution cycles or implementation-style work. Sub-agents return a concise result to this conversation and cannot access host shell tools.",
+            description: "Spawn a focused sub-agent with its own turn budget. Use mode explore for research and reading. Use mode general for CPSL execution cycles or implementation-style work. Sub-agents return a concise result to this conversation and cannot access host shell tools.",
             parameters: CPSLOpenAIToolParameters(
                 type: "object",
                 properties: [

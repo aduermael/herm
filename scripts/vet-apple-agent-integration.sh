@@ -161,11 +161,17 @@ require_match 'name: "local_sandbox_exec"' app/apple/herm/Services/Agent/CPSLOpe
 require_match 'name: "agent"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'availableTools\(allowsSubagents' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'maxCompletionTokens = "max_completion_tokens"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
-require_match 'Never guess sandbox tool signatures' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'CPSL, a Unix-like local environment' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Luau is the command interface instead of Bash' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'only supported execution language' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Never guess CPSL API signatures' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'fs\.help\(\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Declare variables with local' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'external lua/luau interpreters' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Bash, Python, shell commands' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'fs\.help\(\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'CPSL is your execution environment: a Unix-like local environment' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Luau is the interface instead of Bash' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Luau essentials' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSLOpenAIError\.provider' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'CPSLOpenAIError\.invalidToolCall' scripts/vet-apple-openai-protocol.swift
@@ -178,7 +184,7 @@ require_match 'currentVirtualDirectory' app/apple/herm/Services/CPSLDebugService
 require_match 'func currentDirectory\(\) -> String' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'restoreCurrentDirectory' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'shellDoubleQuoted' app/apple/herm/Services/CPSLDebugService.swift
-require_match 'Current sandbox directory' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'requestDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'promptPathLiteral' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
@@ -203,6 +209,9 @@ require_match 'Provider returned an empty response' app/apple/herm/Models/CPSLCh
 require_match 'Reached maximum tool rounds' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'synthesizeAfterToolLimit' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'role: \.toolStatus' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'lastToolStatusState = toolResult\.isError \? \.failed : \.succeeded' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'toolStatus\.state = lastToolStatusState' app/apple/herm/Models/CPSLChatModel.swift
+reject_match 'toolStatusHasFailure' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'role: \.hidden' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'runSubAgent' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'copyConversationJSONToPasteboard' app/apple/herm/Models/CPSLChatModel.swift
