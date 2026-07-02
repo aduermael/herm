@@ -1,6 +1,9 @@
 import Dispatch
 import Foundation
 import CPSL
+#if canImport(Darwin)
+import Darwin
+#endif
 
 actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
@@ -388,6 +391,7 @@ actor CPSLDebugService {
     }
 
     private nonisolated static func createSession(configJSON: String) -> CPSLSessionInitResult {
+        configureCPSLLibraryDirectory()
         let pointer = configJSON.withCString { configPointer in
             cpsl_session_new(configPointer)
         }
@@ -398,6 +402,14 @@ actor CPSLDebugService {
             )
         }
         return CPSLSessionInitResult(pointer: pointer, errorMessage: nil)
+    }
+
+    private nonisolated static func configureCPSLLibraryDirectory() {
+        #if canImport(Darwin)
+        let frameworksURL = Bundle.main.privateFrameworksURL
+            ?? Bundle.main.bundleURL.appendingPathComponent("Frameworks", isDirectory: true)
+        setenv("CPSL_LIBRARY_DIR", frameworksURL.path, 1)
+        #endif
     }
 
     private nonisolated static func performBlockingEvalWithTimeout(

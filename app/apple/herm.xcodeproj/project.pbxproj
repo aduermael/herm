@@ -143,6 +143,7 @@
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
 				85D75D312FE62B6F0095BAB2 /* Resources */,
 				850B3BFC2FE8390E00A21FC8 /* Embed Frameworks */,
+				85A100062FEA000000000006 /* Copy CPSL PDFium */,
 			);
 			buildRules = (
 			);
@@ -247,6 +248,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/../../scripts/generate-apple-env-constants.sh\"\n";
+		};
+		85A100062FEA000000000006 /* Copy CPSL PDFium */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy CPSL PDFium";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libpdfium.dylib",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/../../scripts/copy-cpsl-pdfium-for-xcode.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

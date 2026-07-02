@@ -67,8 +67,8 @@ Before compiling CPSL, Herm applies tracked integration patches from
 CPSL dependency aligned with Herm's app/runtime integration. When a patch is
 already present in the submodule commit, the patch helper skips it.
 
-The default build is the minimum Herm CPSL profile. It compiles `fs`, `json`,
-`csv`, `http`, and `grep`.
+The default host-native build is the minimum Herm CPSL profile. It compiles
+`fs`, `json`, `csv`, `http`, and `grep`.
 
 To compile every CPSL core module into the library:
 
@@ -165,9 +165,33 @@ APPLE_PLATFORMS=ios scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=macos scripts/build-cpsl-apple-xcframework.sh
 ```
 
-The Apple helper currently builds the minimum Herm CPSL profile. The `--all`
-profile is intentionally not enabled until the Apple PDFium/runtime artifact
-path is defined.
+The Apple helper builds the expanded Herm Apple app CPSL profile by default.
+That profile keeps the existing minimum modules and adds the pure Rust
+cross-platform utility/data modules from CPSL's broad feature set, plus `doc`
+with the PDFium backend. HTTP remains present because it was already part of
+the minimum app profile, but the app still controls network access through its
+session policy.
+
+PDFium is staged next to the generated XCFramework:
+
+```text
+.herm-cpsl/artifacts/apple/
+  cpsl.xcframework
+  libs/pdfium/
+    ios-arm64/lib/libpdfium.dylib
+    ios-simulator/lib/libpdfium.dylib
+    macos/lib/libpdfium.dylib
+```
+
+During Xcode builds, the `Copy CPSL PDFium` phase copies the platform-matching
+`libpdfium.dylib` into the app's Frameworks directory. The Swift app sets
+`CPSL_LIBRARY_DIR` to that directory before creating a CPSL session so
+`doc.pdfInfo`, structural `doc.read(..., {mode="structural"})`, and other
+PDFium-backed `doc` functions can find the library at runtime.
+
+Use `--minimum` only when you explicitly want the older small sandbox profile.
+The `--all` profile is intentionally not enabled for Apple app builds; it still
+includes modules outside the app-focused pure-Rust/doc set.
 
 For an iOS-only output under `.herm-cpsl/artifacts/ios/`, use the Apple helper
 with the iOS platform selected:
@@ -189,9 +213,9 @@ runs before compilation. On every build it runs:
 ```
 
 That helper calls `ensure-cpsl-apple-xcframework.sh` to build or reuse
-`.herm-cpsl/artifacts/apple/cpsl.xcframework`, then symlinks the Xcode-linked
-path at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework` to the built
-artifact.
+`.herm-cpsl/artifacts/apple/cpsl.xcframework` and its PDFium sidecar
+libraries, then symlinks the Xcode-linked path at
+`scripts/cpsl-xcframework-placeholder/cpsl.xcframework` to the built artifact.
 
 The phase is marked always-out-of-date so Xcode invokes the script each build,
 but the ensure script itself is cheap when nothing changed: it reuses
@@ -201,8 +225,8 @@ but the ensure script itself is cheap when nothing changed: it reuses
 because files under `scripts/cpsl-patches/`, `scripts/build-cpsl-apple-xcframework.sh`,
 or `scripts/apply-cpsl-patches.sh` changed.
 
-Xcode builds always produce the full iOS+macOS XCFramework, even when the active
-destination only needs one platform.
+Xcode builds always produce the full iOS+macOS XCFramework and PDFium sidecar
+set, even when the active destination only needs one platform.
 
 Xcode validates linked XCFrameworks before any target runs. A tracked bootstrap
 placeholder at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework`

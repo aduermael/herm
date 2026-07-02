@@ -18,7 +18,7 @@ need_cmd() {
 usage() {
 	cat <<EOF
 Usage:
-  build-cpsl-apple-xcframework.sh [--minimum]
+  build-cpsl-apple-xcframework.sh [--apple-app|--minimum]
 
 Builds one CPSL XCFramework for Apple app targets.
 
@@ -27,7 +27,8 @@ matching scripts/build-cpsl-image.sh. The output is one Apple-consumable
 XCFramework containing iOS device, iOS simulator, and macOS slices.
 
 Options:
-  --minimum   Build the default Herm CPSL library profile. This is the default.
+  --apple-app Build the expanded iOS/macOS app profile. This is the default.
+  --minimum   Build the small Herm CPSL library profile.
   -h, --help  Show this help.
 
 Environment:
@@ -40,17 +41,21 @@ Environment:
   MACOSX_DEPLOYMENT_TARGET Minimum macOS version. Defaults to 14.0.
   IOS_SIMULATOR_TARGETS    Rust simulator targets. Defaults to arm64 and x86_64 simulator.
   MACOS_TARGETS            Rust macOS targets. Defaults to arm64 and x86_64 macOS.
+  PDFIUM_VERSION           PDFium build number. Defaults to CPSL's downloader default.
 EOF
 }
 
-profile=minimum
+profile=apple-app
 while [ "$#" -gt 0 ]; do
 	case "$1" in
+	--apple-app)
+		profile=apple-app
+		;;
 	--minimum)
 		profile=minimum
 		;;
 	--all)
-		die "--all is not supported for Apple XCFrameworks yet; the PDFium/runtime artifact path is not defined"
+		die "--all is not supported for Apple XCFrameworks; use --apple-app for the iOS/macOS app sandbox profile"
 		;;
 	-h | --help)
 		usage
@@ -83,6 +88,7 @@ ios_device_target=aarch64-apple-ios
 ios_simulator_targets=${IOS_SIMULATOR_TARGETS:-"aarch64-apple-ios-sim x86_64-apple-ios"}
 macos_targets=${MACOS_TARGETS:-"aarch64-apple-darwin x86_64-apple-darwin"}
 lib_name=libcpsl.dylib
+pdfium_lib_name=libpdfium.dylib
 xcframework_name=cpsl.xcframework
 
 [ -n "$apple_platforms" ] || die "APPLE_PLATFORMS must not be empty"
@@ -183,8 +189,9 @@ ios_device_dir="$slice_dir/ios-arm64"
 ios_simulator_dir="$slice_dir/ios-simulator"
 macos_dir="$slice_dir/macos"
 xcframework_path="$out_dir/$xcframework_name"
+pdfium_dir="$out_dir/libs/pdfium"
 
-rm -rf "$slice_dir" "$xcframework_path"
+rm -rf "$slice_dir" "$xcframework_path" "$pdfium_dir"
 mkdir -p "$include_dir"
 cp "$cpsl_root/ffi/include/cpsl.h" "$include_dir/cpsl.h"
 cat >"$include_dir/module.modulemap" <<EOF
@@ -223,6 +230,11 @@ build_target() {
 	fi
 
 	printf 'Building CPSL FFI (%s) for %s\n' "$profile" "$target"
+	if [ "$profile" = apple-app ]; then
+		cargo_features=herm-apple-app
+	else
+		cargo_features=herm-minimal
+	fi
 	env \
 		"SDKROOT=$sdk_path" \
 		"$deployment_env=$deployment_target" \
@@ -231,12 +243,73 @@ build_target() {
 		"AR_$target_env=$ar" \
 		"CARGO_TARGET_${target_env_upper}_LINKER=$clang" \
 		"RUSTFLAGS=$rustflags" \
-		cargo build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --release --target "$target"
+		cargo build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --release --no-default-features --features "$cargo_features" --target "$target"
 
 	target_lib="$target_dir/$target/release/$lib_name"
 	[ -f "$target_lib" ] || die "expected CPSL library not found: $target_lib"
 	mkdir -p "$output_dir"
 	cp "$target_lib" "$output_dir/$lib_name"
+}
+
+install_pdfium_target() {
+	pdfium_target=$1
+	output=$2
+
+	[ -f "$cpsl_root/core/scripts/download-pdfium.sh" ] || die "missing CPSL PDFium downloader at $cpsl_root/core/scripts/download-pdfium.sh"
+	if [ -n "${PDFIUM_VERSION:-}" ]; then
+		"$cpsl_root/core/scripts/download-pdfium.sh" --version "$PDFIUM_VERSION" --target "$pdfium_target" --output "$output"
+	else
+		"$cpsl_root/core/scripts/download-pdfium.sh" --target "$pdfium_target" --output "$output"
+	fi
+	[ -f "$output/lib/$pdfium_lib_name" ] || die "expected PDFium library not found: $output/lib/$pdfium_lib_name"
+}
+
+copy_pdfium_library() {
+	source_lib=$1
+	output_lib=$2
+
+	mkdir -p "$(dirname "$output_lib")"
+	cp "$source_lib" "$output_lib"
+}
+
+combine_pdfium_libraries() {
+	output_lib=$1
+	shift
+
+	[ "$#" -gt 0 ] || die "no PDFium libraries to combine for $output_lib"
+	mkdir -p "$(dirname "$output_lib")"
+	if [ "$#" -eq 1 ]; then
+		cp "$1" "$output_lib"
+	else
+		lipo -create "$@" -output "$output_lib"
+	fi
+}
+
+install_apple_pdfium_artifacts() {
+	pdfium_work_dir="$work_dir/pdfium"
+	rm -rf "$pdfium_work_dir" "$pdfium_dir"
+	mkdir -p "$pdfium_work_dir" "$pdfium_dir"
+
+	if [ "$include_ios" -eq 1 ]; then
+		install_pdfium_target ios-device-arm64 "$pdfium_work_dir/ios-device-arm64"
+		copy_pdfium_library \
+			"$pdfium_work_dir/ios-device-arm64/lib/$pdfium_lib_name" \
+			"$pdfium_dir/ios-arm64/lib/$pdfium_lib_name"
+
+		install_pdfium_target ios-simulator-arm64 "$pdfium_work_dir/ios-simulator-arm64"
+		install_pdfium_target ios-simulator-x64 "$pdfium_work_dir/ios-simulator-x64"
+		combine_pdfium_libraries \
+			"$pdfium_dir/ios-simulator/lib/$pdfium_lib_name" \
+			"$pdfium_work_dir/ios-simulator-arm64/lib/$pdfium_lib_name" \
+			"$pdfium_work_dir/ios-simulator-x64/lib/$pdfium_lib_name"
+	fi
+
+	if [ "$include_macos" -eq 1 ]; then
+		install_pdfium_target mac-univ "$pdfium_work_dir/mac-univ"
+		copy_pdfium_library \
+			"$pdfium_work_dir/mac-univ/lib/$pdfium_lib_name" \
+			"$pdfium_dir/macos/lib/$pdfium_lib_name"
+	fi
 }
 
 combine_libraries() {
@@ -277,6 +350,10 @@ if [ "$include_macos" -eq 1 ]; then
 	build_universal_library "$macos_dir/$lib_name" macosx MACOSX_DEPLOYMENT_TARGET "$macos_deployment_target" $macos_targets
 fi
 
+if [ "$profile" = apple-app ]; then
+	install_apple_pdfium_artifacts
+fi
+
 set -- -create-xcframework
 if [ "$include_ios" -eq 1 ]; then
 	set -- "$@" \
@@ -299,4 +376,7 @@ fi
 printf '\nBuilt CPSL Apple XCFramework (%s)\n' "$profile"
 printf '  image: %s\n' "$display_out"
 printf '  xcframework: %s/%s\n' "$display_out" "$xcframework_name"
+if [ "$profile" = apple-app ]; then
+	printf '  pdfium: %s/libs/pdfium\n' "$display_out"
+fi
 printf '  header: %s/include/cpsl.h\n' "$display_out"
