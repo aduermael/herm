@@ -23,6 +23,8 @@
 /* Begin PBXBuildFile section */
 		850B3BFA2FE8390E00A21FC8 /* cpsl.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */; };
 		850B3BFB2FE8390E00A21FC8 /* cpsl.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		85A100012FEA000000000001 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 85A100002FEA000000000001 /* libsqlite3.tbd */; };
+		85A100052FEA000000000005 /* herm/Generated/CPSLEnvConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,12 +53,31 @@
 
 /* Begin PBXFileReference section */
 		850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = cpsl.xcframework; path = "../../scripts/cpsl-xcframework-placeholder/cpsl.xcframework"; sourceTree = "<group>"; };
+		85A100002FEA000000000001 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
+		85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = herm/Generated/CPSLEnvConstants.swift; sourceTree = SOURCE_ROOT; };
 		85D75D332FE62B6F0095BAB2 /* herm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = herm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		85A100022FEA000000000002 /* Exceptions for "herm" folder in "herm" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				.env,
+				.env.local,
+				Generated/CPSLEnvConstants.swift,
+				Resources/.env,
+				Resources/.env.local,
+			);
+			target = 85D75D322FE62B6F0095BAB2 /* herm */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		85D75D352FE62B6F0095BAB2 /* herm */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				85A100022FEA000000000002 /* Exceptions for "herm" folder in "herm" target */,
+			);
 			path = herm;
 			sourceTree = "<group>";
 		};
@@ -68,16 +89,26 @@
 			buildActionMask = 2147483647;
 			files = (
 				850B3BFA2FE8390E00A21FC8 /* cpsl.xcframework in Frameworks */,
+				85A100012FEA000000000001 /* libsqlite3.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		10B2D4362FF5768800E04BA4 /* Generated Sources */ = {
+			isa = PBXGroup;
+			children = (
+				85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */,
+			);
+			name = "Generated Sources";
+			sourceTree = "<group>";
+		};
 		850B3BF82FE8390E00A21FC8 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
 				850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */,
+				85A100002FEA000000000001 /* libsqlite3.tbd */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -88,6 +119,7 @@
 				85D75D352FE62B6F0095BAB2 /* herm */,
 				850B3BF82FE8390E00A21FC8 /* Frameworks */,
 				85D75D342FE62B6F0095BAB2 /* Products */,
+				10B2D4362FF5768800E04BA4 /* Generated Sources */,
 			);
 			sourceTree = "<group>";
 		};
@@ -106,10 +138,12 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 85D75D3E2FE62B6F0095BAB2 /* Build configuration list for PBXNativeTarget "herm" */;
 			buildPhases = (
+				85A100032FEA000000000003 /* Generate Env Constants */,
 				85D75D2F2FE62B6F0095BAB2 /* Sources */,
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
 				85D75D312FE62B6F0095BAB2 /* Resources */,
 				850B3BFC2FE8390E00A21FC8 /* Embed Frameworks */,
+				85A100062FEA000000000006 /* Copy CPSL PDFium */,
 			);
 			buildRules = (
 			);
@@ -195,6 +229,46 @@
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh\"\n";
 		};
+		85A100032FEA000000000003 /* Generate Env Constants */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Generate Env Constants";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/herm/Generated/CPSLEnvConstants.swift",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/../../scripts/generate-apple-env-constants.sh\"\n";
+		};
+		85A100062FEA000000000006 /* Copy CPSL PDFium */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy CPSL PDFium";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libpdfium.dylib",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/../../scripts/copy-cpsl-pdfium-for-xcode.sh\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -202,6 +276,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				85A100052FEA000000000005 /* herm/Generated/CPSLEnvConstants.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -357,6 +432,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = herm/herm.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "herm/herm-macOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
@@ -405,6 +482,8 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = herm/herm.entitlements;
+				"CODE_SIGN_ENTITLEMENTS[sdk=macosx*]" = "herm/herm-macOS.entitlements";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;

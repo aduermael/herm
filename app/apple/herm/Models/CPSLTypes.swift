@@ -57,26 +57,38 @@ nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
 
 struct CPSLSandboxURLs {
     let root: URL
-    let workdir: URL
 }
 
-enum CPSLChatRole: String, Decodable {
+nonisolated enum CPSLVirtualPath {
+    static let root = "/"
+    static let home = "/home/herm"
+    static let temporary = "/tmp"
+    static let initialDirectory = home
+}
+
+nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     case assistant
     case user
     case command
     case output
     case error
+    case toolStatus
+    case hidden
 
     var isTrailingAligned: Bool {
         self == .user
     }
 
     var isFullWidth: Bool {
-        self == .assistant || self == .command
+        self == .assistant || self == .command || self == .toolStatus
     }
 
     var usesMonospaceBody: Bool {
         self == .command || self == .output || self == .error
+    }
+
+    var rendersMarkdownBody: Bool {
+        self == .assistant || self == .user
     }
 
     var isFramed: Bool {
@@ -87,6 +99,11 @@ enum CPSLChatRole: String, Decodable {
         self != .assistant
     }
 
+    var isVisible: Bool {
+        self != .hidden
+    }
+
+    @MainActor
     var fill: Color {
         switch self {
         case .assistant:
@@ -99,21 +116,27 @@ enum CPSLChatRole: String, Decodable {
             return CPSLTheme.surface
         case .error:
             return CPSLTheme.error
+        case .toolStatus:
+            return CPSLTheme.surface
+        case .hidden:
+            return .clear
         }
     }
 
+    @MainActor
     var foreground: Color {
         CPSLTheme.text
     }
 }
 
-struct CPSLChatMessage: Identifiable {
-    let id = UUID()
+nonisolated struct CPSLChatMessage: Identifiable, Equatable, Sendable, Codable {
+    let id: UUID
     let role: CPSLChatRole
     let title: String?
     var body: String
 
-    init(role: CPSLChatRole, title: String?, body: String) {
+    nonisolated init(id: UUID = UUID(), role: CPSLChatRole, title: String?, body: String) {
+        self.id = id
         self.role = role
         self.title = title
         self.body = body
@@ -130,5 +153,23 @@ struct CPSLFileEntry: Identifiable, Equatable, Sendable {
 
 struct CPSLDirectoryListing: Sendable {
     let entries: [CPSLFileEntry]
+    let error: String?
+}
+
+enum CPSLFilePreviewKind: Equatable, Sendable {
+    case text(String)
+    case pdf(URL)
+}
+
+struct CPSLFilePreview: Identifiable, Equatable, Sendable {
+    var id: String { path }
+
+    let name: String
+    let path: String
+    let kind: CPSLFilePreviewKind
+}
+
+struct CPSLFilePreviewLoadResult: Sendable {
+    let preview: CPSLFilePreview?
     let error: String?
 }

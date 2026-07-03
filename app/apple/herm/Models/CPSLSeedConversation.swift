@@ -3,8 +3,8 @@ import Foundation
 enum CPSLSeedConversation {
     static func load(from bundle: Bundle = .main) -> [CPSLChatMessage] {
         guard let url = seedURL(in: bundle),
-              let data = try? Data(contentsOf: url),
-              let conversation = try? JSONDecoder().decode(Conversation.self, from: data)
+                let data = try? Data(contentsOf: url),
+                let conversation = try? JSONDecoder().decode(Conversation.self, from: data)
         else {
             return []
         }

@@ -1,63 +1,65 @@
 import SwiftUI
 
+private enum CPSLDrawerMotion {
+    static let duration = 0.2
+    static let animation = Animation.easeOut(duration: duration)
+}
+
+private enum CPSLOverlayMotion {
+    static let duration = 0.2
+    static let animation = Animation.easeOut(duration: duration)
+}
+
 struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
+    @State private var drawerProgress: CGFloat = 0
 
     private var contentBottomInset: CGFloat {
         CPSLTheme.medium
     }
 
     var body: some View {
-        ZStack {
-            CPSLTheme.background.ignoresSafeArea()
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                CPSLTheme.background.ignoresSafeArea()
 
-            Group {
-                if model.isFileBrowserOpen {
-                    CPSLFileBrowserView(
-                        model: model,
-                        topInset: CPSLTheme.topChromeInset,
-                        bottomInset: contentBottomInset
-                    )
-                } else {
-                    CPSLChatTimelineView(
-                        model: model,
-                        topInset: CPSLTheme.topChromeInset,
-                        bottomInset: contentBottomInset
-                    )
+                CPSLConversationDrawerView(
+                    model: model,
+                    topInset: drawerTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
+                    bottomInset: CPSLTheme.medium
+                )
+                .ignoresSafeArea(.container, edges: .vertical)
+                .allowsHitTesting(model.isDrawerOpen)
+                .offset(x: drawerOffset(width: proxy.size.width))
+
+                CPSLMainContentStage(
+                    model: model,
+                    promptDismissRequest: $promptDismissRequest,
+                    contentTopInset: contentTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
+                    contentBottomInset: contentBottomInset
+                )
+                .offset(x: mainContentOffset(width: proxy.size.width))
+                .allowsHitTesting(!model.isDrawerOpen)
+                .zIndex(1)
+
+                CPSLDrawerToggleButton(isOpen: model.isDrawerOpen) {
+                    model.toggleDrawer()
+                }
+                .padding(.leading, CPSLTheme.medium)
+                .padding(.top, CPSLTheme.medium)
+                .offset(x: drawerToggleOffset(width: proxy.size.width))
+                .zIndex(2)
+
+            }
+            .onAppear {
+                drawerProgress = drawerTargetProgress
+            }
+            .onChange(of: model.isDrawerOpen) { _, _ in
+                withAnimation(CPSLDrawerMotion.animation) {
+                    drawerProgress = drawerTargetProgress
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea(.container, edges: .top)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                promptDismissRequest += 1
-            }
-
-            CPSLScrollEdgeGlass(edge: .top, height: CPSLTheme.topBlendHeight)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .ignoresSafeArea(.container, edges: .top)
-                .allowsHitTesting(false)
-
-            CPSLScrollEdgeGlass(edge: .bottom, height: CPSLTheme.bottomBlendHeight)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .ignoresSafeArea(.keyboard, edges: .bottom)
-                .ignoresSafeArea(.container, edges: .bottom)
-                .allowsHitTesting(false)
-
-            VStack(spacing: 0) {
-                CPSLHeaderView(model: model)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        promptDismissRequest += 1
-                    }
-
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            bottomChrome
         }
         .alert(
             "Coming soon",
@@ -76,7 +78,134 @@ struct CPSLChatScreen: View {
         }
     }
 
-    private var bottomChrome: some View {
+    private func drawerOffset(width: CGFloat) -> CGFloat {
+        -CPSLConversationDrawerLayout.width(in: width) * (1 - drawerProgress)
+    }
+
+    private func mainContentOffset(width: CGFloat) -> CGFloat {
+        width * drawerProgress
+    }
+
+    private func drawerToggleOffset(width: CGFloat) -> CGFloat {
+        max(0, width - CPSLTheme.controlSize - CPSLTheme.medium * 2) * drawerProgress
+    }
+
+    private var drawerTargetProgress: CGFloat {
+        model.isDrawerOpen ? 1 : 0
+    }
+
+    private func drawerTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
+        topSafeAreaInset + CPSLTheme.medium
+    }
+
+    private func contentTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
+        topSafeAreaInset + CPSLTheme.topChromeInset
+    }
+}
+
+private struct CPSLMainContentStage: View {
+    @ObservedObject var model: CPSLChatModel
+    @Binding var promptDismissRequest: Int
+    let contentTopInset: CGFloat
+    let contentBottomInset: CGFloat
+
+    var body: some View {
+        ZStack {
+            CPSLPrimaryContentView(
+                model: model,
+                promptDismissRequest: $promptDismissRequest,
+                contentTopInset: contentTopInset,
+                contentBottomInset: contentBottomInset
+            )
+
+            // TOP & BOTTOM GRADIENTS FOR NICE CONTENT FADE OUT
+            CPSLScrollEdgeGlass(edge: .top, height: CPSLTheme.topBlendHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .ignoresSafeArea(.container, edges: .top)
+                .allowsHitTesting(false)
+
+            CPSLScrollEdgeGlass(edge: .bottom, height: CPSLTheme.bottomBlendHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .ignoresSafeArea(.container, edges: .bottom)
+                .allowsHitTesting(false)
+
+            // TOP RIGHT ACTION BUTTONS
+            CPSLHeaderActionsView(model: model)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    promptDismissRequest += 1
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .zIndex(3)
+
+            if model.isFileBrowserOpen {
+                CPSLFileBrowserOverlay(
+                    model: model,
+                    topInset: CPSLTheme.topChromeInset,
+                    bottomInset: contentBottomInset
+                )
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .zIndex(4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(CPSLTheme.background.ignoresSafeArea())
+        .animation(CPSLOverlayMotion.animation, value: model.isFileBrowserOpen)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // PROMPTING AREA + BUTTONS ON TOP
+            CPSLBottomChromeView(
+                model: model,
+                promptDismissRequest: $promptDismissRequest
+            )
+        }
+    }
+}
+
+private struct CPSLPrimaryContentView: View {
+    @ObservedObject var model: CPSLChatModel
+    @Binding var promptDismissRequest: Int
+    let contentTopInset: CGFloat
+    let contentBottomInset: CGFloat
+
+    var body: some View {
+        CPSLChatTimelineView(
+            model: model,
+            topInset: contentTopInset,
+            bottomInset: contentBottomInset
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .top)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            promptDismissRequest += 1
+        }
+    }
+}
+
+private struct CPSLFileBrowserOverlay: View {
+    @ObservedObject var model: CPSLChatModel
+    let topInset: CGFloat
+    let bottomInset: CGFloat
+
+    var body: some View {
+        CPSLFileOverlayStage(
+            metrics: CPSLFileOverlayStageMetrics(
+                topInset: topInset,
+                bottomInset: bottomInset,
+                dimOpacity: 0.001
+            )
+        ) {
+            CPSLFileBrowserView(model: model)
+        }
+    }
+}
+
+private struct CPSLBottomChromeView: View {
+    @ObservedObject var model: CPSLChatModel
+    @Binding var promptDismissRequest: Int
+
+    var body: some View {
         VStack(spacing: 0) {
             CPSLToolStripView(model: model)
                 .contentShape(Rectangle())
@@ -91,21 +220,24 @@ struct CPSLChatScreen: View {
                 promptDismissRequest += 1
             }
         }
+        .frame(maxWidth: .infinity)
     }
 }
 
-private struct CPSLHeaderView: View {
+private struct CPSLHeaderActionsView: View {
     @ObservedObject var model: CPSLChatModel
 
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
-            CPSLHeaderIconButton(systemName: "line.3.horizontal", accessibilityLabel: "Menu") {
-                model.showComingSoon("coming soon")
-            }
-
             Spacer()
 
-            CPSLHeaderIconButton(systemName: "square.and.pencil", accessibilityLabel: "New conversation") {
+#if DEBUG
+            CPSLChromeIconButton(systemName: "doc.on.doc", accessibilityLabel: "Copy conversation JSON") {
+                model.copyConversationJSONToPasteboard()
+            }
+#endif
+
+            CPSLChromeIconButton(systemName: "square.and.pencil", accessibilityLabel: "New conversation") {
                 model.startNewConversation()
             }
             .disabled(model.isRunning)
@@ -117,7 +249,67 @@ private struct CPSLHeaderView: View {
     }
 }
 
-private struct CPSLHeaderIconButton: View {
+private struct CPSLDrawerToggleButton: View {
+    let isOpen: Bool
+    let action: () -> Void
+    @State private var displayedSystemName = "line.3.horizontal"
+    @State private var iconOpacity = 1.0
+
+    private var targetSystemName: String {
+        isOpen ? "chevron.left" : "line.3.horizontal"
+    }
+
+    private var accessibilityLabel: String {
+        isOpen ? "Back to chat" : "Menu"
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: displayedSystemName)
+                .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
+                .opacity(iconOpacity)
+                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .cpslGlassBackground(
+                    in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                    tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34),
+                    strokeOpacity: 0.045
+                )
+                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.text)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
+        .onAppear {
+            displayedSystemName = targetSystemName
+            iconOpacity = 1
+        }
+        .task(id: targetSystemName) {
+            await transitionIconIfNeeded(to: targetSystemName)
+        }
+    }
+
+    @MainActor
+    private func transitionIconIfNeeded(to systemName: String) async {
+        guard displayedSystemName != systemName else {
+            return
+        }
+
+        withAnimation(.easeOut(duration: CPSLDrawerMotion.duration * 0.32)) {
+            iconOpacity = 0
+        }
+        try? await Task.sleep(nanoseconds: UInt64(CPSLDrawerMotion.duration * 500_000_000))
+        guard !Task.isCancelled else {
+            return
+        }
+        displayedSystemName = systemName
+        withAnimation(.easeIn(duration: CPSLDrawerMotion.duration * 0.32)) {
+            iconOpacity = 1
+        }
+    }
+}
+
+private struct CPSLChromeIconButton: View {
     let systemName: String
     let accessibilityLabel: String
     let action: () -> Void

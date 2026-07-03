@@ -76,15 +76,50 @@ cpsl_ensure_release_lock() {
 	rm -f "$lock_file"
 }
 
+cpsl_ensure_rebuild_reason() {
+	xcframework_info=$1
+
+	[ "${HERM_CPSL_REBUILD:-0}" = 1 ] && {
+		printf '%s\n' "HERM_CPSL_REBUILD=1"
+		return 0
+	}
+	[ -d "$xcframework_path" ] || {
+		printf '%s\n' "missing $xcframework_path"
+		return 0
+	}
+	[ -f "$xcframework_info" ] || {
+		printf '%s\n' "missing $xcframework_info"
+		return 0
+	}
+	cpsl_xcframework_is_placeholder "$xcframework_path" && {
+		printf '%s\n' "$xcframework_path is still the bootstrap placeholder"
+		return 0
+	}
+	cpsl_xcframework_is_full "$xcframework_info" || {
+		printf '%s\n' "$xcframework_path is incomplete"
+		return 0
+	}
+	cpsl_ensure_pdfium_is_full || {
+		printf '%s\n' "$pdfium_path is incomplete"
+		return 0
+	}
+	cpsl_xcframework_inputs_newer_than "$xcframework_info" "$herm_root" && {
+		printf '%s\n' "CPSL build inputs changed"
+		return 0
+	}
+	return 1
+}
+
 cpsl_ensure_should_reuse() {
 	xcframework_info=$1
 
-	[ "${HERM_CPSL_REBUILD:-0}" = 1 ] && return 1
-	[ -d "$xcframework_path" ] || return 1
-	[ -f "$xcframework_info" ] || return 1
-	cpsl_xcframework_is_placeholder "$xcframework_path" && return 1
-	cpsl_xcframework_is_full "$xcframework_info" || return 1
-	cpsl_xcframework_inputs_newer_than "$xcframework_info" "$herm_root" && return 1
+	! cpsl_ensure_rebuild_reason "$xcframework_info" >/dev/null
+}
+
+cpsl_ensure_pdfium_is_full() {
+	for slice in ios-arm64 ios-simulator macos; do
+		[ -f "$pdfium_path/$slice/lib/libpdfium.dylib" ] || return 1
+	done
 	return 0
 }
 
@@ -118,12 +153,15 @@ fi
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 out_dir=${OUT_DIR:-"$work_dir/artifacts/apple"}
 xcframework_path="$out_dir/cpsl.xcframework"
+pdfium_path="$out_dir/libs/pdfium"
 xcframework_info=$(cpsl_xcframework_info_plist "$xcframework_path")
 
 if [ "$skip_mode" -eq 1 ]; then
 	[ -d "$xcframework_path" ] || die "missing $xcframework_path; rerun without --skip"
 	cpsl_xcframework_is_full "$xcframework_info" || \
 		die "$xcframework_path is incomplete; rerun without --skip"
+	cpsl_ensure_pdfium_is_full || \
+		die "$pdfium_path is incomplete; rerun without --skip"
 	printf 'Using existing CPSL XCFramework: %s\n' "$xcframework_path"
 	exit 0
 fi
@@ -132,6 +170,7 @@ if cpsl_ensure_should_reuse "$xcframework_info"; then
 	printf 'Using existing CPSL XCFramework: %s\n' "$xcframework_path"
 	exit 0
 fi
+rebuild_reason=$(cpsl_ensure_rebuild_reason "$xcframework_info" || printf '%s\n' "unknown reason")
 
 lock_file="$work_dir/.cpsl-xcframework-build.lock"
 lock_timeout=7200
@@ -143,6 +182,7 @@ if cpsl_ensure_should_reuse "$xcframework_info"; then
 	printf 'Using existing CPSL XCFramework: %s\n' "$xcframework_path"
 	exit 0
 fi
+rebuild_reason=$(cpsl_ensure_rebuild_reason "$xcframework_info" || printf '%s\n' "$rebuild_reason")
 
-printf 'Building CPSL Apple XCFramework for: ios macos\n'
+printf 'Building CPSL Apple XCFramework for: ios macos (%s)\n' "$rebuild_reason"
 APPLE_PLATFORMS="ios macos" "$herm_root/scripts/build-cpsl-apple-xcframework.sh"

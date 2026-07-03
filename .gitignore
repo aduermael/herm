@@ -19,8 +19,14 @@ tools/edit-file/edit-file
 .herm-cpsl/artifacts/
 .herm-cpsl/cargo-target/
 .herm-cpsl/.cpsl-xcframework-build.lock
+.herm-cpsl/pdfium/
 .herm-apple/
 .agents/
+
+# Local provider credentials
+.env
+.env.local
+app/apple/herm/Generated/CPSLEnvConstants.swift
 
 # OS
 .DS_Store

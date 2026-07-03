@@ -41,6 +41,7 @@ struct CPSLToolStripView: View {
             }
             .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
         }
+        .frame(height: CPSLTheme.controlSize)
         .padding(.bottom, CPSLTheme.medium)
     }
 }

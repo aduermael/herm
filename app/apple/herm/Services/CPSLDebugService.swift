@@ -1,14 +1,19 @@
 import Dispatch
 import Foundation
 import CPSL
+#if canImport(Darwin)
+import Darwin
+#endif
 
 actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
+    private nonisolated static let textPreviewByteLimit = 1_000_000
 
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
     private var evaluatingSessionID: Int?
     private var sandboxURLs: CPSLSandboxURLs?
+    private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
 
     deinit {
         if let session {
@@ -49,7 +54,87 @@ actor CPSLDebugService {
         }
     }
 
+    func previewFile(_ entry: CPSLFileEntry) -> CPSLFilePreviewLoadResult {
+        guard !entry.isDirectory else {
+            return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
+        }
+
+        do {
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            let hostURL = hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
+            let values = try hostURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            guard Self.isHostURL(hostURL, inside: sandboxURLs.root) else {
+                return CPSLFilePreviewLoadResult(
+                    preview: nil,
+                    error: "File preview is only available inside the CPSL filesystem."
+                )
+            }
+            guard values.isDirectory != true else {
+                return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
+            }
+
+            switch hostURL.pathExtension.lowercased() {
+            case "pdf":
+                return CPSLFilePreviewLoadResult(
+                    preview: CPSLFilePreview(name: entry.name, path: entry.path, kind: .pdf(hostURL)),
+                    error: nil
+                )
+            case "txt":
+                guard (values.fileSize ?? 0) <= Self.textPreviewByteLimit else {
+                    return CPSLFilePreviewLoadResult(
+                        preview: nil,
+                        error: "Text preview is limited to 1 MB."
+                    )
+                }
+                let data = try Data(contentsOf: hostURL)
+                guard let text = String(data: data, encoding: .utf8) else {
+                    return CPSLFilePreviewLoadResult(
+                        preview: nil,
+                        error: "Only UTF-8 text files can be previewed."
+                    )
+                }
+                return CPSLFilePreviewLoadResult(
+                    preview: CPSLFilePreview(name: entry.name, path: entry.path, kind: .text(text)),
+                    error: nil
+                )
+            default:
+                return CPSLFilePreviewLoadResult(
+                    preview: nil,
+                    error: "Preview is available for TXT and PDF files for now."
+                )
+            }
+        } catch {
+            return CPSLFilePreviewLoadResult(preview: nil, error: error.localizedDescription)
+        }
+    }
+
     func evaluate(_ command: String) async -> CPSLEvalServiceResult {
+        await evaluate(command, language: "bash")
+    }
+
+    func evaluateLuau(_ source: String) async -> CPSLEvalServiceResult {
+        await evaluate(source, language: "luau")
+    }
+
+    func currentDirectory() -> String {
+        currentVirtualDirectory
+    }
+
+    func restoreCurrentDirectory(_ directory: String) async -> String? {
+        let targetDirectory = Self.normalizedVirtualPath(directory, trimsOuterWhitespace: false)
+        guard currentVirtualDirectory != targetDirectory else {
+            return nil
+        }
+
+        let result = await evaluate("cd \(Self.shellDoubleQuoted(targetDirectory))", language: "bash")
+        guard result.ok == true else {
+            return result.errorMessage ?? result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
         let sandboxURLs: CPSLSandboxURLs
         do {
             sandboxURLs = try ensureSandboxURLs()
@@ -62,7 +147,7 @@ actor CPSLDebugService {
             return Self.ffiFailure("Session init: \(sessionError)")
         }
 
-        guard let requestJSON = makeEvalRequestJSON(command: command) else {
+        guard let requestJSON = makeEvalRequestJSON(input: input, language: language) else {
             return Self.ffiFailure("Could not encode eval request JSON")
         }
 
@@ -85,11 +170,15 @@ actor CPSLDebugService {
             if evaluatingSessionID == activeSession.id {
                 evaluatingSessionID = nil
             }
+            if let cwd = result.cwd, !cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                currentVirtualDirectory = Self.normalizedVirtualPath(cwd, trimsOuterWhitespace: false)
+            }
             return result
         case .timedOut:
             if session?.id == activeSession.id {
                 // cpsl_eval may still be blocked; abandon and intentionally leak this session.
                 session = nil
+                currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
             if evaluatingSessionID == activeSession.id {
                 evaluatingSessionID = nil
@@ -100,17 +189,16 @@ actor CPSLDebugService {
 
     private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) -> URL {
         let normalized = Self.normalizedVirtualPath(virtualPath)
-        if normalized == "/workdir" || normalized.hasPrefix("/workdir/") {
-            return Self.appendingVirtualPath(
-                normalized.dropFirst("/workdir".count),
-                to: sandboxURLs.workdir
-            )
-        }
         return Self.appendingVirtualPath(normalized.dropFirst(), to: sandboxURLs.root)
     }
 
-    private nonisolated static func normalizedVirtualPath(_ path: String) -> String {
-        var normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    private nonisolated static func normalizedVirtualPath(
+        _ path: String,
+        trimsOuterWhitespace: Bool = true
+    ) -> String {
+        var normalized = trimsOuterWhitespace
+            ? path.trimmingCharacters(in: .whitespacesAndNewlines)
+            : path
         if normalized.isEmpty {
             normalized = "/"
         }
@@ -132,12 +220,37 @@ actor CPSLDebugService {
         return components.isEmpty ? "/" : "/\(components.joined(separator: "/"))"
     }
 
+    private nonisolated static func shellDoubleQuoted(_ value: String) -> String {
+        var escaped = ""
+        for character in value {
+            switch character {
+            case "\\":
+                escaped += "\\\\"
+            case "\"":
+                escaped += "\\\""
+            case "$":
+                escaped += "\\$"
+            case "`":
+                escaped += "\\`"
+            default:
+                escaped.append(character)
+            }
+        }
+        return "\"\(escaped)\""
+    }
+
     private nonisolated static func appendingVirtualPath<T: StringProtocol>(_ relativePath: T, to baseURL: URL) -> URL {
         var url = baseURL
         for component in relativePath.split(separator: "/") where !component.isEmpty {
             url.appendPathComponent(String(component))
         }
         return url
+    }
+
+    private nonisolated static func isHostURL(_ url: URL, inside rootURL: URL) -> Bool {
+        let rootPath = rootURL.resolvingSymlinksInPath().standardizedFileURL.path
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        return path == rootPath || path.hasPrefix("\(rootPath)/")
     }
 
     private nonisolated static func virtualChildPath(parent: String, child: String) -> String {
@@ -149,8 +262,7 @@ actor CPSLDebugService {
             return nil
         }
         guard let configJSON = makeSessionConfigJSON(
-            rootPath: sandboxURLs.root.resolvingSymlinksInPath().path,
-            workdirPath: sandboxURLs.workdir.resolvingSymlinksInPath().path
+            rootPath: sandboxURLs.root.resolvingSymlinksInPath().path
         ) else {
             return "Could not encode session config JSON"
         }
@@ -166,6 +278,7 @@ actor CPSLDebugService {
 
         nextSessionID += 1
         session = CPSLSessionHandle(id: nextSessionID, pointer: newSession)
+        currentVirtualDirectory = CPSLVirtualPath.initialDirectory
         return nil
     }
 
@@ -185,8 +298,7 @@ actor CPSLDebugService {
         let appURL = supportURL.appendingPathComponent(bundleID, isDirectory: true)
         let sandboxURL = appURL.appendingPathComponent("CPSLDebugSandbox", isDirectory: true)
         let rootURL = sandboxURL.appendingPathComponent("root", isDirectory: true)
-        let workdirURL = sandboxURL.appendingPathComponent("workdir", isDirectory: true)
-        let sandboxURLs = CPSLSandboxURLs(root: rootURL, workdir: workdirURL)
+        let sandboxURLs = CPSLSandboxURLs(root: rootURL)
 
         try ensureSandboxScaffold(sandboxURLs)
         return sandboxURLs
@@ -199,18 +311,17 @@ actor CPSLDebugService {
             "bin",
             "etc",
             "home",
+            "home/herm",
             "root",
             "tmp",
             "usr",
-            "var",
-            "workdir"
+            "var"
         ]
 
         for name in directoryNames {
             let url = name.isEmpty ? sandboxURLs.root : sandboxURLs.root.appendingPathComponent(name, isDirectory: true)
             try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
         }
-        try fileManager.createDirectory(at: sandboxURLs.workdir, withIntermediateDirectories: true)
 
         try writeFileIfMissing(
             sandboxURLs.root.appendingPathComponent("etc/hosts", isDirectory: false),
@@ -218,7 +329,7 @@ actor CPSLDebugService {
         )
         try writeFileIfMissing(
             sandboxURLs.root.appendingPathComponent("etc/passwd", isDirectory: false),
-            contents: "root:x:0:0:root:/root:/bin/sh\n"
+            contents: "root:x:0:0:root:/root:/bin/sh\nherm:x:501:20:Herm:/home/herm:/bin/sh\n"
         )
     }
 
@@ -229,22 +340,17 @@ actor CPSLDebugService {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func makeSessionConfigJSON(rootPath: String, workdirPath: String) -> String? {
+    private func makeSessionConfigJSON(rootPath: String) -> String? {
         let config: [String: Any] = [
             "mounts": [
                 [
                     "host": rootPath,
                     "virtual": "/",
                     "mode": "rw"
-                ],
-                [
-                    "host": workdirPath,
-                    "virtual": "/workdir",
-                    "mode": "rw"
                 ]
             ],
-            "initial_cwd": "/workdir",
-            "language": "bash",
+            "initial_cwd": CPSLVirtualPath.initialDirectory,
+            "language": "luau",
             "http": [
                 "mode": "policy",
                 "allow_domains": [] as [String],
@@ -254,10 +360,10 @@ actor CPSLDebugService {
         return jsonString(config)
     }
 
-    private func makeEvalRequestJSON(command: String) -> String? {
+    private func makeEvalRequestJSON(input: String, language: String) -> String? {
         let request: [String: Any] = [
-            "language": "bash",
-            "input": command,
+            "language": language,
+            "input": input,
             "timeout_ms": Int(Self.evalTimeoutMilliseconds)
         ]
         return jsonString(request)
@@ -285,6 +391,7 @@ actor CPSLDebugService {
     }
 
     private nonisolated static func createSession(configJSON: String) -> CPSLSessionInitResult {
+        configureCPSLLibraryDirectory()
         let pointer = configJSON.withCString { configPointer in
             cpsl_session_new(configPointer)
         }
@@ -295,6 +402,14 @@ actor CPSLDebugService {
             )
         }
         return CPSLSessionInitResult(pointer: pointer, errorMessage: nil)
+    }
+
+    private nonisolated static func configureCPSLLibraryDirectory() {
+        #if canImport(Darwin)
+        let frameworksURL = Bundle.main.privateFrameworksURL
+            ?? Bundle.main.bundleURL.appendingPathComponent("Frameworks", isDirectory: true)
+        setenv("CPSL_LIBRARY_DIR", frameworksURL.path, 1)
+        #endif
     }
 
     private nonisolated static func performBlockingEvalWithTimeout(

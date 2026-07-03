@@ -17,7 +17,9 @@ header_source="$script_dir/cpsl-xcframework-placeholder/cpsl.h"
 [ -f "$header_source" ] || die "missing placeholder header: $header_source"
 
 cpsl_xcframework_remove_stray_links "$out_dir" "$xcframework_path"
-if [ -e "$xcframework_path" ]; then
+if [ -L "$xcframework_path" ]; then
+	rm "$xcframework_path"
+elif [ -e "$xcframework_path" ]; then
 	rm -rf "$xcframework_path"
 fi
 
