@@ -67,7 +67,7 @@ Before compiling CPSL, Herm applies tracked integration patches from
 CPSL dependency aligned with Herm's app/runtime integration. When a patch is
 already present in the submodule commit, the patch helper skips it.
 
-The default host-native build is the minimum Herm CPSL profile. It compiles
+The default host-native build is the minimal CPSL FFI profile. It compiles
 `fs`, `json`, `csv`, `http`, and `grep`.
 
 To compile every CPSL core module into the library:
@@ -165,11 +165,11 @@ APPLE_PLATFORMS=ios scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=macos scripts/build-cpsl-apple-xcframework.sh
 ```
 
-The Apple helper builds the expanded Herm Apple app CPSL profile by default.
-That profile keeps the existing minimum modules and adds the pure Rust
+The Apple helper builds CPSL's embedded agent FFI profile by default. That
+profile keeps the existing minimum modules and adds the pure Rust
 cross-platform utility/data modules from CPSL's broad feature set, plus `doc`
 with the PDFium backend. HTTP remains present because it was already part of
-the minimum app profile, but the app still controls network access through its
+the minimum profile, but the app still controls network access through its
 session policy.
 
 PDFium is staged next to the generated XCFramework:

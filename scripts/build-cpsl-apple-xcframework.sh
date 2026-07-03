@@ -28,7 +28,7 @@ XCFramework containing iOS device, iOS simulator, and macOS slices.
 
 Options:
   --apple-app Build the expanded iOS/macOS app profile. This is the default.
-  --minimum   Build the small Herm CPSL library profile.
+  --minimum   Build the minimal CPSL FFI profile.
   -h, --help  Show this help.
 
 Environment:
@@ -231,9 +231,9 @@ build_target() {
 
 	printf 'Building CPSL FFI (%s) for %s\n' "$profile" "$target"
 	if [ "$profile" = apple-app ]; then
-		cargo_features=herm-apple-app
+		cargo_features=embedded-agent
 	else
-		cargo_features=herm-minimal
+		cargo_features=ffi-minimal
 	fi
 	env \
 		"SDKROOT=$sdk_path" \
