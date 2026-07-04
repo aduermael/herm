@@ -60,6 +60,12 @@ func (a *App) waitHeadlessReady() error {
 			if a.configReady && a.langdagClient != nil && a.models != nil && backendReady {
 				return nil
 			}
+			// Fail fast on a genuinely unconfigured provider instead of waiting
+			// out the 60s timeout with a misleading message.
+			if a.langdagClient == nil && a.headlessProviderResolutionSettled() {
+				fmt.Fprintln(os.Stderr, "error: no API key configured — use herm /config to add one")
+				return fmt.Errorf("no API key configured")
+			}
 		case <-timeout:
 			if a.backend == backendCPSL && !a.cpslReady {
 				if a.cpslErr != nil {
@@ -84,6 +90,22 @@ func (a *App) waitHeadlessReady() error {
 			return nil
 		}
 	}
+}
+
+func (a *App) headlessProviderResolutionSettled() bool {
+	if !a.configReady || a.models == nil {
+		return false
+	}
+	if !a.appleFetched {
+		return false
+	}
+	if a.config.ollamaBaseURL() != "" && !a.ollamaFetched {
+		return false
+	}
+	if a.config.openRouterAPIKey() != "" && !a.openRouterFetched {
+		return false
+	}
+	return a.config.defaultLangdagProviderForModels(a.models) == ""
 }
 
 func (a *App) resolveHeadlessContinuation() error {
