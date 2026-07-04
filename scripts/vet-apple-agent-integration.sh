@@ -329,6 +329,8 @@ if command -v swift >/dev/null 2>&1; then
   require_match '"HASHED_VALUE": "model#variant"' "$tmp_env_dir/CPSLEnvConstants.swift"
   require_match '"EMPTY_VALUE": ""' "$tmp_env_dir/CPSLEnvConstants.swift"
   reject_match 'base-model|IGNORED_LINE' "$tmp_env_dir/CPSLEnvConstants.swift"
+  swift scripts/generate-apple-env-constants.swift "$tmp_env_dir/CPSLEnvConstantsEmpty.swift"
+  require_match 'static let values: \[String: String\] = \[:\]' "$tmp_env_dir/CPSLEnvConstantsEmpty.swift"
 fi
 
 if command -v swiftc >/dev/null 2>&1; then
