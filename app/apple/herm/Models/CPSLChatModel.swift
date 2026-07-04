@@ -52,6 +52,24 @@ final class CPSLChatModel: ObservableObject {
     Do not ask the provider to browse the web, do not imply host shell access, and do not share local files unless the user explicitly requests file content.
     """
 
+    private func systemPrompt(with skills: [CPSLAgentSkill]) -> String {
+        guard !skills.isEmpty else {
+            return systemPrompt
+        }
+        let skillLines = skills.map {
+            "- **\($0.name)**: \($0.description) Read: `\($0.path)`"
+        }.joined(separator: "\n")
+        return systemPrompt + """
+
+
+        ## Skills
+
+        The following skills are available. Their full instructions are not loaded into this prompt. When a skill is relevant to the user's task, read its skill file first, then follow that file's instructions and read any referenced support files from the same folder as needed.
+
+        \(skillLines)
+        """
+    }
+
     init() {
         Task {
             await bootstrap()
@@ -366,6 +384,7 @@ final class CPSLChatModel: ObservableObject {
         do {
             var conversationID: String
             var parentID: String
+            let promptForConversation = systemPrompt(with: await service.availableSkills())
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -391,13 +410,13 @@ final class CPSLChatModel: ObservableObject {
                 let created = try await store.createConversation(
                     userText: userText,
                     model: nil,
-                    systemPrompt: systemPrompt
+                    systemPrompt: promptForConversation
                 )
                 conversationID = created.summary.id
                 parentID = created.userNode.id
                 selectedConversationID = conversationID
                 currentNodeID = parentID
-                currentSystemPrompt = systemPrompt
+                currentSystemPrompt = promptForConversation
                 if let message = created.userNode.chatMessage {
                     messages.append(message)
                 }
@@ -411,7 +430,7 @@ final class CPSLChatModel: ObservableObject {
             activeModel = config.model
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            let replaySystemPrompt = currentSystemPrompt ?? systemPrompt
+            let replaySystemPrompt = currentSystemPrompt ?? promptForConversation
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,

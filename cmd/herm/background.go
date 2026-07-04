@@ -277,6 +277,9 @@ dockerOK:
 		{Source: attachDir, Destination: "/attachments", ReadOnly: true},
 		{Source: cacheDir, Destination: "/cache", ReadOnly: false},
 	}
+	if skillsMount, ok := skillRuntimeMount(workspace); ok {
+		mounts = append(mounts, skillsMount)
+	}
 
 	if err := client.Start(containerStartOptions{workspace: workspace, mounts: mounts}); err != nil {
 		ch <- containerStatusMsg{text: "start failed"}
@@ -298,9 +301,11 @@ type bootCPSLWorkerCmdOptions struct {
 
 func bootCPSLWorkerCmd(opts bootCPSLWorkerCmdOptions) {
 	opts.ch <- cpslStatusMsg{text: "starting…"}
+	skillsPath, _ := ensureSkillsRuntimeDir(opts.workspace)
 	client, err := NewCPSLWorkerClient(newCPSLWorkerClientOptions{
 		LibraryPath:  opts.config.LibraryPath,
 		Workspace:    opts.workspace,
+		SkillsPath:   skillsPath,
 		AllowDomains: append([]string(nil), opts.config.AllowDomains...),
 		DenyDomains:  append([]string(nil), opts.config.DenyDomains...),
 	})

@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/term v0.40.0
+	gopkg.in/yaml.v3 v3.0.1
 	langdag.com/langdag v0.9.0
 )
 

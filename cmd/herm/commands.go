@@ -457,6 +457,9 @@ func (a *App) switchToWorktree(opts switchToWorktreeOptions) {
 				{Source: wtPath, Destination: wtPath},
 				{Source: attachDir, Destination: "/attachments", ReadOnly: true},
 			}
+			if skillsMount, ok := skillRuntimeMount(wtPath); ok {
+				mounts = append(mounts, skillsMount)
+			}
 			if err := a.container.Start(containerStartOptions{workspace: wtPath, mounts: mounts}); err != nil {
 				a.resultCh <- containerStatusMsg{text: "start failed"}
 				a.resultCh <- containerErrMsg{err: err}

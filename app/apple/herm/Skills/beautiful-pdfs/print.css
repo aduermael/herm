@@ -1,0 +1,87 @@
+:root {
+  color-scheme: light;
+  --ink: #18202a;
+  --muted: #5e6a76;
+  --line: #d9dee5;
+  --panel: #f6f8fa;
+  --accent: #176b87;
+  --accent-soft: #e6f2f5;
+}
+
+@page {
+  size: letter;
+  margin: 0.55in;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  color: var(--ink);
+  font: 12px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  color: var(--ink);
+  line-height: 1.15;
+  margin: 0 0 0.18in;
+}
+
+h1 {
+  font-size: 28px;
+}
+
+h2 {
+  border-bottom: 1px solid var(--line);
+  font-size: 16px;
+  margin-top: 0.3in;
+  padding-bottom: 0.06in;
+}
+
+p {
+  margin: 0 0 0.12in;
+}
+
+table {
+  border-collapse: collapse;
+  margin: 0.16in 0;
+  width: 100%;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.summary {
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, white);
+  margin: 0.18in 0;
+  padding: 0.14in;
+}
+
+.section,
+figure,
+table {
+  break-inside: avoid;
+}

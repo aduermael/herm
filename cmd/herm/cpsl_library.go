@@ -115,17 +115,26 @@ type cpslHTTPConfig struct {
 
 type cpslSessionConfigJSONOptions struct {
 	workspace    string
+	skillsPath   string
 	allowDomains []string
 	denyDomains  []string
 }
 
 func cpslSessionConfigJSON(opts cpslSessionConfigJSONOptions) (string, error) {
+	mounts := []cpslMountConfig{{
+		Host:        opts.workspace,
+		VirtualPath: cpslWorkerInitialCW,
+		Mode:        "rw",
+	}}
+	if opts.skillsPath != "" {
+		mounts = append(mounts, cpslMountConfig{
+			Host:        opts.skillsPath,
+			VirtualPath: skillsVirtualRoot,
+			Mode:        "ro",
+		})
+	}
 	config := cpslSessionConfig{
-		Mounts: []cpslMountConfig{{
-			Host:        opts.workspace,
-			VirtualPath: cpslWorkerInitialCW,
-			Mode:        "rw",
-		}},
+		Mounts:     mounts,
 		InitialCWD: cpslWorkerInitialCW,
 		Language:   cpslLanguageLuau,
 		HTTP: cpslHTTPConfig{
