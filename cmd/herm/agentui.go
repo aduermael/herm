@@ -158,7 +158,10 @@ func (a *App) startAgent(userMessage string) {
 
 	var skills []Skill
 	if a.worktreePath != "" {
-		skills, _ = prepareRuntimeSkills(a.worktreePath, a.backend)
+		skills, _ = prepareRuntimeSkills(prepareRuntimeSkillsOptions{
+			workspace: a.worktreePath,
+			backend:   a.backend,
+		})
 	}
 
 	workDir := a.worktreePath

@@ -135,7 +135,10 @@ Use helper.lua when useful.
 		t.Fatal(err)
 	}
 
-	skills, err := prepareRuntimeSkills(workspace, backendCPSL)
+	skills, err := prepareRuntimeSkills(prepareRuntimeSkillsOptions{
+		workspace: workspace,
+		backend:   backendCPSL,
+	})
 	if err != nil {
 		t.Fatalf("prepareRuntimeSkills: %v", err)
 	}
@@ -164,7 +167,10 @@ description: Host skill
 body
 `)
 
-	skills, err := prepareRuntimeSkills(workspace, backendNaked)
+	skills, err := prepareRuntimeSkills(prepareRuntimeSkillsOptions{
+		workspace: workspace,
+		backend:   backendNaked,
+	})
 	if err != nil {
 		t.Fatalf("prepareRuntimeSkills: %v", err)
 	}

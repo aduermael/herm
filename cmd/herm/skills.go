@@ -1,7 +1,6 @@
-// skills.go discovers Codex-style skill packages without injecting their full
-// contents into the system prompt. Skill files are staged under /skills for
-// sandboxed backends so the agent can lazily read a relevant SKILL.md and any
-// support files when needed.
+// skills.go discovers Codex-style skill packages without prompt-loading full
+// contents. Sandboxed backends get a staged /skills tree for lazy reads of
+// SKILL.md and package support files.
 package main
 
 import (
@@ -121,7 +120,7 @@ func discoverSkillsInRoot(root skillRoot) ([]Skill, error) {
 
 	var skills []Skill
 	for _, entry := range entries {
-		skill, ok := discoverSkillEntry(root, entry)
+		skill, ok := discoverSkillEntry(discoverSkillEntryOptions{root: root, entry: entry})
 		if ok {
 			skills = append(skills, skill)
 		}
@@ -129,7 +128,14 @@ func discoverSkillsInRoot(root skillRoot) ([]Skill, error) {
 	return skills, nil
 }
 
-func discoverSkillEntry(root skillRoot, entry os.DirEntry) (Skill, bool) {
+type discoverSkillEntryOptions struct {
+	root  skillRoot
+	entry os.DirEntry
+}
+
+func discoverSkillEntry(opts discoverSkillEntryOptions) (Skill, bool) {
+	root := opts.root
+	entry := opts.entry
 	entryPath := filepath.Join(root.Path, entry.Name())
 	defaultName := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 	sourceKind := skillSourceFile
@@ -152,11 +158,14 @@ func discoverSkillEntry(root skillRoot, entry os.DirEntry) (Skill, bool) {
 	if err != nil {
 		return Skill{}, false
 	}
-	skill, ok := parseSkillMetadata(string(data), defaultName)
+	skill, ok := parseSkillMetadata(parseSkillMetadataOptions{
+		raw:         string(data),
+		defaultName: defaultName,
+	})
 	if !ok {
 		return Skill{}, false
 	}
-	skill.runtimeName = safeSkillPathName(skill.Name, defaultName)
+	skill.runtimeName = safeSkillPathName(safeSkillPathNameOptions{name: skill.Name, fallback: defaultName})
 	skill.Path = skillPromptPath(skill.runtimeName)
 	skill.sourcePath = skillFile
 	skill.sourceDir = sourceDir
@@ -169,8 +178,13 @@ func skillPromptPath(runtimeName string) string {
 	return skillsVirtualRoot + "/" + runtimeName + "/" + skillDocFileName
 }
 
-func parseSkillMetadata(raw, defaultName string) (Skill, bool) {
-	frontMatter, ok := splitMarkdownFrontMatter(raw)
+type parseSkillMetadataOptions struct {
+	raw         string
+	defaultName string
+}
+
+func parseSkillMetadata(opts parseSkillMetadataOptions) (Skill, bool) {
+	frontMatter, ok := splitMarkdownFrontMatter(opts.raw)
 	if !ok {
 		return Skill{}, false
 	}
@@ -182,13 +196,16 @@ func parseSkillMetadata(raw, defaultName string) (Skill, bool) {
 
 	name := strings.TrimSpace(meta.Name)
 	if name == "" {
-		name = strings.TrimSpace(defaultName)
+		name = strings.TrimSpace(opts.defaultName)
 	}
 	if name == "" {
 		return Skill{}, false
 	}
 
-	description := metadataString(meta.Metadata, "short-description")
+	description := metadataString(metadataStringOptions{
+		metadata: meta.Metadata,
+		key:      "short-description",
+	})
 	if description == "" {
 		description = meta.Description
 	}
@@ -219,11 +236,16 @@ func splitMarkdownFrontMatter(raw string) (string, bool) {
 	return "", false
 }
 
-func metadataString(metadata map[string]any, key string) string {
-	if metadata == nil {
+type metadataStringOptions struct {
+	metadata map[string]any
+	key      string
+}
+
+func metadataString(opts metadataStringOptions) string {
+	if opts.metadata == nil {
 		return ""
 	}
-	value, ok := metadata[key]
+	value, ok := opts.metadata[opts.key]
 	if !ok {
 		return ""
 	}
@@ -246,10 +268,15 @@ func shortSkillDescription(description string) string {
 
 var unsafeSkillPathNameChars = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
-func safeSkillPathName(name, fallback string) string {
-	base := strings.TrimSpace(name)
+type safeSkillPathNameOptions struct {
+	name     string
+	fallback string
+}
+
+func safeSkillPathName(opts safeSkillPathNameOptions) string {
+	base := strings.TrimSpace(opts.name)
 	if base == "" {
-		base = fallback
+		base = opts.fallback
 	}
 	base = unsafeSkillPathNameChars.ReplaceAllString(base, "-")
 	base = strings.Trim(base, ".-")
@@ -259,16 +286,24 @@ func safeSkillPathName(name, fallback string) string {
 	return base
 }
 
-func prepareRuntimeSkills(workspace string, backend backendKind) ([]Skill, error) {
-	skills, err := discoverSkills(workspace)
+type prepareRuntimeSkillsOptions struct {
+	workspace string
+	backend   backendKind
+}
+
+func prepareRuntimeSkills(opts prepareRuntimeSkillsOptions) ([]Skill, error) {
+	skills, err := discoverSkills(opts.workspace)
 	if err != nil {
 		return nil, err
 	}
-	runtimeDir, err := syncSkillsRuntime(workspace, skills)
+	runtimeDir, err := syncSkillsRuntime(syncSkillsRuntimeOptions{
+		workspace: opts.workspace,
+		skills:    skills,
+	})
 	if err != nil {
 		return nil, err
 	}
-	if backend == backendNaked {
+	if opts.backend == backendNaked {
 		for i := range skills {
 			skills[i].Path = filepath.Join(runtimeDir, skills[i].runtimeName, skillDocFileName)
 		}
@@ -302,8 +337,13 @@ func skillRuntimeMount(workspace string) (MountSpec, bool) {
 	return MountSpec{Source: dir, Destination: skillsVirtualRoot, ReadOnly: true}, true
 }
 
-func syncSkillsRuntime(workspace string, skills []Skill) (string, error) {
-	dir, err := ensureSkillsRuntimeDir(workspace)
+type syncSkillsRuntimeOptions struct {
+	workspace string
+	skills    []Skill
+}
+
+func syncSkillsRuntime(opts syncSkillsRuntimeOptions) (string, error) {
+	dir, err := ensureSkillsRuntimeDir(opts.workspace)
 	if err != nil || dir == "" {
 		return dir, err
 	}
@@ -315,40 +355,56 @@ func syncSkillsRuntime(workspace string, skills []Skill) (string, error) {
 		return "", err
 	}
 
-	for _, skill := range skills {
+	for _, skill := range opts.skills {
 		dstDir := filepath.Join(dir, skill.runtimeName)
-		if err := copySkillToRuntime(skill, dstDir); err != nil {
+		if err := copySkillToRuntime(copySkillToRuntimeOptions{skill: skill, dstDir: dstDir}); err != nil {
 			return "", err
 		}
 	}
 	return dir, nil
 }
 
-func copySkillToRuntime(skill Skill, dstDir string) error {
-	switch skill.sourceKind {
+type copySkillToRuntimeOptions struct {
+	skill  Skill
+	dstDir string
+}
+
+func copySkillToRuntime(opts copySkillToRuntimeOptions) error {
+	switch opts.skill.sourceKind {
 	case skillSourceDirectory:
-		return copySkillDir(skill.sourceDir, dstDir)
+		return copySkillDir(copySkillDirOptions{
+			srcDir: opts.skill.sourceDir,
+			dstDir: opts.dstDir,
+		})
 	case skillSourceFile:
-		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		if err := os.MkdirAll(opts.dstDir, 0o755); err != nil {
 			return err
 		}
-		return copyRegularFile(skill.sourcePath, filepath.Join(dstDir, skillDocFileName))
+		return copyRegularFile(copyRegularFileOptions{
+			src: opts.skill.sourcePath,
+			dst: filepath.Join(opts.dstDir, skillDocFileName),
+		})
 	default:
 		return nil
 	}
 }
 
-func copySkillDir(srcDir, dstDir string) error {
-	return filepath.WalkDir(srcDir, func(srcPath string, entry os.DirEntry, walkErr error) error {
+type copySkillDirOptions struct {
+	srcDir string
+	dstDir string
+}
+
+func copySkillDir(opts copySkillDirOptions) error {
+	return filepath.WalkDir(opts.srcDir, func(srcPath string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		rel, err := filepath.Rel(srcDir, srcPath)
+		rel, err := filepath.Rel(opts.srcDir, srcPath)
 		if err != nil {
 			return err
 		}
 		if rel == "." {
-			return os.MkdirAll(dstDir, 0o755)
+			return os.MkdirAll(opts.dstDir, 0o755)
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			if entry.IsDir() {
@@ -356,33 +412,38 @@ func copySkillDir(srcDir, dstDir string) error {
 			}
 			return nil
 		}
-		dstPath := filepath.Join(dstDir, rel)
+		dstPath := filepath.Join(opts.dstDir, rel)
 		if entry.IsDir() {
 			return os.MkdirAll(dstPath, 0o755)
 		}
 		if entry.Type().IsRegular() {
-			return copyRegularFile(srcPath, dstPath)
+			return copyRegularFile(copyRegularFileOptions{src: srcPath, dst: dstPath})
 		}
 		return nil
 	})
 }
 
-func copyRegularFile(src, dst string) error {
-	info, err := os.Stat(src)
+type copyRegularFileOptions struct {
+	src string
+	dst string
+}
+
+func copyRegularFile(opts copyRegularFileOptions) error {
+	info, err := os.Stat(opts.src)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.dst), 0o755); err != nil {
 		return err
 	}
 
-	in, err := os.Open(src)
+	in, err := os.Open(opts.src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	out, err := os.OpenFile(opts.dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return err
 	}
