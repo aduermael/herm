@@ -80,8 +80,25 @@ th {
   padding: 0.14in;
 }
 
-.section,
+.page {
+  break-after: page;
+}
+
+.page:last-child {
+  break-after: auto;
+}
+
+.page-break-before {
+  break-before: page;
+}
+
+.page-break-after {
+  break-after: page;
+}
+
+.keep-together,
 figure,
-table {
+.callout,
+.signature-block {
   break-inside: avoid;
 }
