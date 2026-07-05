@@ -24,7 +24,8 @@ Builds one CPSL XCFramework for Apple app targets.
 
 By default this script builds CPSL from Herm's external/cpsl submodule,
 matching scripts/build-cpsl-image.sh. The output is one Apple-consumable
-XCFramework containing iOS device, iOS simulator, and macOS slices.
+XCFramework containing the requested iOS device, iOS simulator, and/or macOS
+slices.
 
 Options:
   --apple-app Build the expanded iOS/macOS app profile. This is the default.
@@ -35,12 +36,17 @@ Environment:
   CPSL_ROOT                Existing CPSL checkout to use instead of external/cpsl.
   CPSL_WORK_DIR            Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
   CPSL_TARGET_DIR          Cargo target directory. Defaults to CPSL_WORK_DIR/cargo-target.
-  OUT_DIR                  Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/apple.
+  OUT_DIR                  Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/apple,
+                           or CPSL_WORK_DIR/artifacts/apple/CONFIGURATION for Xcode builds.
+  CONFIGURATION            Xcode configuration. Debug uses Cargo debug; Release uses Cargo release.
   APPLE_PLATFORMS          Platforms to include. Defaults to "ios macos".
   IOS_DEPLOYMENT_TARGET    Minimum iOS version. Defaults to 17.0.
   MACOSX_DEPLOYMENT_TARGET Minimum macOS version. Defaults to 14.0.
+  IOS_DEVICE_TARGETS       Rust device targets. Defaults to aarch64 iOS.
   IOS_SIMULATOR_TARGETS    Rust simulator targets. Defaults to arm64 and x86_64 simulator.
   MACOS_TARGETS            Rust macOS targets. Defaults to arm64 and x86_64 macOS.
+  HERM_CPSL_FORCE_SUBMODULE=1
+                           Ignore CPSL_ROOT and build from Herm's external/cpsl submodule.
   PDFIUM_VERSION           PDFium build number. Defaults to CPSL's downloader default.
 EOF
 }
@@ -71,6 +77,7 @@ done
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/host-path.sh"
+. "$script_dir/lib/cpsl-xcframework.sh"
 herm_ensure_rust_path
 
 [ "$(uname -s)" = Darwin ] || die "Apple XCFramework builds require macOS with Xcode"
@@ -80,42 +87,27 @@ mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
 default_cpsl_root="$herm_root/external/cpsl"
 target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}
-out_dir=${OUT_DIR:-"$work_dir/artifacts/apple"}
-apple_platforms=${APPLE_PLATFORMS:-"ios macos"}
+cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 ios_deployment_target=${IOS_DEPLOYMENT_TARGET:-17.0}
 macos_deployment_target=${MACOSX_DEPLOYMENT_TARGET:-14.0}
-ios_device_target=aarch64-apple-ios
-ios_simulator_targets=${IOS_SIMULATOR_TARGETS:-"aarch64-apple-ios-sim x86_64-apple-ios"}
-macos_targets=${MACOS_TARGETS:-"aarch64-apple-darwin x86_64-apple-darwin"}
 lib_name=libcpsl.dylib
 pdfium_lib_name=libpdfium.dylib
 xcframework_name=cpsl.xcframework
 
-[ -n "$apple_platforms" ] || die "APPLE_PLATFORMS must not be empty"
+request_assignments=$(cpsl_apple_request_from_environment) || die "failed to resolve CPSL Apple build targets"
+eval "$request_assignments"
+apple_platforms=$APPLE_PLATFORMS
+ios_device_targets=$IOS_DEVICE_TARGETS
+ios_simulator_targets=$IOS_SIMULATOR_TARGETS
+macos_targets=$MACOS_TARGETS
 
-include_ios=0
+include_ios_device=0
+include_ios_simulator=0
 include_macos=0
-for platform in $apple_platforms; do
-	case "$platform" in
-	ios)
-		include_ios=1
-		;;
-	macos)
-		include_macos=1
-		;;
-	*)
-		die "unsupported APPLE_PLATFORMS entry: $platform"
-		;;
-	esac
-done
-[ "$include_ios" -eq 1 ] || [ "$include_macos" -eq 1 ] || die "APPLE_PLATFORMS must include ios, macos, or both"
-
-if [ "$include_ios" -eq 1 ]; then
-	[ -n "$ios_simulator_targets" ] || die "IOS_SIMULATOR_TARGETS must not be empty when APPLE_PLATFORMS includes ios"
-fi
-if [ "$include_macos" -eq 1 ]; then
-	[ -n "$macos_targets" ] || die "MACOS_TARGETS must not be empty when APPLE_PLATFORMS includes macos"
-fi
+[ -n "$ios_device_targets" ] && include_ios_device=1
+[ -n "$ios_simulator_targets" ] && include_ios_simulator=1
+[ -n "$macos_targets" ] && include_macos=1
 
 need_cmd cargo "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
 need_cmd rustc "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
@@ -129,10 +121,12 @@ developer_dir=$(xcode-select -p)
 if ! xcodebuild -version >/dev/null 2>&1; then
 	die "selected developer directory is not full Xcode: $developer_dir; install full Xcode, open it once, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
 fi
-if [ "$include_ios" -eq 1 ]; then
-	required_sdks="iphoneos iphonesimulator"
-else
-	required_sdks=
+required_sdks=
+if [ "$include_ios_device" -eq 1 ]; then
+	required_sdks="${required_sdks:+$required_sdks }iphoneos"
+fi
+if [ "$include_ios_simulator" -eq 1 ]; then
+	required_sdks="${required_sdks:+$required_sdks }iphonesimulator"
 fi
 if [ "$include_macos" -eq 1 ]; then
 	required_sdks="${required_sdks:+$required_sdks }macosx"
@@ -145,8 +139,11 @@ for sdk in $required_sdks; do
 done
 
 required_targets=
-if [ "$include_ios" -eq 1 ]; then
-	required_targets="$ios_device_target $ios_simulator_targets"
+if [ "$include_ios_device" -eq 1 ]; then
+	required_targets="${required_targets:+$required_targets }$ios_device_targets"
+fi
+if [ "$include_ios_simulator" -eq 1 ]; then
+	required_targets="${required_targets:+$required_targets }$ios_simulator_targets"
 fi
 if [ "$include_macos" -eq 1 ]; then
 	required_targets="${required_targets:+$required_targets }$macos_targets"
@@ -163,7 +160,18 @@ if command -v rustup >/dev/null 2>&1; then
 	fi
 fi
 
-if [ -n "${CPSL_ROOT:-}" ]; then
+if [ "${HERM_CPSL_FORCE_SUBMODULE:-0}" = 1 ]; then
+	if [ -n "${CPSL_ROOT:-}" ]; then
+		printf 'Ignoring CPSL_ROOT for Xcode CPSL build; using Herm submodule: %s\n' "$default_cpsl_root"
+	fi
+	if [ ! -f "$default_cpsl_root/Cargo.toml" ]; then
+		need_cmd git "install Git"
+		printf 'Initializing CPSL submodule in %s\n' "$default_cpsl_root"
+		git -C "$herm_root" submodule update --init -- external/cpsl
+	fi
+	cpsl_root=$(CDPATH= cd "$default_cpsl_root" && pwd -P) || \
+		die "missing CPSL submodule at $default_cpsl_root; run: git submodule update --init external/cpsl"
+elif [ -n "${CPSL_ROOT:-}" ]; then
 	cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
 else
 	if [ ! -f "$default_cpsl_root/Cargo.toml" ]; then
@@ -235,6 +243,11 @@ build_target() {
 	else
 		cargo_features=ffi-minimal
 	fi
+	set -- build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi
+	if [ "$cargo_profile" = release ]; then
+		set -- "$@" --release
+	fi
+	set -- "$@" --no-default-features --features "$cargo_features" --target "$target"
 	env \
 		"SDKROOT=$sdk_path" \
 		"$deployment_env=$deployment_target" \
@@ -243,9 +256,9 @@ build_target() {
 		"AR_$target_env=$ar" \
 		"CARGO_TARGET_${target_env_upper}_LINKER=$clang" \
 		"RUSTFLAGS=$rustflags" \
-		cargo build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --release --no-default-features --features "$cargo_features" --target "$target"
+		cargo "$@"
 
-	target_lib="$target_dir/$target/release/$lib_name"
+	target_lib="$target_dir/$target/$cargo_profile/$lib_name"
 	[ -f "$target_lib" ] || die "expected CPSL library not found: $target_lib"
 	mkdir -p "$output_dir"
 	cp "$target_lib" "$output_dir/$lib_name"
@@ -290,18 +303,31 @@ install_apple_pdfium_artifacts() {
 	rm -rf "$pdfium_work_dir" "$pdfium_dir"
 	mkdir -p "$pdfium_work_dir" "$pdfium_dir"
 
-	if [ "$include_ios" -eq 1 ]; then
+	if [ "$include_ios_device" -eq 1 ]; then
 		install_pdfium_target ios-device-arm64 "$pdfium_work_dir/ios-device-arm64"
 		copy_pdfium_library \
 			"$pdfium_work_dir/ios-device-arm64/lib/$pdfium_lib_name" \
 			"$pdfium_dir/ios-arm64/lib/$pdfium_lib_name"
+	fi
 
-		install_pdfium_target ios-simulator-arm64 "$pdfium_work_dir/ios-simulator-arm64"
-		install_pdfium_target ios-simulator-x64 "$pdfium_work_dir/ios-simulator-x64"
-		combine_pdfium_libraries \
-			"$pdfium_dir/ios-simulator/lib/$pdfium_lib_name" \
-			"$pdfium_work_dir/ios-simulator-arm64/lib/$pdfium_lib_name" \
-			"$pdfium_work_dir/ios-simulator-x64/lib/$pdfium_lib_name"
+	if [ "$include_ios_simulator" -eq 1 ]; then
+		set --
+		for target in $ios_simulator_targets; do
+			case "$target" in
+			aarch64-apple-ios-sim)
+				install_pdfium_target ios-simulator-arm64 "$pdfium_work_dir/ios-simulator-arm64"
+				set -- "$@" "$pdfium_work_dir/ios-simulator-arm64/lib/$pdfium_lib_name"
+				;;
+			x86_64-apple-ios)
+				install_pdfium_target ios-simulator-x64 "$pdfium_work_dir/ios-simulator-x64"
+				set -- "$@" "$pdfium_work_dir/ios-simulator-x64/lib/$pdfium_lib_name"
+				;;
+			*)
+				die "unsupported iOS simulator PDFium target: $target"
+				;;
+			esac
+		done
+		combine_pdfium_libraries "$pdfium_dir/ios-simulator/lib/$pdfium_lib_name" "$@"
 	fi
 
 	if [ "$include_macos" -eq 1 ]; then
@@ -341,8 +367,11 @@ build_universal_library() {
 	combine_libraries "$output" "$@"
 }
 
-if [ "$include_ios" -eq 1 ]; then
-	build_target "$ios_device_target" iphoneos IPHONEOS_DEPLOYMENT_TARGET "$ios_deployment_target" "$ios_device_dir"
+if [ "$include_ios_device" -eq 1 ]; then
+	build_universal_library "$ios_device_dir/$lib_name" iphoneos IPHONEOS_DEPLOYMENT_TARGET "$ios_deployment_target" $ios_device_targets
+fi
+
+if [ "$include_ios_simulator" -eq 1 ]; then
 	build_universal_library "$ios_simulator_dir/$lib_name" iphonesimulator IPHONEOS_DEPLOYMENT_TARGET "$ios_deployment_target" $ios_simulator_targets
 fi
 
@@ -355,10 +384,11 @@ if [ "$profile" = apple-app ]; then
 fi
 
 set -- -create-xcframework
-if [ "$include_ios" -eq 1 ]; then
-	set -- "$@" \
-		-library "$ios_device_dir/$lib_name" -headers "$include_dir" \
-		-library "$ios_simulator_dir/$lib_name" -headers "$include_dir"
+if [ "$include_ios_device" -eq 1 ]; then
+	set -- "$@" -library "$ios_device_dir/$lib_name" -headers "$include_dir"
+fi
+if [ "$include_ios_simulator" -eq 1 ]; then
+	set -- "$@" -library "$ios_simulator_dir/$lib_name" -headers "$include_dir"
 fi
 if [ "$include_macos" -eq 1 ]; then
 	set -- "$@" -library "$macos_dir/$lib_name" -headers "$include_dir"
@@ -367,13 +397,24 @@ set -- "$@" -output "$xcframework_path"
 
 xcodebuild "$@"
 
-if [ -z "${OUT_DIR:-}" ] && [ -z "${CPSL_WORK_DIR:-}" ]; then
+source_stamp_path=$(cpsl_xcframework_source_stamp_path "$out_dir")
+if source_revision=$(cpsl_xcframework_source_revision "$cpsl_root"); then
+	cpsl_xcframework_write_source_stamp_value "$source_stamp_path" "$cpsl_root" "$source_revision" "$cargo_profile"
+elif [ "${HERM_CPSL_FORCE_SUBMODULE:-0}" = 1 ]; then
+	die "failed to read CPSL submodule revision for source stamp: $cpsl_root"
+else
+	cpsl_xcframework_write_source_stamp_value "$source_stamp_path" "$cpsl_root" unknown "$cargo_profile"
+fi
+
+if [ -z "${OUT_DIR:-}" ] && [ -z "${CPSL_WORK_DIR:-}" ] && [ -z "${CONFIGURATION:-}" ]; then
 	display_out=".herm-cpsl/artifacts/apple"
 else
 	display_out="$out_dir"
 fi
 
 printf '\nBuilt CPSL Apple XCFramework (%s)\n' "$profile"
+printf '  cargo profile: %s\n' "$cargo_profile"
+printf '  targets: %s\n' "$CPSL_REQUEST_DESCRIPTION"
 printf '  image: %s\n' "$display_out"
 printf '  xcframework: %s/%s\n' "$display_out" "$xcframework_name"
 if [ "$profile" = apple-app ]; then

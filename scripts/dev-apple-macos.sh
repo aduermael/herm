@@ -179,7 +179,7 @@ target=herm
 scheme=herm
 app_path="$derived_data/Build/Products/$configuration/$target.app"
 binary_path="$app_path/Contents/MacOS/$target"
-xcframework_path="$root/.herm-cpsl/artifacts/apple/cpsl.xcframework"
+xcframework_path="$root/.herm-cpsl/artifacts/apple/$configuration/cpsl.xcframework"
 entitlements_path="$derived_data/Build/Intermediates.noindex/herm.build/$configuration/herm.build/$target.app.xcent"
 source_entitlements_path="$root/app/apple/herm/herm-macOS.entitlements"
 host_arch=$(uname -m)
@@ -212,6 +212,7 @@ fi
 if [ -n "$cpsl_macos_targets" ]; then
 	export MACOS_TARGETS="$cpsl_macos_targets"
 fi
+export CONFIGURATION="$configuration"
 if [ "$cpsl_mode" = skip ]; then
 	"$root/scripts/link-cpsl-xcframework-for-xcode.sh" --skip
 else

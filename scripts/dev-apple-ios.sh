@@ -389,7 +389,7 @@ project="$root/app/apple/herm.xcodeproj"
 target=herm
 scheme=herm
 app_path="$derived_data/Build/Products/$configuration-iphoneos/$target.app"
-xcframework_path="$root/.herm-cpsl/artifacts/apple/cpsl.xcframework"
+xcframework_path="$root/.herm-cpsl/artifacts/apple/$configuration/cpsl.xcframework"
 host_arch=$(uname -m)
 signing_style_setting=
 team_setting=
@@ -481,6 +481,7 @@ fi
 if [ -n "$cpsl_macos_targets" ]; then
 	export MACOS_TARGETS="$cpsl_macos_targets"
 fi
+export CONFIGURATION="$configuration"
 if [ "$cpsl_mode" = skip ]; then
 	"$root/scripts/link-cpsl-xcframework-for-xcode.sh" --skip
 else
