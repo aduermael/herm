@@ -200,6 +200,12 @@ require_match 'systemSkillMounts' app/apple/herm/Services/Agent/CPSLSkills.swift
 require_match '"skills"' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"virtual": mount.virtualPath' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"mode": "ro"' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'Copy Bundled Skills' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'alwaysOutOfDate = 1;' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'Skills,' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'SRCROOT.*/herm/Skills' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'The following skills are available' app/apple/herm/Models/CPSLChatModel.swift
 require_match '\$0\.path' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'name: beautiful-pdfs' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
