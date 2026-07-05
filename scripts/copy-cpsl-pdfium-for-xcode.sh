@@ -8,25 +8,50 @@ die() {
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
-pdfium_root="$herm_root/.herm-cpsl/artifacts/apple/libs/pdfium"
+. "$script_dir/lib/cpsl-xcframework.sh"
+work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
+cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
+pdfium_root="$out_dir/libs/pdfium"
+placeholder_dir="$herm_root/scripts/cpsl-xcframework-placeholder"
+link_path="$placeholder_dir/cpsl.xcframework"
+link_stamp="$out_dir/.xcode-linked-xcframework.stamp"
 
-case "${PLATFORM_NAME:-}" in
-iphoneos)
-	pdfium_slice=ios-arm64
-	;;
-iphonesimulator)
-	pdfium_slice=ios-simulator
-	;;
-macosx)
-	pdfium_slice=macos
-	;;
-xros | xrsimulator)
-	die "CPSL does not yet support visionOS. Supported platforms: iOS and macOS."
-	;;
-*)
-	die "unsupported Apple platform for CPSL PDFium: ${PLATFORM_NAME:-<unset>}"
-	;;
-esac
+cpsl_pdfium_restore_xcframework_placeholder() {
+	status=$?
+
+	if ! rm -f "$link_stamp" 2>/dev/null; then
+		printf '%s\n' "warning: failed to remove CPSL XCFramework link stamp: $link_stamp" >&2
+	fi
+
+	if [ -e "$link_path" ] || [ -L "$link_path" ]; then
+		if cpsl_xcframework_restore_tracked_placeholder "$herm_root" "$link_path"; then
+			printf 'Restored CPSL XCFramework placeholder: %s\n' "$link_path"
+		else
+			printf '%s\n' "warning: failed to restore CPSL XCFramework placeholder: $link_path" >&2
+		fi
+	fi
+
+	return "$status"
+}
+
+trap cpsl_pdfium_restore_xcframework_placeholder EXIT
+
+request_assignments=$(cpsl_apple_request_from_xcode_env) || die "failed to resolve CPSL PDFium slice from Xcode environment"
+eval "$request_assignments"
+ios_device_targets=$IOS_DEVICE_TARGETS
+ios_simulator_targets=$IOS_SIMULATOR_TARGETS
+macos_targets=$MACOS_TARGETS
+
+cpsl_pdfium_satisfies_targets "$pdfium_root" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || \
+	die "$pdfium_root does not contain requested PDFium target(s): $CPSL_REQUEST_DESCRIPTION"
+
+pdfium_slice=
+for slice in $CPSL_PDFIUM_SLICES; do
+	pdfium_slice=$slice
+	break
+done
+[ -n "$pdfium_slice" ] || die "no CPSL PDFium slice requested for ${PLATFORM_NAME:-<unset>}"
 
 src="$pdfium_root/$pdfium_slice/lib/libpdfium.dylib"
 [ -f "$src" ] || die "missing PDFium library: $src"
