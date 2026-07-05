@@ -132,18 +132,24 @@ installed:
 scripts/build-cpsl-apple-xcframework.sh
 ```
 
-This follows the same source dependency model as the host-native helper: Herm
-builds from `external/cpsl` unless `CPSL_ROOT` points at an existing checkout.
+Direct CLI use follows the same source dependency model as the host-native
+helper: Herm builds from `external/cpsl` unless `CPSL_ROOT` points at an
+existing checkout. Xcode auto-builds are stricter and always build from Herm's
+`external/cpsl` submodule, ignoring any `CPSL_ROOT` in the user's environment.
 
 The script builds CPSL's FFI crate for iOS device, iOS simulator, and macOS
-targets, then packages the dynamic libraries plus `cpsl.h` into one
-multi-platform XCFramework:
+targets by default, then packages the dynamic libraries plus `cpsl.h` into one
+XCFramework:
 
 ```text
 .herm-cpsl/artifacts/apple/
   cpsl.xcframework
   include/cpsl.h
 ```
+
+Direct CLI builds use Cargo's release profile by default. When invoked from
+Xcode, the helper follows Xcode's `CONFIGURATION`: `Debug` uses Cargo's debug
+profile and `Release` uses Cargo's release profile.
 
 Install Rust with [rustup](https://rustup.rs/), then add the Apple targets before
 building:
@@ -165,6 +171,16 @@ APPLE_PLATFORMS=ios scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=macos scripts/build-cpsl-apple-xcframework.sh
 ```
 
+Target lists can also be narrowed explicitly. Empty target variables are
+honored, so this builds only an Apple Silicon iOS simulator slice:
+
+```sh
+APPLE_PLATFORMS=ios \
+  IOS_DEVICE_TARGETS= \
+  IOS_SIMULATOR_TARGETS=aarch64-apple-ios-sim \
+  scripts/build-cpsl-apple-xcframework.sh
+```
+
 The Apple helper builds CPSL's embedded agent FFI profile by default. That
 profile keeps the existing minimum modules and adds the pure Rust
 cross-platform utility/data modules from CPSL's broad feature set, plus `doc`
@@ -184,8 +200,10 @@ PDFium is staged next to the generated XCFramework:
 ```
 
 During Xcode builds, the `Copy CPSL PDFium` phase copies the platform-matching
-`libpdfium.dylib` into the app's Frameworks directory. The Swift app sets
-`CPSL_LIBRARY_DIR` to that directory before creating a CPSL session so
+`libpdfium.dylib` into the app's Frameworks directory. If Xcode requested only
+one simulator architecture, only the matching simulator PDFium input is
+downloaded before the staged `ios-simulator` sidecar is written. The Swift app
+sets `CPSL_LIBRARY_DIR` to that directory before creating a CPSL session so
 `doc.pdfInfo`, structural `doc.read(..., {mode="structural"})`, and other
 PDFium-backed `doc` functions can find the library at runtime.
 
@@ -205,40 +223,72 @@ APPLE_PLATFORMS=ios OUT_DIR=.herm-cpsl/artifacts/ios scripts/build-cpsl-apple-xc
 Opening `app/apple/herm.xcodeproj` in Xcode and building the `herm` target
 automatically ensures the CPSL XCFramework exists before Swift compilation.
 
-The `herm` target depends on a **Build CPSL XCFramework** aggregate target that
-runs before compilation. On every build it runs:
+The `herm` target depends on a **Build CPSL XCFramework** helper target that
+runs before Swift compilation. On every build it runs:
 
 ```sh
 "${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh"
 ```
 
 That helper calls `ensure-cpsl-apple-xcframework.sh` to build or reuse
-`.herm-cpsl/artifacts/apple/cpsl.xcframework` and its PDFium sidecar
-libraries, then links the built XCFramework into the Xcode-linked path at
-`scripts/cpsl-xcframework-placeholder/cpsl.xcframework` when that local copy is
-missing or stale.
+the configuration-scoped CPSL artifact and its PDFium sidecar libraries, then
+links the built XCFramework into the Xcode-linked path at
+`scripts/cpsl-xcframework-placeholder/cpsl.xcframework`.
 
-The phase is marked always-out-of-date so Xcode invokes the script each build,
-but the ensure script itself is cheap when nothing changed: it reuses
-`.herm-cpsl/artifacts/apple/cpsl.xcframework` when all three slices are present
-(iOS device, iOS simulator, macOS) and staleness inputs are not newer than
-`Info.plist`. It rebuilds when the artifact is missing, incomplete, or stale
-because files under `scripts/cpsl-patches/`, `scripts/build-cpsl-apple-xcframework.sh`,
-or `scripts/apply-cpsl-patches.sh` changed. The link helper also records a
-fingerprint of the copied XCFramework so repeated Xcode builds skip the
-`rm -rf`/`cp -R` relink step when the cached artifact has not changed.
+The helper target is built as a dependency of `herm`, so it receives the same
+`PLATFORM_NAME`/`SDK_NAME`, `ARCHS`, and `CONFIGURATION` values as the app
+build and finishes before `ProcessXCFramework` runs. Its declared output is a
+DerivedData stamp file so Xcode does not create a dependency cycle with the
+linked XCFramework path. It is marked always-out-of-date so Xcode invokes the
+script each build, but the ensure script itself is cheap when nothing changed:
+it reuses
+`.herm-cpsl/artifacts/apple/Debug/cpsl.xcframework` or
+`.herm-cpsl/artifacts/apple/Release/cpsl.xcframework` when it contains the
+platform and architectures selected by Xcode's `PLATFORM_NAME`/`SDK_NAME` and
+`ARCHS`, and staleness inputs are not newer than `Info.plist`. For Xcode
+auto-builds, reuse also requires the adjacent `.cpsl-source.stamp` to show that
+the artifact was built from Herm's `external/cpsl` submodule at the current
+revision and matching Cargo profile. It rebuilds when the artifact is missing,
+lacks the requested slice, was built from another CPSL checkout, revision, or
+Cargo profile, or is stale because files under `scripts/cpsl-patches/`,
+`scripts/build-cpsl-apple-xcframework.sh`, `scripts/lib/cpsl-xcframework.sh`,
+or `scripts/apply-cpsl-patches.sh` changed.
 
-Xcode builds always produce the full iOS+macOS XCFramework and PDFium sidecar
-set, even when the active destination only needs one platform.
+Xcode keeps Debug and Release CPSL artifacts separate:
+
+```text
+.herm-cpsl/artifacts/apple/Debug/
+  cpsl.xcframework
+  libs/pdfium/
+
+.herm-cpsl/artifacts/apple/Release/
+  cpsl.xcframework
+  libs/pdfium/
+```
+
+Xcode builds produce only the selected platform and architectures. For example,
+an Apple Silicon iPhone simulator build creates `aarch64-apple-ios-sim` and the
+simulator PDFium sidecar; it does not also build x86_64 simulator, iOS device,
+or macOS slices. A later build for another destination rebuilds the cached
+artifact for that destination.
 
 Xcode validates linked XCFrameworks before any target runs. A tracked bootstrap
 placeholder at `scripts/cpsl-xcframework-placeholder/cpsl.xcframework`
 satisfies that check on fresh clones. The ensure script then builds the real
-XCFramework under gitignored `.herm-cpsl/artifacts/apple/`, and the Xcode helper
-replaces the placeholder path with a local copy of that artifact when needed
-during the build. The copy step marks the tracked bootstrap files `skip-worktree` so
-`git status` stays clean while the local copy is present. Do not commit the
-local copy; only the bootstrap directory belongs in git.
+XCFramework under the gitignored configuration artifact directory. The Xcode
+helper keeps the linked path in the full bootstrap placeholder shape and
+overlays only the real slice directory requested by the current build. For
+simulator and macOS overlays, any unrequested architecture advertised by the
+placeholder (`arm64` or `x86_64`) is filled with a tiny validation stub dylib,
+not a CPSL build, so a failed build still leaves a pre-validation-safe linked
+path. After Xcode has linked and embedded the real slice, the later `Copy CPSL
+PDFium` phase restores the tracked bootstrap placeholder and removes the local
+link stamp so the next build overlays again. This keeps the source-tree linked
+path valid for later destination switches before run scripts execute, without
+building every platform up front. The temporary overlay marks the tracked
+bootstrap files `skip-worktree` so `git status` stays clean while local built
+slices are present. Do not commit the local overlay; only the bootstrap
+directory belongs in git.
 
 If a local checkout has an older broken symlink at the placeholder path, restore
 the bootstrap directory once before opening Xcode:
@@ -249,11 +299,13 @@ scripts/bootstrap-cpsl-xcframework-placeholder.sh
 
 ### First-build prerequisites
 
-The first full XCFramework build compiles five Rust targets and may take several
-minutes. You need:
+The first CPSL XCFramework build for a destination may take several minutes.
+You need:
 
 - **Full Xcode** installed and selected (Command Line Tools alone is not enough)
-- The Rust Apple targets listed in [Apple XCFramework](#apple-xcframework)
+- The Rust Apple target(s) for the selected Xcode destination, or all targets
+  listed in [Apple XCFramework](#apple-xcframework) if you want the direct CLI
+  default output
 
 Initialize Xcode from Terminal if needed:
 
@@ -282,10 +334,13 @@ early in the ensure script with a clear error before any Rust build starts.
 ### Dev launchers
 
 `scripts/dev-apple-macos.sh` and `scripts/dev-apple-ios.sh` call the same
-ensure script. Use `--skip-cpsl` to require an existing full XCFramework without
-building, or `--rebuild-cpsl` to set `HERM_CPSL_REBUILD=1` before the ensure
-step. The `--full-cpsl` flag is deprecated; the ensure script always builds the
-full framework.
+ensure script. Use `--skip-cpsl` to require an existing matching XCFramework
+without building, or `--rebuild-cpsl` to set `HERM_CPSL_REBUILD=1` before the
+ensure step. The `--full-cpsl` flag is deprecated; the ensure script builds the
+framework slices requested by its environment. These terminal launchers pass
+their selected `--configuration` into CPSL preflight, so a Debug launcher build
+uses the Debug CPSL artifact and a Release launcher build uses the Release CPSL
+artifact.
 
 ## macOS App From Terminal
 

@@ -11,16 +11,17 @@ usage() {
 Usage:
   scripts/ensure-cpsl-apple-xcframework.sh [options]
 
-Ensures the full CPSL Apple XCFramework exists before building Herm.
+Ensures the requested CPSL Apple XCFramework slices exist before building Herm.
 
 Options:
-  --skip   Require an existing full XCFramework; do not build.
+  --skip   Require an existing matching XCFramework; do not build.
   -h, --help
            Show this help.
 
 Environment:
   HERM_CPSL_REBUILD=1  Force a CPSL XCFramework rebuild.
-  CPSL_ROOT, CPSL_WORK_DIR, OUT_DIR, IOS_SIMULATOR_TARGETS, MACOS_TARGETS
+  CPSL_ROOT, CPSL_WORK_DIR, OUT_DIR, APPLE_PLATFORMS,
+  IOS_DEVICE_TARGETS, IOS_SIMULATOR_TARGETS, MACOS_TARGETS, CONFIGURATION
                          Passed through to build-cpsl-apple-xcframework.sh.
 EOF
 }
@@ -95,12 +96,18 @@ cpsl_ensure_rebuild_reason() {
 		printf '%s\n' "$xcframework_path is still the bootstrap placeholder"
 		return 0
 	}
-	cpsl_xcframework_is_full "$xcframework_info" || {
-		printf '%s\n' "$xcframework_path is incomplete"
+	if [ "$require_submodule_source_stamp" -eq 1 ]; then
+		cpsl_xcframework_source_stamp_matches "$source_stamp_path" "$default_cpsl_root" "$cargo_profile" || {
+			printf '%s\n' "$xcframework_path was not built from external/cpsl at the current revision and Cargo profile"
+			return 0
+		}
+	fi
+	cpsl_xcframework_satisfies_targets "$xcframework_info" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || {
+		printf '%s\n' "$xcframework_path does not contain requested CPSL target(s): $CPSL_REQUEST_DESCRIPTION"
 		return 0
 	}
-	cpsl_ensure_pdfium_is_full || {
-		printf '%s\n' "$pdfium_path is incomplete"
+	cpsl_pdfium_satisfies_targets "$pdfium_path" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || {
+		printf '%s\n' "$pdfium_path does not contain requested PDFium target(s): $CPSL_REQUEST_DESCRIPTION"
 		return 0
 	}
 	cpsl_xcframework_inputs_newer_than "$xcframework_info" "$herm_root" && {
@@ -114,13 +121,6 @@ cpsl_ensure_should_reuse() {
 	xcframework_info=$1
 
 	! cpsl_ensure_rebuild_reason "$xcframework_info" >/dev/null
-}
-
-cpsl_ensure_pdfium_is_full() {
-	for slice in ios-arm64 ios-simulator macos; do
-		[ -f "$pdfium_path/$slice/lib/libpdfium.dylib" ] || return 1
-	done
-	return 0
 }
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
@@ -150,18 +150,38 @@ if cpsl_ensure_is_visionos_build; then
 	die "CPSL does not yet support visionOS. Supported platforms: iOS and macOS."
 fi
 
+request_assignments=$(cpsl_apple_request_from_environment) || die "failed to resolve CPSL Apple build targets"
+eval "$request_assignments"
+ios_device_targets=$IOS_DEVICE_TARGETS
+ios_simulator_targets=$IOS_SIMULATOR_TARGETS
+macos_targets=$MACOS_TARGETS
+
+if cpsl_apple_has_xcode_selection; then
+	HERM_CPSL_FORCE_SUBMODULE=1
+	export HERM_CPSL_FORCE_SUBMODULE
+	unset CPSL_ROOT
+fi
+require_submodule_source_stamp=${HERM_CPSL_FORCE_SUBMODULE:-0}
+
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
-out_dir=${OUT_DIR:-"$work_dir/artifacts/apple"}
+cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
+default_cpsl_root="$herm_root/external/cpsl"
 xcframework_path="$out_dir/cpsl.xcframework"
 pdfium_path="$out_dir/libs/pdfium"
+source_stamp_path=$(cpsl_xcframework_source_stamp_path "$out_dir")
 xcframework_info=$(cpsl_xcframework_info_plist "$xcframework_path")
 
 if [ "$skip_mode" -eq 1 ]; then
 	[ -d "$xcframework_path" ] || die "missing $xcframework_path; rerun without --skip"
-	cpsl_xcframework_is_full "$xcframework_info" || \
-		die "$xcframework_path is incomplete; rerun without --skip"
-	cpsl_ensure_pdfium_is_full || \
-		die "$pdfium_path is incomplete; rerun without --skip"
+	if [ "$require_submodule_source_stamp" -eq 1 ]; then
+		cpsl_xcframework_source_stamp_matches "$source_stamp_path" "$default_cpsl_root" "$cargo_profile" || \
+			die "$xcframework_path was not built from external/cpsl at the current revision and Cargo profile; rerun without --skip"
+	fi
+	cpsl_xcframework_satisfies_targets "$xcframework_info" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || \
+		die "$xcframework_path does not contain requested CPSL target(s): $CPSL_REQUEST_DESCRIPTION; rerun without --skip"
+	cpsl_pdfium_satisfies_targets "$pdfium_path" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || \
+		die "$pdfium_path does not contain requested PDFium target(s): $CPSL_REQUEST_DESCRIPTION; rerun without --skip"
 	printf 'Using existing CPSL XCFramework: %s\n' "$xcframework_path"
 	exit 0
 fi
@@ -184,5 +204,10 @@ if cpsl_ensure_should_reuse "$xcframework_info"; then
 fi
 rebuild_reason=$(cpsl_ensure_rebuild_reason "$xcframework_info" || printf '%s\n' "$rebuild_reason")
 
-printf 'Building CPSL Apple XCFramework for: ios macos (%s)\n' "$rebuild_reason"
-APPLE_PLATFORMS="ios macos" "$herm_root/scripts/build-cpsl-apple-xcframework.sh"
+printf 'Building CPSL Apple XCFramework for: %s (%s)\n' "$CPSL_REQUEST_DESCRIPTION" "$rebuild_reason"
+APPLE_PLATFORMS="$APPLE_PLATFORMS" \
+	IOS_DEVICE_TARGETS="$IOS_DEVICE_TARGETS" \
+	IOS_SIMULATOR_TARGETS="$IOS_SIMULATOR_TARGETS" \
+	MACOS_TARGETS="$MACOS_TARGETS" \
+	CONFIGURATION="${CONFIGURATION:-}" \
+	"$herm_root/scripts/build-cpsl-apple-xcframework.sh"
