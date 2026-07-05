@@ -208,8 +208,20 @@ require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodep
 require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'The following skills are available' app/apple/herm/Models/CPSLChatModel.swift
 require_match '\$0\.path' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'external renderers' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'name: beautiful-pdfs' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'doc.renderFile' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'Do not call `require`' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'pdf-smoke.html' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'fs\.read\("/skills/beautiful-pdfs/print\.css"\)' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'fs\.write\("/tmp/report\.html", html\)' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'print\(fs\.exists\("/home/herm/report\.pdf"\)\)' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'platform not supported' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'no PDF was produced' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'target_os = "ios"' external/cpsl/modules/native-webview-pdf/src/lib.rs
 require_match '@page' app/apple/herm/Skills/beautiful-pdfs/print.css
 require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
