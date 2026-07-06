@@ -1,7 +1,12 @@
 import Dispatch
 import SwiftUI
+
 #if canImport(UIKit)
 import UIKit
+#endif
+
+#if canImport(AppKit)
+import AppKit
 #endif
 
 #if canImport(UIKit)
@@ -125,9 +130,17 @@ struct CPSLPromptComposerView: View {
     @ObservedObject var model: CPSLChatModel
     let dismissKeyboardRequest: Int
     let dismissKeyboard: () -> Void
+    @State private var focusAfterDictation = false
+#if os(macOS)
+    @State private var collapseSelectionOnFocus = false
+#endif
     @State private var promptContentHeight: CGFloat = 0
     @State private var focusPromptRequest = 0
     @FocusState private var isPromptFocused: Bool
+
+    private var dictation: CPSLDictationService {
+        model.dictation
+    }
 
     private var hasPromptInput: Bool {
         !model.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -149,7 +162,7 @@ struct CPSLPromptComposerView: View {
         min(max(promptContentHeight, promptLineHeight), promptLineHeight * 6)
     }
 
-    var body: some View {
+    private var composerContent: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.composerSpacing) {
             ZStack(alignment: .topLeading) {
                 if model.promptText.isEmpty {
@@ -220,22 +233,25 @@ struct CPSLPromptComposerView: View {
                 Spacer()
 
                 Button {
-                    dismissKeyboard()
-                    model.showComingSoon("coming soon")
+                    toggleDictation()
                 } label: {
-                    Image(systemName: "mic.fill")
+                    Image(systemName: dictation.isActive ? "mic.fill" : "mic")
                         .font(CPSLTheme.iconMediumFont)
                         .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(CPSLTheme.text)
+                .foregroundStyle(dictation.isActive ? CPSLTheme.mauve : CPSLTheme.text)
                 .cpslGlassBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                    tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.38),
+                    tint: CPSLGlassTuning.tint(
+                        dictation.isActive ? CPSLTheme.mauve : CPSLTheme.card,
+                        opacity: dictation.isActive ? 0.22 : 0.38
+                    ),
                     strokeOpacity: 0.045
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+                .disabled(model.isRunning)
 
                 Button {
                     dismissKeyboard()
@@ -284,8 +300,23 @@ struct CPSLPromptComposerView: View {
             tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.54),
             strokeOpacity: 0.055
         )
+    }
+
+    var body: some View {
+        Group {
+            if dictation.isActive {
+                CPSLDictationBarView(
+                    dictation: dictation,
+                    onCancel: cancelDictation,
+                    onConfirm: confirmDictation
+                )
+            } else {
+                composerContent
+            }
+        }
         .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
         .padding(.bottom, CPSLTheme.medium)
+        .animation(.easeOut(duration: 0.2), value: dictation.isActive)
         .onChange(of: dismissKeyboardRequest) { _, _ in
             isPromptFocused = false
         }
@@ -294,6 +325,63 @@ struct CPSLPromptComposerView: View {
                 isPromptFocused = false
             }
         }
+        .onChange(of: dictation.isActive) { wasActive, isActive in
+            guard wasActive, !isActive else {
+                return
+            }
+            commitTranscript()
+            if focusAfterDictation {
+                focusAfterDictation = false
+#if os(macOS)
+                collapseSelectionOnFocus = true
+#endif
+                focusPrompt()
+            }
+        }
+#if os(macOS)
+        .onChange(of: isPromptFocused) { _, focused in
+            guard focused, collapseSelectionOnFocus else {
+                return
+            }
+            collapseSelectionOnFocus = false
+            DispatchQueue.main.async {
+                guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else {
+                    return
+                }
+                let end = (editor.string as NSString).length
+                editor.setSelectedRange(NSRange(location: end, length: 0))
+            }
+        }
+#endif
+        .cpslDictationErrorAlert(dictation)
+    }
+
+    private func toggleDictation() {
+        dismissKeyboard()
+        if dictation.isActive {
+            dictation.finish()
+        } else {
+            dictation.start()
+        }
+    }
+
+    private func cancelDictation() {
+        focusAfterDictation = false
+        dictation.cancel()
+    }
+
+    private func confirmDictation() {
+        focusAfterDictation = true
+        dictation.finish()
+    }
+
+    private func commitTranscript() {
+        let transcript = dictation.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else {
+            return
+        }
+        let base = model.promptText.trimmingCharacters(in: .whitespacesAndNewlines)
+        model.promptText = base.isEmpty ? transcript : base + " " + transcript
     }
 
     private func focusPrompt() {

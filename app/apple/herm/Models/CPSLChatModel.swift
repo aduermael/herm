@@ -25,6 +25,7 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var filePreview: CPSLFilePreview?
 
     let service = CPSLDebugService()
+    let dictation = CPSLDictationService()
     private var store: CPSLConversationStore?
     private var storeLoadTask: Task<CPSLConversationStore, Error>?
     var currentNodeID: String?
@@ -128,6 +129,7 @@ final class CPSLChatModel: ObservableObject {
             return
         }
 
+        dictation.cancel()
         promptText = ""
         isFileBrowserOpen = false
         filePreview = nil
