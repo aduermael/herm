@@ -608,11 +608,7 @@ final class CPSLChatModel: ObservableObject {
         }
 
         let message = result.error ?? "Preview is not available for this file."
-        if message.contains("TXT and PDF") {
-            showComingSoon(message)
-        } else {
-            fileBrowserError = "\(entry.path): \(message)"
-        }
+        fileBrowserError = "\(entry.path): \(message)"
     }
 
     func appendErrorMessage(title: String?, body: String) {
