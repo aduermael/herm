@@ -163,12 +163,52 @@ func TestParseCPSLWorkerOptionsRepeatedDomains(t *testing.T) {
 	}
 }
 
+func TestParseCPSLWorkerOptionsAllowsSessionConfigWorkspaceFallback(t *testing.T) {
+	var stderr bytes.Buffer
+	opts, err := parseCPSLWorkerOptions(parseCPSLWorkerArgsOptions{
+		args: []string{
+			"--library", "/tmp/libcpsl.so",
+			"--session-config", "/tmp/session.json",
+		},
+		stderr: &stderr,
+	})
+	if err != nil {
+		t.Fatalf("parseCPSLWorkerOptions: %v", err)
+	}
+	if opts.workspace != "" {
+		t.Fatalf("workspace = %q, want empty fallback", opts.workspace)
+	}
+	if opts.sessionConfigPath != "/tmp/session.json" {
+		t.Fatalf("sessionConfigPath = %q", opts.sessionConfigPath)
+	}
+}
+
 func TestSetCPSLLibraryDirEnv(t *testing.T) {
 	t.Setenv(cpslLibraryDirEnv, "")
 	dir := t.TempDir()
 	setCPSLLibraryDirEnv(filepath.Join(dir, "libcpsl.so"))
 	if got := os.Getenv(cpslLibraryDirEnv); got != dir {
 		t.Fatalf("%s = %q, want %q", cpslLibraryDirEnv, got, dir)
+	}
+}
+
+func TestResolveCPSLWorkerSessionUsesConfigWorkspaceAndMounts(t *testing.T) {
+	workspace := t.TempDir()
+	stage := t.TempDir()
+	configPath := writeCPSLWorkerSessionConfig(t, cpslWorkerSessionConfigFile{
+		Workspace: workspace,
+		Mounts:    []cpslMountDescriptor{testICloudMountDescriptor(stage, "/icloud/project")},
+	})
+
+	resolved, err := resolveCPSLWorkerSession(cpslWorkerOptions{sessionConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("resolveCPSLWorkerSession: %v", err)
+	}
+	if resolved.workspace != workspace {
+		t.Fatalf("workspace = %q, want %q", resolved.workspace, workspace)
+	}
+	if len(resolved.mounts) != 1 || resolved.mounts[0].VirtualPath != "/icloud/project" {
+		t.Fatalf("mounts = %#v", resolved.mounts)
 	}
 }
 
@@ -205,6 +245,33 @@ func TestCPSLSessionConfigJSON(t *testing.T) {
 		if strings.Contains(configJSON, forbidden) {
 			t.Fatalf("config JSON included unsupported http field %q: %s", forbidden, configJSON)
 		}
+	}
+}
+
+func TestCPSLSessionConfigJSONForMountsIsDeterministicAndDisablesHTTP(t *testing.T) {
+	configJSON, err := cpslSessionConfigJSON(cpslSessionConfigJSONOptions{
+		workspace: "/tmp/work",
+		mounts: []validatedCPSLMount{
+			{HostPath: "/tmp/zeta", VirtualPath: "/icloud/zeta", Mode: cpslMountModeReadOnly},
+			{HostPath: "/tmp/project", VirtualPath: "/icloud/project", Mode: cpslMountModeReadWrite},
+		},
+		allowDomains: []string{"*"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config cpslSessionConfig
+	if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(config.Mounts); got != 3 {
+		t.Fatalf("mount count = %d, want 3", got)
+	}
+	if config.Mounts[0].VirtualPath != "/workdir" || config.Mounts[1].VirtualPath != "/icloud/project" || config.Mounts[2].VirtualPath != "/icloud/zeta" {
+		t.Fatalf("mount order = %#v", config.Mounts)
+	}
+	if len(config.HTTP.AllowDomains) != 0 || len(config.HTTP.DenyDomains) != 0 {
+		t.Fatalf("HTTP policy = %#v, want empty domain lists", config.HTTP)
 	}
 }
 
@@ -266,6 +333,19 @@ func decodeWorkerTestResponses(t *testing.T, data []byte) []cpslEvalResponse {
 		responses = append(responses, response)
 	}
 	return responses
+}
+
+func writeCPSLWorkerSessionConfig(t *testing.T, config cpslWorkerSessionConfigFile) string {
+	t.Helper()
+	data, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 type ioDiscard struct{}

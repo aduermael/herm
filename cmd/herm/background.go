@@ -303,11 +303,12 @@ func bootCPSLWorkerCmd(opts bootCPSLWorkerCmdOptions) {
 	opts.ch <- cpslStatusMsg{text: "starting…"}
 	skillsPath, _ := ensureSkillsRuntimeDir(opts.workspace)
 	client, err := NewCPSLWorkerClient(newCPSLWorkerClientOptions{
-		LibraryPath:  opts.config.LibraryPath,
-		Workspace:    opts.workspace,
-		SkillsPath:   skillsPath,
-		AllowDomains: append([]string(nil), opts.config.AllowDomains...),
-		DenyDomains:  append([]string(nil), opts.config.DenyDomains...),
+		LibraryPath:       opts.config.LibraryPath,
+		Workspace:         opts.workspace,
+		SkillsPath:        skillsPath,
+		SessionConfigPath: opts.config.SessionConfigPath,
+		AllowDomains:      append([]string(nil), opts.config.AllowDomains...),
+		DenyDomains:       append([]string(nil), opts.config.DenyDomains...),
 	})
 	if err != nil {
 		opts.ch <- cpslStatusMsg{text: "library unavailable"}

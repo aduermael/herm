@@ -151,6 +151,53 @@ func TestParseCLI_CPSLRelativeLibraryPath(t *testing.T) {
 	}
 }
 
+func TestParseCLI_CPSLSessionConfig(t *testing.T) {
+	libPath := writeTestCPSLLibrary(t)
+	configPath := writeCPSLWorkerSessionConfig(t, cpslWorkerSessionConfigFile{
+		Mounts: []cpslMountDescriptor{
+			withLabel(testICloudMountDescriptor("/host/not/validated/by/parser", "/icloud/project"), "Project\nName"),
+		},
+	})
+	var stderr bytes.Buffer
+
+	opts, err := parseCLI(parseCLIOptions{
+		args:   []string{"--cpsl", libPath, "--cpsl-session-config", configPath, "-p", "say ok"},
+		stderr: &stderr,
+	})
+	if err != nil {
+		t.Fatalf("parseCLI: %v", err)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+	wantPath, err := filepath.EvalSymlinks(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.cpsl.SessionConfigPath != wantPath {
+		t.Fatalf("SessionConfigPath = %q, want %q", opts.cpsl.SessionConfigPath, wantPath)
+	}
+	if len(opts.cpsl.Mounts) != 1 {
+		t.Fatalf("mount count = %d, want 1", len(opts.cpsl.Mounts))
+	}
+	if opts.cpsl.Mounts[0].VirtualPath != "/icloud/project" || opts.cpsl.Mounts[0].Label != "Project Name" {
+		t.Fatalf("mounts = %#v", opts.cpsl.Mounts)
+	}
+}
+
+func TestParseCLI_CPSLSessionConfigRequiresCPSL(t *testing.T) {
+	configPath := writeCPSLWorkerSessionConfig(t, cpslWorkerSessionConfigFile{})
+	var stderr bytes.Buffer
+
+	_, err := parseCLI(parseCLIOptions{args: []string{"--cpsl-session-config", configPath}, stderr: &stderr})
+	if err == nil {
+		t.Fatal("parseCLI returned nil error")
+	}
+	if !strings.Contains(stderr.String(), "requires --cpsl") {
+		t.Fatalf("stderr = %q, want requires --cpsl", stderr.String())
+	}
+}
+
 func TestParseCLI_UnquotedPromptBehaviorUnchanged(t *testing.T) {
 	var stderr bytes.Buffer
 	opts, err := parseCLI(parseCLIOptions{args: []string{"-p", "say", "ok"}, stderr: &stderr})

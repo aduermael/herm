@@ -120,6 +120,7 @@ func parseCLI(opts parseCLIOptions) (cliOptions, error) {
 	fs.StringVar(&parsed.cacheDir, "cache", "", "directory for cached model responses")
 	fs.StringVar(&parsed.cpsl.LibraryPath, "cpsl", "", "path to a local sandbox library")
 	fs.BoolVar(&parsed.naked, "naked", false, "run directly on the host with workspace-scoped sandboxing")
+	fs.StringVar(&parsed.cpsl.SessionConfigPath, "cpsl-session-config", "", "path to CPSL iCloud mount descriptor JSON")
 	fs.Var(&allowDomains, "allow-domain", "allow a domain in sandbox mode")
 	fs.Var(&denyDomains, "deny-domain", "deny a domain in sandbox mode")
 	if err := fs.Parse(opts.args); err != nil {
@@ -140,6 +141,25 @@ func parseCLI(opts parseCLIOptions) (cliOptions, error) {
 			return parsed, err
 		}
 		parsed.cpsl.LibraryPath = path
+	}
+	if parsed.cpsl.SessionConfigPath != "" {
+		if !cpslRequested {
+			err := fmt.Errorf("--cpsl-session-config requires --cpsl")
+			fmt.Fprintln(opts.stderr, "Error:", err)
+			return parsed, err
+		}
+		path, err := validateCPSLSessionConfigPath(parsed.cpsl.SessionConfigPath)
+		if err != nil {
+			fmt.Fprintln(opts.stderr, "Error:", err)
+			return parsed, err
+		}
+		mounts, err := cpslPromptMountsFromSessionConfigFile(path)
+		if err != nil {
+			fmt.Fprintln(opts.stderr, "Error:", err)
+			return parsed, err
+		}
+		parsed.cpsl.SessionConfigPath = path
+		parsed.cpsl.Mounts = mounts
 	}
 	if fs.NArg() > 0 {
 		if parsed.prompt != "" {
@@ -209,6 +229,7 @@ Flags:
       --cache path                 Cache successful model responses in path.
       --cpsl path                  Run with a local sandbox library instead of Docker.
       --naked                      Run on the host with workspace-scoped sandboxing.
+      --cpsl-session-config path   Use CPSL iCloud mount descriptor JSON.
       --allow-domain domain        Allow a domain in sandbox mode. Repeatable.
       --deny-domain domain         Deny a domain in sandbox mode. Repeatable.
 

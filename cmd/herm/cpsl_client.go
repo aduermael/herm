@@ -34,11 +34,12 @@ type CPSLWorkerClient struct {
 }
 
 type newCPSLWorkerClientOptions struct {
-	LibraryPath  string
-	Workspace    string
-	SkillsPath   string
-	AllowDomains []string
-	DenyDomains  []string
+	LibraryPath       string
+	Workspace         string
+	SkillsPath        string
+	SessionConfigPath string
+	AllowDomains      []string
+	DenyDomains       []string
 }
 
 type cpslWorkerProcess struct {
@@ -49,22 +50,24 @@ type cpslWorkerProcess struct {
 }
 
 type cpslWorkerProcessOptions struct {
-	LibraryPath  string
-	Workspace    string
-	SkillsPath   string
-	AllowDomains []string
-	DenyDomains  []string
+	LibraryPath       string
+	Workspace         string
+	SkillsPath        string
+	SessionConfigPath string
+	AllowDomains      []string
+	DenyDomains       []string
 }
 
 var startCPSLWorkerProcess = startCPSLWorkerOSProcess
 
 func NewCPSLWorkerClient(opts newCPSLWorkerClientOptions) (*CPSLWorkerClient, error) {
 	proc, err := startCPSLWorkerProcess(cpslWorkerProcessOptions{
-		LibraryPath:  opts.LibraryPath,
-		Workspace:    opts.Workspace,
-		SkillsPath:   opts.SkillsPath,
-		AllowDomains: append([]string(nil), opts.AllowDomains...),
-		DenyDomains:  append([]string(nil), opts.DenyDomains...),
+		LibraryPath:       opts.LibraryPath,
+		Workspace:         opts.Workspace,
+		SkillsPath:        opts.SkillsPath,
+		SessionConfigPath: opts.SessionConfigPath,
+		AllowDomains:      append([]string(nil), opts.AllowDomains...),
+		DenyDomains:       append([]string(nil), opts.DenyDomains...),
 	})
 	if err != nil {
 		return nil, err
@@ -138,6 +141,9 @@ func cpslWorkerProcessArgs(opts cpslWorkerProcessOptions) []string {
 	}
 	if opts.SkillsPath != "" {
 		args = append(args, "--skills", opts.SkillsPath)
+	}
+	if opts.SessionConfigPath != "" {
+		args = append(args, "--session-config", opts.SessionConfigPath)
 	}
 	for _, domain := range opts.AllowDomains {
 		args = append(args, "--allow-domain", domain)

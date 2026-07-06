@@ -441,6 +441,33 @@ cd .herm-cpsl/artifacts/linux-amd64
 ./herm --cpsl libcpsl.so --allow-domain example.com
 ```
 
+Apple-platform hosts can add staged iCloud Drive directory mounts by passing a
+descriptor file with `--cpsl-session-config`. Herm still mounts the current
+working directory as `/workdir`; descriptors add sorted `/icloud/<slug>` mounts.
+
+```json
+{
+  "mounts": [
+    {
+      "label": "Project",
+      "host_path": "/app/staged/icloud/project",
+      "virtual_path": "/icloud/project",
+      "mode": "ro",
+      "source_platform": "ipados",
+      "source_kind": "icloud-drive-directory",
+      "access_lifetime": "session",
+      "hydration_state": "staged"
+    }
+  ]
+}
+```
+
+`mode` defaults to `ro`. `rw` is accepted only with
+`"writable_staged_copy": true`; it writes to the staged local copy and does not
+sync back to iCloud. When any iCloud mount is active, Herm clears CPSL HTTP
+allow/deny lists and disables provider-side tools even if `--allow-domain *` is
+present.
+
 CPSL mode does not provide Herm's container development tools, host package
 installation, host `git`, Docker/OCI images, CPython, Node, or a system compiler
 inside the sandbox.

@@ -6,4 +6,7 @@
 - Date: {{.Date}}
 - Runtime: Unix-like sandbox
 - Workspace: {{.WorkDir}}
+
+Available mounts:
+{{.MountTable}}
 {{- end}}

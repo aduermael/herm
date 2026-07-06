@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sort"
 	"unsafe"
 )
 
@@ -114,31 +115,49 @@ type cpslHTTPConfig struct {
 type cpslSessionConfigJSONOptions struct {
 	workspace    string
 	skillsPath   string
+	mounts       []validatedCPSLMount
 	allowDomains []string
 	denyDomains  []string
 }
 
 func cpslSessionConfigJSON(opts cpslSessionConfigJSONOptions) (string, error) {
-	mounts := []cpslMountConfig{{
+	configMounts := []cpslMountConfig{{
 		Host:        opts.workspace,
 		VirtualPath: cpslWorkerInitialCW,
-		Mode:        "rw",
+		Mode:        cpslMountModeReadWrite,
 	}}
 	if opts.skillsPath != "" {
-		mounts = append(mounts, cpslMountConfig{
+		configMounts = append(configMounts, cpslMountConfig{
 			Host:        opts.skillsPath,
 			VirtualPath: skillsVirtualRoot,
-			Mode:        "ro",
+			Mode:        cpslMountModeReadOnly,
 		})
 	}
+	sortedMounts := append([]validatedCPSLMount(nil), opts.mounts...)
+	sort.Slice(sortedMounts, func(i, j int) bool {
+		return sortedMounts[i].VirtualPath < sortedMounts[j].VirtualPath
+	})
+	for _, mount := range sortedMounts {
+		configMounts = append(configMounts, cpslMountConfig{
+			Host:        mount.HostPath,
+			VirtualPath: mount.VirtualPath,
+			Mode:        mount.Mode,
+		})
+	}
+	allowDomains := opts.allowDomains
+	denyDomains := opts.denyDomains
+	if len(sortedMounts) > 0 {
+		allowDomains = nil
+		denyDomains = nil
+	}
 	config := cpslSessionConfig{
-		Mounts:     mounts,
+		Mounts:     configMounts,
 		InitialCWD: cpslWorkerInitialCW,
 		Language:   cpslLanguageLuau,
 		HTTP: cpslHTTPConfig{
 			Mode:         "policy",
-			AllowDomains: cloneCPSLStringList(opts.allowDomains),
-			DenyDomains:  cloneCPSLStringList(opts.denyDomains),
+			AllowDomains: cloneCPSLStringList(allowDomains),
+			DenyDomains:  cloneCPSLStringList(denyDomains),
 		},
 	}
 	data, err := json.Marshal(config)

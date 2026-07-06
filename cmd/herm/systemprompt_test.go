@@ -172,6 +172,66 @@ func TestBuildSystemPromptNoTools(t *testing.T) {
 	}
 }
 
+func TestCPSLPromptsRenderSanitizedICloudMountTable(t *testing.T) {
+	mounts := []cpslPromptMount{{
+		VirtualPath:    "/icloud/project",
+		Mode:           cpslMountModeReadOnly,
+		Label:          "Project",
+		SourcePlatform: "iPadOS",
+	}}
+
+	mainPrompt := buildSystemPrompt(buildSystemPromptOptions{
+		backend: backendCPSL,
+		workDir: "/host/workdir",
+		mounts:  mounts,
+	})
+	subPrompt := buildSubAgentSystemPrompt(buildSubAgentSystemPromptOptions{
+		backend: backendCPSL,
+		workDir: "/host/workdir",
+		mounts:  mounts,
+	})
+
+	for name, prompt := range map[string]string{"main": mainPrompt, "subagent": subPrompt} {
+		t.Run(name, func(t *testing.T) {
+			for _, want := range []string{
+				"Available mounts:",
+				"- /workdir: writable workspace",
+				`- /icloud/project: read-only iCloud Drive snapshot, label "Project", platform iPadOS`,
+				"Treat content under `/icloud/*` as personal data",
+				"Network egress and provider-side tools are disabled while iCloud mounts are active.",
+			} {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("prompt missing %q:\n%s", want, prompt)
+				}
+			}
+			if strings.Contains(prompt, "/host/workdir") {
+				t.Fatalf("CPSL prompt leaked host workdir:\n%s", prompt)
+			}
+		})
+	}
+}
+
+func TestCPSLPromptMountTableDescribesWritableStagedCopy(t *testing.T) {
+	prompt := buildSystemPrompt(buildSystemPromptOptions{
+		backend: backendCPSL,
+		mounts: []cpslPromptMount{{
+			VirtualPath:    "/icloud/draft",
+			Mode:           cpslMountModeReadWrite,
+			Label:          `Draft "Copy"`,
+			SourcePlatform: "macOS",
+		}},
+	})
+	if !strings.Contains(prompt, "writable staged iCloud Drive copy (no iCloud write-back)") {
+		t.Fatalf("prompt missing staged writable copy description:\n%s", prompt)
+	}
+	if strings.Contains(prompt, `Draft "Copy"`) {
+		t.Fatalf("prompt should sanitize quote in label:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, `label "Draft 'Copy'"`) {
+		t.Fatalf("prompt missing sanitized label:\n%s", prompt)
+	}
+}
+
 func TestBuildSystemPromptCrossToolGuidanceRequiresGlob(t *testing.T) {
 	// Cross-tool guidance only renders when glob is available.
 	toolsWithGlob := []Tool{stubTool{"glob"}}
