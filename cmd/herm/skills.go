@@ -337,27 +337,54 @@ func (a *App) handleSkillsCommand() {
 		return
 	}
 
-	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: formatSkillsList(skills)})
+	a.messages = append(a.messages, skillsListMessage(skills))
 	a.render()
 }
 
-func formatSkillsList(skills []Skill) string {
-	var b strings.Builder
-	b.WriteString("Skills\n")
-	for _, skill := range skills {
-		b.WriteString("  ")
-		b.WriteString(skill.Name)
-		if skill.Description != "" {
-			b.WriteString(" - ")
-			b.WriteString(skill.Description)
-		}
-		if skill.Path != "" {
-			b.WriteString("\n    ")
-			b.WriteString(skill.Path)
-		}
-		b.WriteString("\n")
+func skillsListMessage(skills []Skill) chatMessage {
+	return chatMessage{
+		kind:         msgInfo,
+		content:      formatSkillsListPlain(skills),
+		inlineBlocks: formatSkillsListBlocks(skills),
 	}
-	return strings.TrimRight(b.String(), "\n")
+}
+
+func formatSkillsListPlain(skills []Skill) string {
+	var b strings.Builder
+	for _, skill := range skills {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(skillListLine(skill))
+	}
+	return b.String()
+}
+
+func formatSkillsListBlocks(skills []Skill) []inlineBlock {
+	blocks := make([]inlineBlock, 0, len(skills))
+	for _, skill := range skills {
+		blocks = append(blocks, skillListBlock(skill))
+	}
+	return blocks
+}
+
+func skillListLine(skill Skill) string {
+	if skill.Description == "" {
+		return skill.Name
+	}
+	return skill.Name + "  " + skill.Description
+}
+
+func skillListBlock(skill Skill) inlineBlock {
+	text := styleChatBlue + skill.Name + ansiReset
+	if skill.Description != "" {
+		text += "  \033[2m" + skill.Description + ansiReset
+	}
+	return inlineBlock{
+		text:        text,
+		width:       visibleWidth(text),
+		forceOwnRow: true,
+	}
 }
 
 func skillsRuntimeDir(workspace string) string {

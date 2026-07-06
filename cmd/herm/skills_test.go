@@ -182,21 +182,52 @@ body
 	}
 }
 
-func TestFormatSkillsListShowsNameDescriptionAndPath(t *testing.T) {
-	got := formatSkillsList([]Skill{
+func TestSkillsListMessageShowsNameAndDimmedDescriptionOnly(t *testing.T) {
+	msg := skillsListMessage([]Skill{
 		{Name: "pdf", Description: "Build PDFs", Path: "/skills/pdf/SKILL.md"},
 		{Name: "style", Path: "/skills/style/SKILL.md"},
 	})
 	for _, want := range []string{
-		"Skills",
-		"pdf - Build PDFs",
-		"/skills/pdf/SKILL.md",
+		"pdf  Build PDFs",
 		"style",
-		"/skills/style/SKILL.md",
 	} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("formatSkillsList missing %q in:\n%s", want, got)
+		if !strings.Contains(msg.content, want) {
+			t.Fatalf("skills list missing %q in:\n%s", want, msg.content)
 		}
+	}
+	for _, unwanted := range []string{"Skills", "/skills/pdf/SKILL.md", "/skills/style/SKILL.md"} {
+		if strings.Contains(msg.content, unwanted) {
+			t.Fatalf("skills list contains %q in:\n%s", unwanted, msg.content)
+		}
+	}
+	if len(msg.inlineBlocks) != 2 {
+		t.Fatalf("inline blocks = %d, want 2", len(msg.inlineBlocks))
+	}
+	if !strings.Contains(msg.inlineBlocks[0].text, "\033[2mBuild PDFs") {
+		t.Fatalf("description block is not dimmed: %q", msg.inlineBlocks[0].text)
+	}
+	if msg.inlineBlocks[0].width != visibleWidth("pdf  Build PDFs") {
+		t.Fatalf("block width = %d, want %d", msg.inlineBlocks[0].width, visibleWidth("pdf  Build PDFs"))
+	}
+}
+
+func TestSkillsListMessageRowsStaySingleLine(t *testing.T) {
+	msg := skillsListMessage([]Skill{
+		{Name: "beautiful-pdfs", Description: "Create polished PDF files with semantic HTML, print CSS, page breaks, and rendered output."},
+		{Name: "style", Description: "Keep UI copy concise."},
+	})
+
+	rows := layoutInlineBlocks(layoutInlineBlocksOptions{blocks: msg.inlineBlocks, width: 42})
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	for _, row := range rows {
+		if got := visibleWidth(row); got > 42 {
+			t.Fatalf("row width = %d, want <= 42: %q", got, ansiEscRe.ReplaceAllString(row, ""))
+		}
+	}
+	if plain := ansiEscRe.ReplaceAllString(rows[0], ""); !strings.HasSuffix(plain, "…") {
+		t.Fatalf("first row should be ellipsized, got %q", plain)
 	}
 }
 
@@ -224,10 +255,16 @@ Use semantic HTML.
 	if msg.kind != msgInfo {
 		t.Fatalf("message kind = %v, want msgInfo", msg.kind)
 	}
-	for _, want := range []string{"Skills", "pdf - Build PDFs", "/skills/pdf/SKILL.md"} {
+	for _, want := range []string{"pdf  Build PDFs"} {
 		if !strings.Contains(msg.content, want) {
 			t.Fatalf("/skills output missing %q in:\n%s", want, msg.content)
 		}
+	}
+	if strings.Contains(msg.content, "/skills/pdf/SKILL.md") {
+		t.Fatalf("/skills output should not show skill file paths:\n%s", msg.content)
+	}
+	if len(msg.inlineBlocks) != 1 {
+		t.Fatalf("inline blocks = %d, want 1", len(msg.inlineBlocks))
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".herm", skillsRuntimeDirName, "pdf", skillDocFileName)); err != nil {
 		t.Fatalf("/skills did not stage runtime skill: %v", err)
