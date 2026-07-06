@@ -43,14 +43,36 @@ final class CPSLChatModel: ObservableObject {
     CPSL is your execution environment: a Unix-like local environment with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Luau is the interface instead of Bash, and it is the only supported execution language.
     Use /home/herm as the default home for durable user-created files and /tmp for temporary files. CPSL still exposes a Unix-like root with system directories such as /etc, /usr, and /var when needed.
     Your client-side tools are local_sandbox_exec and agent. Use tools only when they materially help with the user's request.
-    Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Exploring files", "Reading settings", or "Checking results". Do not mention code, sandbox details, paths, tool names, or implementation details in intent.
+    Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Preparing document", "Checking export", or "Saving result". Do not mention code, sandbox details, paths, module names, tool names, API names, file extensions, HTTP, or implementation details in intent.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
     local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs.
+    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Do not use require or package-style imports for filesystem or document work.
+    Treat help output as human-readable documentation. Call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
+    If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available through CPSL.
+    When a requested artifact cannot be produced, do not claim success. Mention any partial artifact only as a fallback, and make clear it is not the requested output.
     agent spawns a focused sub-agent with its own turn budget. Use explore mode for research and reading. Use general mode for execution-heavy or implementation-style work. Keep sub-agent tasks narrow and self-contained.
     Luau essentials: declare variables with local, use 1-based indexing, concatenate strings with .., use ~= for not-equal, and use pcall(fn) for recoverable errors.
     Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or paths outside CPSL.
     Do not ask the provider to browse the web, do not imply host shell access, and do not share local files unless the user explicitly requests file content.
     """
+
+    private func systemPrompt(with skills: [CPSLAgentSkill]) -> String {
+        guard !skills.isEmpty else {
+            return systemPrompt
+        }
+        let skillLines = skills.map {
+            "- **\($0.name)**: \($0.description) Read: `\($0.path)`"
+        }.joined(separator: "\n")
+        return systemPrompt + """
+
+
+        ## Skills
+
+        The following skills are available. Their full instructions are not loaded into this prompt. When a skill is relevant to the user's task, read its skill file first, then follow that file's instructions and read any referenced support files from the same folder as needed.
+
+        \(skillLines)
+        """
+    }
 
     init() {
         Task {
@@ -366,6 +388,7 @@ final class CPSLChatModel: ObservableObject {
         do {
             var conversationID: String
             var parentID: String
+            let promptForConversation = systemPrompt(with: await service.availableSkills())
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -391,13 +414,13 @@ final class CPSLChatModel: ObservableObject {
                 let created = try await store.createConversation(
                     userText: userText,
                     model: nil,
-                    systemPrompt: systemPrompt
+                    systemPrompt: promptForConversation
                 )
                 conversationID = created.summary.id
                 parentID = created.userNode.id
                 selectedConversationID = conversationID
                 currentNodeID = parentID
-                currentSystemPrompt = systemPrompt
+                currentSystemPrompt = promptForConversation
                 if let message = created.userNode.chatMessage {
                     messages.append(message)
                 }
@@ -411,7 +434,7 @@ final class CPSLChatModel: ObservableObject {
             activeModel = config.model
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            let replaySystemPrompt = currentSystemPrompt ?? systemPrompt
+            let replaySystemPrompt = currentSystemPrompt ?? promptForConversation
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,

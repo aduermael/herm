@@ -35,6 +35,7 @@ type CPSLWorkerClient struct {
 type newCPSLWorkerClientOptions struct {
 	LibraryPath  string
 	Workspace    string
+	SkillsPath   string
 	AllowDomains []string
 	DenyDomains  []string
 }
@@ -49,6 +50,7 @@ type cpslWorkerProcess struct {
 type cpslWorkerProcessOptions struct {
 	LibraryPath  string
 	Workspace    string
+	SkillsPath   string
 	AllowDomains []string
 	DenyDomains  []string
 }
@@ -59,6 +61,7 @@ func NewCPSLWorkerClient(opts newCPSLWorkerClientOptions) (*CPSLWorkerClient, er
 	proc, err := startCPSLWorkerProcess(cpslWorkerProcessOptions{
 		LibraryPath:  opts.LibraryPath,
 		Workspace:    opts.Workspace,
+		SkillsPath:   opts.SkillsPath,
 		AllowDomains: append([]string(nil), opts.AllowDomains...),
 		DenyDomains:  append([]string(nil), opts.DenyDomains...),
 	})
@@ -131,6 +134,9 @@ func cpslWorkerProcessArgs(opts cpslWorkerProcessOptions) []string {
 		"__cpsl-worker",
 		"--library", opts.LibraryPath,
 		"--workspace", opts.Workspace,
+	}
+	if opts.SkillsPath != "" {
+		args = append(args, "--skills", opts.SkillsPath)
 	}
 	for _, domain := range opts.AllowDomains {
 		args = append(args, "--allow-domain", domain)

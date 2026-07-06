@@ -190,8 +190,8 @@ func TestBuildSystemPromptCrossToolGuidanceRequiresGlob(t *testing.T) {
 
 func TestBuildSystemPromptWithSkills(t *testing.T) {
 	skills := []Skill{
-		{Name: "Testing", Description: "How to test", Content: "Write table-driven tests."},
-		{Name: "Style", Description: "Code style", Content: "Use gofmt."},
+		{Name: "Testing", Description: "How to test", Path: "/skills/testing/SKILL.md"},
+		{Name: "Style", Description: "Code style", Path: "/skills/style/SKILL.md"},
 	}
 	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: nil, serverTools: nil, skills: skills, workDir: "/work", personality: "", containerImage: "alpine:latest", worktreeBranch: "", snap: nil})
 
@@ -204,14 +204,14 @@ func TestBuildSystemPromptWithSkills(t *testing.T) {
 	if !strings.Contains(prompt, "**Style**: Code style") {
 		t.Error("prompt missing Style skill summary")
 	}
-	if !strings.Contains(prompt, "### Testing") {
-		t.Error("prompt missing Testing skill content section")
+	if !strings.Contains(prompt, "Read: `/skills/testing/SKILL.md`") {
+		t.Error("prompt missing Testing skill path")
 	}
-	if !strings.Contains(prompt, "Write table-driven tests.") {
-		t.Error("prompt missing Testing skill content body")
+	if strings.Contains(prompt, "Write table-driven tests.") {
+		t.Error("prompt should not contain Testing skill content body")
 	}
-	if !strings.Contains(prompt, "### Style") {
-		t.Error("prompt missing Style skill content section")
+	if strings.Contains(prompt, "### Style") {
+		t.Error("prompt should not contain Style skill content section")
 	}
 }
 
@@ -684,11 +684,10 @@ func TestBuildSystemPromptRetryGuidance(t *testing.T) {
 }
 
 func TestBuildSystemPromptMultipleSkills(t *testing.T) {
-	longContent := strings.Repeat("This is a detailed guideline for writing idiomatic Go code. ", 9)
 	skills := []Skill{
-		{Name: "EmptySkill", Description: "A skill with no body content", Content: ""},
-		{Name: "LongSkill", Description: "A skill with a very long body", Content: longContent},
-		{Name: "NormalSkill", Description: "A typical skill", Content: "Keep functions small and focused."},
+		{Name: "EmptySkill", Description: "A skill with no body content", Path: "/skills/empty/SKILL.md"},
+		{Name: "LongSkill", Description: "A skill with a very long body", Path: "/skills/long/SKILL.md"},
+		{Name: "NormalSkill", Description: "A typical skill", Path: "/skills/normal/SKILL.md"},
 	}
 	prompt := buildSystemPrompt(buildSystemPromptOptions{tools: nil, serverTools: nil, skills: skills, workDir: "/work", personality: "", containerImage: "alpine:latest", worktreeBranch: "", snap: nil})
 
@@ -700,16 +699,12 @@ func TestBuildSystemPromptMultipleSkills(t *testing.T) {
 		if !strings.Contains(prompt, summaryLine) {
 			t.Errorf("prompt missing skill summary line: %q", summaryLine)
 		}
-		header := "### " + skill.Name
-		if !strings.Contains(prompt, header) {
-			t.Errorf("prompt missing skill subsection header: %q", header)
+		if !strings.Contains(prompt, "Read: `"+skill.Path+"`") {
+			t.Errorf("prompt missing skill path: %q", skill.Path)
 		}
 	}
-	if !strings.Contains(prompt, longContent) {
-		t.Error("prompt missing long skill content")
-	}
-	if !strings.Contains(prompt, "Keep functions small and focused.") {
-		t.Error("prompt missing normal skill content")
+	if strings.Contains(prompt, "Keep functions small and focused.") {
+		t.Error("prompt should not include full normal skill content")
 	}
 }
 
@@ -799,8 +794,8 @@ func TestSubAgentPromptSmallerThanMain(t *testing.T) {
 	}
 	serverTools := []types.ToolDefinition{WebSearchToolDef()}
 	skills := []Skill{
-		{Name: "Testing", Description: "How to test", Content: "Write table-driven tests."},
-		{Name: "Style", Description: "Code style", Content: "Use gofmt."},
+		{Name: "Testing", Description: "How to test", Path: "/skills/testing/SKILL.md"},
+		{Name: "Style", Description: "Code style", Path: "/skills/style/SKILL.md"},
 	}
 
 	mainPrompt := buildSystemPrompt(buildSystemPromptOptions{tools: tools, serverTools: serverTools, skills: skills, workDir: "/work", personality: "Be helpful.", containerImage: "alpine:latest", worktreeBranch: "feature-branch", snap: nil})

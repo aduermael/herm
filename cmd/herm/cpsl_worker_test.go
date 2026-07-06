@@ -153,6 +153,7 @@ func TestSetCPSLLibraryDirEnv(t *testing.T) {
 func TestCPSLSessionConfigJSON(t *testing.T) {
 	configJSON, err := cpslSessionConfigJSON(cpslSessionConfigJSONOptions{
 		workspace:    "/tmp/work",
+		skillsPath:   "/tmp/skills",
 		allowDomains: []string{"example.com", "api.example.com"},
 		denyDomains:  []string{"deny.example.com", "deny-api.example.com"},
 	})
@@ -166,8 +167,11 @@ func TestCPSLSessionConfigJSON(t *testing.T) {
 	if config.InitialCWD != "/workdir" || config.Language != "luau" {
 		t.Fatalf("config = %#v", config)
 	}
-	if len(config.Mounts) != 1 || config.Mounts[0].Host != "/tmp/work" || config.Mounts[0].VirtualPath != "/workdir" || config.Mounts[0].Mode != "rw" {
+	if len(config.Mounts) != 2 || config.Mounts[0].Host != "/tmp/work" || config.Mounts[0].VirtualPath != "/workdir" || config.Mounts[0].Mode != "rw" {
 		t.Fatalf("mounts = %#v", config.Mounts)
+	}
+	if config.Mounts[1].Host != "/tmp/skills" || config.Mounts[1].VirtualPath != "/skills" || config.Mounts[1].Mode != "ro" {
+		t.Fatalf("skills mount = %#v", config.Mounts[1])
 	}
 	if !slices.Equal(config.HTTP.AllowDomains, []string{"example.com", "api.example.com"}) {
 		t.Fatalf("allow domains = %#v", config.HTTP.AllowDomains)

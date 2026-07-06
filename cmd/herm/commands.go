@@ -19,7 +19,7 @@ import (
 
 // ─── Commands and autocomplete ───
 
-var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", "/session", "/shell", "/update", "/usage", "/worktrees"}
+var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", "/session", "/shell", "/skills", "/update", "/usage", "/worktrees"}
 var sessionSubcommands = []string{"/session list", "/session load", "/session show"}
 var cpslUnavailableCommands = map[string]bool{
 	"/branches":  true,
@@ -244,6 +244,9 @@ func (a *App) handleCommand(input string) {
 		}
 		a.enterShellMode(input)
 
+	case "/skills":
+		a.handleSkillsCommand()
+
 	case "/session":
 		a.handleSessionCommand(input)
 
@@ -456,6 +459,9 @@ func (a *App) switchToWorktree(opts switchToWorktreeOptions) {
 			mounts := []MountSpec{
 				{Source: wtPath, Destination: wtPath},
 				{Source: attachDir, Destination: "/attachments", ReadOnly: true},
+			}
+			if skillsMount, ok := skillRuntimeMount(wtPath); ok {
+				mounts = append(mounts, skillsMount)
 			}
 			if err := a.container.Start(containerStartOptions{workspace: wtPath, mounts: mounts}); err != nil {
 				a.resultCh <- containerStatusMsg{text: "start failed"}

@@ -156,10 +156,12 @@ func (a *App) startAgent(userMessage string) {
 		models:   availableModels,
 	})
 
-	// Load project-local skills from .herm/skills/
 	var skills []Skill
 	if a.worktreePath != "" {
-		skills, _ = loadSkills(filepath.Join(a.worktreePath, ".herm", "skills"))
+		skills, _ = prepareRuntimeSkills(prepareRuntimeSkillsOptions{
+			workspace: a.worktreePath,
+			backend:   a.backend,
+		})
 	}
 
 	workDir := a.worktreePath
@@ -363,6 +365,9 @@ func (a *App) newDevEnvTool() *DevEnvTool {
 		{Source: a.worktreePath, Destination: a.worktreePath},
 		{Source: a.attachmentDir(), Destination: "/attachments", ReadOnly: true},
 		{Source: cacheDir, Destination: "/cache", ReadOnly: false},
+	}
+	if skillsMount, ok := skillRuntimeMount(a.worktreePath); ok {
+		mounts = append(mounts, skillsMount)
 	}
 	var projectID string
 	if repoRoot := gitRepoRoot(); repoRoot != "" {

@@ -27,6 +27,7 @@ type cpslSessionEvalOptions struct {
 type cpslWorkerOptions struct {
 	libraryPath  string
 	workspace    string
+	skillsPath   string
 	allowDomains []string
 	denyDomains  []string
 }
@@ -51,6 +52,14 @@ func runCPSLWorker(opts runCPSLWorkerOptions) int {
 		fmt.Fprintf(opts.stderr, "cpsl worker: workspace: %v\n", err)
 		return 2
 	}
+	skillsPath := ""
+	if workerOpts.skillsPath != "" {
+		skillsPath, err = canonicalWorkspace(workerOpts.skillsPath)
+		if err != nil {
+			fmt.Fprintf(opts.stderr, "cpsl worker: skills: %v\n", err)
+			return 2
+		}
+	}
 
 	setCPSLLibraryDirEnv(workerOpts.libraryPath)
 	lib, err := loadCPSLNativeLibrary(workerOpts.libraryPath)
@@ -62,6 +71,7 @@ func runCPSLWorker(opts runCPSLWorkerOptions) int {
 
 	configJSON, err := cpslSessionConfigJSON(cpslSessionConfigJSONOptions{
 		workspace:    workspace,
+		skillsPath:   skillsPath,
 		allowDomains: workerOpts.allowDomains,
 		denyDomains:  workerOpts.denyDomains,
 	})
@@ -107,6 +117,7 @@ func parseCPSLWorkerOptions(opts parseCPSLWorkerArgsOptions) (cpslWorkerOptions,
 	var denyDomains stringListFlag
 	fs.StringVar(&workerOpts.libraryPath, "library", "", "path to CPSL dynamic library")
 	fs.StringVar(&workerOpts.workspace, "workspace", "", "host workspace mounted at /workdir")
+	fs.StringVar(&workerOpts.skillsPath, "skills", "", "host skill runtime directory mounted read-only at /skills")
 	fs.Var(&allowDomains, "allow-domain", "allowed domain")
 	fs.Var(&denyDomains, "deny-domain", "denied domain")
 	if err := fs.Parse(opts.args); err != nil {

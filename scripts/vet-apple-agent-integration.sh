@@ -37,6 +37,7 @@ swift_files=(
   app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
   app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
   app/apple/herm/Services/Agent/CPSLConversationStore.swift
+  app/apple/herm/Services/Agent/CPSLSkills.swift
   app/apple/herm/Services/CPSLDebugService.swift
   app/apple/herm/Models/CPSLTypes.swift
   app/apple/herm/Models/CPSLChatModel.swift
@@ -56,6 +57,8 @@ required_files=(
   docs/apple-agent-config.md
   docs/apple-agent-storage.md
   app/apple/herm/Resources/env.example
+  app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+  app/apple/herm/Skills/beautiful-pdfs/print.css
   app/apple/herm/herm.entitlements
   app/apple/herm/herm-macOS.entitlements
   app/apple/herm.xcodeproj/project.pbxproj
@@ -188,8 +191,38 @@ require_match 'text/event-stream' app/apple/herm/Services/Agent/CPSLOpenAIClient
 require_match 'evaluateLuau' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'currentVirtualDirectory' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'func currentDirectory\(\) -> String' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'func availableSkills\(\) -> \[CPSLAgentSkill\]' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'restoreCurrentDirectory' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'shellDoubleQuoted' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'nonisolated enum CPSLSkillCatalog' app/apple/herm/Services/Agent/CPSLSkills.swift
+require_match 'metadata.short-description' app/apple/herm/Services/Agent/CPSLSkills.swift
+require_match 'systemSkillMounts' app/apple/herm/Services/Agent/CPSLSkills.swift
+require_match '"skills"' app/apple/herm/Services/CPSLDebugService.swift
+require_match '"virtual": mount.virtualPath' app/apple/herm/Services/CPSLDebugService.swift
+require_match '"mode": "ro"' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'Copy Bundled Skills' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'alwaysOutOfDate = 1;' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'Skills,' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'SRCROOT.*/herm/Skills' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'The following skills are available' app/apple/herm/Models/CPSLChatModel.swift
+require_match '\$0\.path' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'external renderers' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'name: beautiful-pdfs' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'doc.renderFile' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'Do not call `require`' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'pdf-smoke.html' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'fs\.read\("/skills/beautiful-pdfs/print\.css"\)' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'fs\.write\("/tmp/report\.html", html\)' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'print\(fs\.exists\("/home/herm/report\.pdf"\)\)' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'platform not supported' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'no PDF was produced' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'target_os = "ios"' external/cpsl/modules/native-webview-pdf/src/lib.rs
+require_match '@page' app/apple/herm/Skills/beautiful-pdfs/print.css
 require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'requestDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift

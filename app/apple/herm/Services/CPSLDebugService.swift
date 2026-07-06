@@ -121,6 +121,18 @@ actor CPSLDebugService {
         currentVirtualDirectory
     }
 
+    func availableSkills() -> [CPSLAgentSkill] {
+        let userRootURL: URL?
+        do {
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            userRootURL = sandboxURLs.root.appendingPathComponent("skills", isDirectory: true)
+        } catch {
+            userRootURL = nil
+        }
+        return CPSLSkillCatalog.availableSkills(userRootURL: userRootURL)
+    }
+
     func restoreCurrentDirectory(_ directory: String) async -> String? {
         let targetDirectory = Self.normalizedVirtualPath(directory, trimsOuterWhitespace: false)
         guard currentVirtualDirectory != targetDirectory else {
@@ -313,6 +325,7 @@ actor CPSLDebugService {
             "home",
             "home/herm",
             "root",
+            "skills",
             "tmp",
             "usr",
             "var"
@@ -341,14 +354,23 @@ actor CPSLDebugService {
     }
 
     private func makeSessionConfigJSON(rootPath: String) -> String? {
+        var mounts: [[String: Any]] = [
+            [
+                "host": rootPath,
+                "virtual": "/",
+                "mode": "rw"
+            ]
+        ]
+        for mount in CPSLSkillCatalog.systemSkillMounts() {
+            mounts.append([
+                "host": mount.hostURL.path,
+                "virtual": mount.virtualPath,
+                "mode": "ro"
+            ])
+        }
+
         let config: [String: Any] = [
-            "mounts": [
-                [
-                    "host": rootPath,
-                    "virtual": "/",
-                    "mode": "rw"
-                ]
-            ],
+            "mounts": mounts,
             "initial_cwd": CPSLVirtualPath.initialDirectory,
             "language": "luau",
             "http": [

@@ -3,138 +3,301 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestLoadSkillsValidDir(t *testing.T) {
-	dir := t.TempDir()
-	skillContent := `---
-name: Testing
-description: How to write tests
+func TestDiscoverSkillsCodexDirectoryFormat(t *testing.T) {
+	root := skillRoot{Path: filepath.Join(t.TempDir(), ".agents", "skills"), Scope: skillScopeLocal}
+	writeSkillFile(t, filepath.Join(root.Path, "testing", skillDocFileName), `---
+name: testing
+description: "How to write tests"
+metadata:
+  short-description: Write focused tests
 ---
 
 Always write table-driven tests.
-`
-	if err := os.WriteFile(filepath.Join(dir, "testing.md"), []byte(skillContent), 0644); err != nil {
+`)
+	if err := os.WriteFile(filepath.Join(root.Path, "testing", "helper.lua"), []byte("return {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	skills, err := loadSkills(dir)
+	skills, err := discoverSkillsFromRoots([]skillRoot{root})
 	if err != nil {
-		t.Fatalf("loadSkills: %v", err)
+		t.Fatalf("discoverSkillsFromRoots: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Fatalf("got %d skills, want 1", len(skills))
 	}
-	if skills[0].Name != "Testing" {
-		t.Errorf("Name = %q, want %q", skills[0].Name, "Testing")
+	if skills[0].Name != "testing" {
+		t.Errorf("Name = %q, want testing", skills[0].Name)
 	}
-	if skills[0].Description != "How to write tests" {
-		t.Errorf("Description = %q, want %q", skills[0].Description, "How to write tests")
+	if skills[0].Description != "Write focused tests" {
+		t.Errorf("Description = %q, want short metadata description", skills[0].Description)
 	}
-	if skills[0].Content != "Always write table-driven tests." {
-		t.Errorf("Content = %q, want %q", skills[0].Content, "Always write table-driven tests.")
+	if skills[0].Path != "/skills/testing/SKILL.md" {
+		t.Errorf("Path = %q, want /skills/testing/SKILL.md", skills[0].Path)
 	}
-}
-
-func TestLoadSkillsMultipleFiles(t *testing.T) {
-	dir := t.TempDir()
-	for _, name := range []string{"a.md", "b.md"} {
-		content := "---\nname: " + name + "\ndescription: desc\n---\nbody"
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	skills, err := loadSkills(dir)
-	if err != nil {
-		t.Fatalf("loadSkills: %v", err)
-	}
-	if len(skills) != 2 {
-		t.Fatalf("got %d skills, want 2", len(skills))
+	if skills[0].sourceKind != skillSourceDirectory {
+		t.Errorf("sourceKind = %v, want directory", skills[0].sourceKind)
 	}
 }
 
-func TestLoadSkillsEmptyDir(t *testing.T) {
-	dir := t.TempDir()
+func TestDiscoverSkillsFlatMarkdownFormat(t *testing.T) {
+	root := skillRoot{Path: filepath.Join(t.TempDir(), ".agents", "skills"), Scope: skillScopeLocal}
+	writeSkillFile(t, filepath.Join(root.Path, "style.md"), `---
+description: |
+  Keep the UI quiet and practical.
+name: style
+---
 
-	skills, err := loadSkills(dir)
+Body content is not prompt-loaded.
+`)
+
+	skills, err := discoverSkillsFromRoots([]skillRoot{root})
 	if err != nil {
-		t.Fatalf("loadSkills: %v", err)
-	}
-	if len(skills) != 0 {
-		t.Errorf("got %d skills, want 0", len(skills))
-	}
-}
-
-func TestLoadSkillsMissingDir(t *testing.T) {
-	skills, err := loadSkills("/nonexistent/path/skills")
-	if err != nil {
-		t.Fatalf("loadSkills: %v", err)
-	}
-	if skills != nil {
-		t.Errorf("got %v, want nil", skills)
-	}
-}
-
-func TestLoadSkillsMalformedFrontMatter(t *testing.T) {
-	dir := t.TempDir()
-
-	cases := []struct {
-		name    string
-		content string
-	}{
-		{"no_frontmatter.md", "just content, no front matter"},
-		{"no_closing.md", "---\nname: Test\nmore content without closing"},
-		{"no_name.md", "---\ndescription: missing name\n---\nbody"},
-	}
-
-	for _, tc := range cases {
-		if err := os.WriteFile(filepath.Join(dir, tc.name), []byte(tc.content), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	skills, err := loadSkills(dir)
-	if err != nil {
-		t.Fatalf("loadSkills: %v", err)
-	}
-	if len(skills) != 0 {
-		t.Errorf("got %d skills, want 0 (all malformed)", len(skills))
-	}
-}
-
-func TestLoadSkillsSkipsNonMarkdown(t *testing.T) {
-	dir := t.TempDir()
-
-	// Valid skill
-	if err := os.WriteFile(filepath.Join(dir, "good.md"), []byte("---\nname: Good\ndescription: d\n---\nbody"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	// Non-markdown file
-	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not a skill"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	skills, err := loadSkills(dir)
-	if err != nil {
-		t.Fatalf("loadSkills: %v", err)
+		t.Fatalf("discoverSkillsFromRoots: %v", err)
 	}
 	if len(skills) != 1 {
 		t.Fatalf("got %d skills, want 1", len(skills))
 	}
+	if skills[0].Name != "style" {
+		t.Errorf("Name = %q, want style", skills[0].Name)
+	}
+	if skills[0].Description != "Keep the UI quiet and practical." {
+		t.Errorf("Description = %q", skills[0].Description)
+	}
+	if skills[0].Path != "/skills/style/SKILL.md" {
+		t.Errorf("Path = %q, want staged SKILL.md path", skills[0].Path)
+	}
 }
 
-func TestParseSkillEmptyContent(t *testing.T) {
-	raw := "---\nname: Empty\ndescription: no body\n---\n"
-	s, ok := parseSkill(raw)
-	if !ok {
-		t.Fatal("parseSkill returned ok=false")
+func TestDiscoverSkillsLocalOverridesGlobal(t *testing.T) {
+	globalRoot := skillRoot{Path: filepath.Join(t.TempDir(), ".agents", "skills"), Scope: skillScopeGlobal}
+	localRoot := skillRoot{Path: filepath.Join(t.TempDir(), ".agents", "skills"), Scope: skillScopeLocal}
+	writeSkillFile(t, filepath.Join(globalRoot.Path, "pdf", skillDocFileName), `---
+name: pdf
+description: Global PDF skill
+---
+global
+`)
+	writeSkillFile(t, filepath.Join(localRoot.Path, "pdf", skillDocFileName), `---
+name: pdf
+description: Local PDF skill
+---
+local
+`)
+
+	skills, err := discoverSkillsFromRoots([]skillRoot{globalRoot, localRoot})
+	if err != nil {
+		t.Fatalf("discoverSkillsFromRoots: %v", err)
 	}
-	if s.Name != "Empty" {
-		t.Errorf("Name = %q, want %q", s.Name, "Empty")
+	if len(skills) != 1 {
+		t.Fatalf("got %d skills, want 1", len(skills))
 	}
-	if s.Content != "" {
-		t.Errorf("Content = %q, want empty", s.Content)
+	if skills[0].Description != "Local PDF skill" {
+		t.Errorf("Description = %q, want local override", skills[0].Description)
+	}
+	if skills[0].scope != skillScopeLocal {
+		t.Errorf("scope = %q, want local", skills[0].scope)
+	}
+}
+
+func TestDiscoverSkillsIgnoresLegacyHermSkills(t *testing.T) {
+	workspace := t.TempDir()
+	writeSkillFile(t, filepath.Join(workspace, ".herm", "skills", "legacy.md"), `---
+name: legacy
+description: legacy
+---
+legacy
+`)
+
+	skills, err := discoverSkills(workspace)
+	if err != nil {
+		t.Fatalf("discoverSkills: %v", err)
+	}
+	for _, skill := range skills {
+		if skill.Name == "legacy" {
+			t.Fatal("discoverSkills loaded .herm/skills, want ignored")
+		}
+	}
+}
+
+func TestPrepareRuntimeSkillsStagesSupportFiles(t *testing.T) {
+	workspace := t.TempDir()
+	writeSkillFile(t, filepath.Join(workspace, ".agents", "skills", "pdf", skillDocFileName), `---
+name: pdf
+description: Build PDFs
+---
+Use helper.lua when useful.
+`)
+	if err := os.WriteFile(filepath.Join(workspace, ".agents", "skills", "pdf", "helper.lua"), []byte("return true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	skills, err := prepareRuntimeSkills(prepareRuntimeSkillsOptions{
+		workspace: workspace,
+		backend:   backendCPSL,
+	})
+	if err != nil {
+		t.Fatalf("prepareRuntimeSkills: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("got %d skills, want 1", len(skills))
+	}
+	stagedSkill := filepath.Join(workspace, ".herm", skillsRuntimeDirName, "pdf", skillDocFileName)
+	if _, err := os.Stat(stagedSkill); err != nil {
+		t.Fatalf("staged SKILL.md missing: %v", err)
+	}
+	stagedHelper := filepath.Join(workspace, ".herm", skillsRuntimeDirName, "pdf", "helper.lua")
+	if _, err := os.Stat(stagedHelper); err != nil {
+		t.Fatalf("staged support file missing: %v", err)
+	}
+	if skills[0].Path != "/skills/pdf/SKILL.md" {
+		t.Errorf("Path = %q, want CPSL /skills path", skills[0].Path)
+	}
+}
+
+func TestPrepareRuntimeSkillsUsesWorkspacePathForNaked(t *testing.T) {
+	workspace := t.TempDir()
+	writeSkillFile(t, filepath.Join(workspace, ".agents", "skills", "host.md"), `---
+name: host
+description: Host skill
+---
+body
+`)
+
+	skills, err := prepareRuntimeSkills(prepareRuntimeSkillsOptions{
+		workspace: workspace,
+		backend:   backendNaked,
+	})
+	if err != nil {
+		t.Fatalf("prepareRuntimeSkills: %v", err)
+	}
+	if len(skills) != 1 {
+		t.Fatalf("got %d skills, want 1", len(skills))
+	}
+	if !strings.HasPrefix(skills[0].Path, workspace) {
+		t.Errorf("naked skill path = %q, want host workspace path", skills[0].Path)
+	}
+}
+
+func TestSkillsListMessageShowsNameAndDimmedDescriptionOnly(t *testing.T) {
+	msg := skillsListMessage([]Skill{
+		{Name: "pdf", Description: "Build PDFs", Path: "/skills/pdf/SKILL.md"},
+		{Name: "style", Path: "/skills/style/SKILL.md"},
+	})
+	for _, want := range []string{
+		"pdf  Build PDFs",
+		"style",
+	} {
+		if !strings.Contains(msg.content, want) {
+			t.Fatalf("skills list missing %q in:\n%s", want, msg.content)
+		}
+	}
+	for _, unwanted := range []string{"Skills", "/skills/pdf/SKILL.md", "/skills/style/SKILL.md"} {
+		if strings.Contains(msg.content, unwanted) {
+			t.Fatalf("skills list contains %q in:\n%s", unwanted, msg.content)
+		}
+	}
+	if len(msg.inlineBlocks) != 2 {
+		t.Fatalf("inline blocks = %d, want 2", len(msg.inlineBlocks))
+	}
+	if !strings.Contains(msg.inlineBlocks[0].text, "\033[2mBuild PDFs") {
+		t.Fatalf("description block is not dimmed: %q", msg.inlineBlocks[0].text)
+	}
+	if msg.inlineBlocks[0].width != visibleWidth("pdf  Build PDFs") {
+		t.Fatalf("block width = %d, want %d", msg.inlineBlocks[0].width, visibleWidth("pdf  Build PDFs"))
+	}
+}
+
+func TestSkillsListMessageRowsStaySingleLine(t *testing.T) {
+	msg := skillsListMessage([]Skill{
+		{Name: "beautiful-pdfs", Description: "Create polished PDF files with semantic HTML, print CSS, page breaks, and rendered output."},
+		{Name: "style", Description: "Keep UI copy concise."},
+	})
+
+	rows := layoutInlineBlocks(layoutInlineBlocksOptions{blocks: msg.inlineBlocks, width: 42})
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2:\n%s", len(rows), strings.Join(rows, "\n"))
+	}
+	for _, row := range rows {
+		if got := visibleWidth(row); got > 42 {
+			t.Fatalf("row width = %d, want <= 42: %q", got, ansiEscRe.ReplaceAllString(row, ""))
+		}
+	}
+	if plain := ansiEscRe.ReplaceAllString(rows[0], ""); !strings.HasSuffix(plain, "…") {
+		t.Fatalf("first row should be ellipsized, got %q", plain)
+	}
+}
+
+func TestHandleSkillsCommandListsRuntimeSkills(t *testing.T) {
+	workspace := t.TempDir()
+	writeSkillFile(t, filepath.Join(workspace, ".agents", "skills", "pdf", skillDocFileName), `---
+name: pdf
+description: Build PDFs
+---
+Use semantic HTML.
+`)
+
+	app := &App{
+		headless:     true,
+		width:        80,
+		backend:      backendCPSL,
+		worktreePath: workspace,
+	}
+	app.handleCommand("/skills")
+
+	if len(app.messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(app.messages))
+	}
+	msg := app.messages[0]
+	if msg.kind != msgInfo {
+		t.Fatalf("message kind = %v, want msgInfo", msg.kind)
+	}
+	for _, want := range []string{"pdf  Build PDFs"} {
+		if !strings.Contains(msg.content, want) {
+			t.Fatalf("/skills output missing %q in:\n%s", want, msg.content)
+		}
+	}
+	if strings.Contains(msg.content, "/skills/pdf/SKILL.md") {
+		t.Fatalf("/skills output should not show skill file paths:\n%s", msg.content)
+	}
+	if len(msg.inlineBlocks) != 1 {
+		t.Fatalf("inline blocks = %d, want 1", len(msg.inlineBlocks))
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".herm", skillsRuntimeDirName, "pdf", skillDocFileName)); err != nil {
+		t.Fatalf("/skills did not stage runtime skill: %v", err)
+	}
+}
+
+func TestBuildSystemPromptListsSkillsLazily(t *testing.T) {
+	prompt := buildSystemPrompt(buildSystemPromptOptions{
+		tools:          nil,
+		serverTools:    nil,
+		skills:         []Skill{{Name: "pdf", Description: "Build PDFs", Path: "/skills/pdf/SKILL.md"}},
+		workDir:        "/work",
+		personality:    "",
+		containerImage: "alpine:latest",
+		worktreeBranch: "",
+		snap:           nil,
+	})
+	for _, want := range []string{"## Skills", "**pdf**: Build PDFs", "Read: `/skills/pdf/SKILL.md`", "full instructions are not loaded"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+	if strings.Contains(prompt, "### pdf") {
+		t.Error("prompt should not include full skill content section")
+	}
+}
+
+func writeSkillFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

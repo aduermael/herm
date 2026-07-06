@@ -56,6 +56,7 @@
 				Generated/CPSLEnvConstants.swift,
 				Resources/.env,
 				Resources/.env.local,
+				Skills,
 			);
 			target = 85D75D322FE62B6F0095BAB2 /* herm */;
 		};
@@ -157,6 +158,7 @@
 				85D75D2F2FE62B6F0095BAB2 /* Sources */,
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
 				85D75D312FE62B6F0095BAB2 /* Resources */,
+				85B000012FF9000000000001 /* Copy Bundled Skills */,
 				850B3BFC2FE8390E00A21FC8 /* Embed Frameworks */,
 				85A100062FEA000000000006 /* Copy CPSL PDFium */,
 			);
@@ -283,6 +285,27 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/../../scripts/copy-cpsl-pdfium-for-xcode.sh\"\n";
+		};
+		85B000012FF9000000000001 /* Copy Bundled Skills */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/herm/Skills",
+			);
+			name = "Copy Bundled Skills";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Skills",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nsrc=\"${SRCROOT}/herm/Skills\"\ndst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Skills\"\nrm -rf \"$dst\"\nif [ -d \"$src\" ]; then\n  mkdir -p \"$(dirname \"$dst\")\"\n  cp -R \"$src\" \"$dst\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
