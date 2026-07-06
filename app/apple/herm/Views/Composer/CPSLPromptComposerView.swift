@@ -26,7 +26,12 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         textView.textColor = UIColor(CPSLTheme.text)
         textView.tintColor = UIColor(CPSLTheme.text)
         textView.font = CPSLTheme.bodyUIFont
-        textView.textContainerInset = .zero
+        textView.textContainerInset = UIEdgeInsets(
+            top: CPSLTheme.promptVerticalInset,
+            left: CPSLTheme.medium,
+            bottom: CPSLTheme.promptVerticalInset,
+            right: CPSLTheme.medium
+        )
         textView.textContainer.lineFragmentPadding = 0
         textView.returnKeyType = .default
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -158,8 +163,16 @@ struct CPSLPromptComposerView: View {
 #endif
     }
 
+    private var promptVerticalPadding: CGFloat {
+        CPSLTheme.promptVerticalInset * 2
+    }
+
+    private var promptMaxTextHeight: CGFloat {
+        promptLineHeight * 6 + promptVerticalPadding
+    }
+
     private var promptTextHeight: CGFloat {
-        min(max(promptContentHeight, promptLineHeight), promptLineHeight * 6)
+        min(max(promptContentHeight, promptLineHeight + promptVerticalPadding), promptMaxTextHeight)
     }
 
     private var composerContent: some View {
@@ -178,15 +191,13 @@ struct CPSLPromptComposerView: View {
                     text: $model.promptText,
                     isCommandInput: isCommandInput,
                     isDisabled: model.isRunning,
-                    maxHeight: promptLineHeight * 6,
+                    maxHeight: promptMaxTextHeight,
                     focusPromptRequest: focusPromptRequest,
                     dismissKeyboardRequest: dismissKeyboardRequest
                 ) { height in
                     promptContentHeight = height
                 }
                 .frame(height: promptTextHeight)
-                .padding(.horizontal, CPSLTheme.medium)
-                .padding(.vertical, CPSLTheme.promptVerticalInset)
 #else
                 TextField("", text: $model.promptText, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -287,6 +298,14 @@ struct CPSLPromptComposerView: View {
             }
         }
         .padding(CPSLTheme.composerPadding)
+        .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
+        .contextMenu {
+            Button {
+                pastePromptText()
+            } label: {
+                Label("Paste", systemImage: "doc.on.clipboard")
+            }
+        }
         .background {
             RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous)
                 .fill(Color.clear)
@@ -391,5 +410,28 @@ struct CPSLPromptComposerView: View {
 
         focusPromptRequest += 1
         isPromptFocused = true
+    }
+
+    private func pastePromptText() {
+        guard !model.isRunning else {
+            return
+        }
+        guard let text = Self.pasteboardString(), !text.isEmpty else {
+            focusPrompt()
+            return
+        }
+
+        model.promptText += text
+        focusPrompt()
+    }
+
+    private static func pasteboardString() -> String? {
+#if os(macOS)
+        NSPasteboard.general.string(forType: .string)
+#elseif canImport(UIKit)
+        UIPasteboard.general.string
+#else
+        nil
+#endif
     }
 }

@@ -117,6 +117,13 @@ final class CPSLChatModel: ObservableObject {
             return
         }
 
+        if selectedConversationID == id {
+            isDrawerOpen = false
+            isFileBrowserOpen = false
+            filePreview = nil
+            return
+        }
+
         Task {
             await loadConversation(id: id)
         }
@@ -176,6 +183,8 @@ final class CPSLChatModel: ObservableObject {
         isFileBrowserOpen.toggle()
         if isFileBrowserOpen {
             isDrawerOpen = false
+            filePreview = nil
+            loadBrowserPath(browserPath)
         } else {
             filePreview = nil
         }
@@ -188,6 +197,7 @@ final class CPSLChatModel: ObservableObject {
 
     func loadBrowserPath(_ path: String) {
         let normalized = scopedBrowserPath(path)
+        let isChangingPath = normalized != browserPath
         browserPath = normalized
         fileBrowserError = nil
         expandedFilePaths.removeAll()
@@ -196,6 +206,10 @@ final class CPSLChatModel: ObservableObject {
         guard normalized != CPSLVirtualPath.root else {
             browserEntries = []
             return
+        }
+
+        if isChangingPath {
+            browserEntries = []
         }
 
         Task {
@@ -559,16 +573,28 @@ final class CPSLChatModel: ObservableObject {
         }
 
         if let parent {
+            guard expandedFilePaths.contains(parent) else {
+                return
+            }
             childEntriesByPath[parent] = listing.entries
         } else {
+            guard browserPath == path else {
+                return
+            }
             browserEntries = listing.entries
         }
     }
 
     private func applyDirectoryLoadFailure(_ message: String, path: String, childOf parent: String?) {
         if let parent {
+            guard expandedFilePaths.contains(parent) else {
+                return
+            }
             childEntriesByPath[parent] = []
         } else {
+            guard browserPath == path else {
+                return
+            }
             browserEntries = []
         }
         fileBrowserError = "\(path): \(message)"

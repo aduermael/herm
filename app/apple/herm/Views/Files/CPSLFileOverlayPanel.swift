@@ -74,6 +74,9 @@ struct CPSLFileOverlayPanel<Header: View, Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            Rectangle()
+                .fill(CPSLTheme.text.opacity(0.07))
+                .frame(height: 1)
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }

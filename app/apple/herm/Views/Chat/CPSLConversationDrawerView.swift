@@ -100,8 +100,9 @@ private struct CPSLConversationListView: View {
                         Button(role: .destructive) {
                             model.deleteConversation(id: conversation.id)
                         } label: {
-                            Label("Remove", systemImage: "trash")
+                            Text("Remove")
                         }
+                        .tint(CPSLTheme.danger)
                         .disabled(model.isRunning)
                     }
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
@@ -134,9 +135,7 @@ private struct CPSLConversationRowView: View {
 
     var body: some View {
         Button {
-            if !isSelected {
-                action()
-            }
+            action()
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
