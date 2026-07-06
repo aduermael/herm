@@ -156,6 +156,11 @@ struct CPSLDirectoryListing: Sendable {
     let error: String?
 }
 
+enum CPSLFileBrowserNavigationDirection: Equatable, Sendable {
+    case forward
+    case backward
+}
+
 enum CPSLFilePreviewKind: Equatable, Sendable {
     case text(String)
     case pdf(URL)

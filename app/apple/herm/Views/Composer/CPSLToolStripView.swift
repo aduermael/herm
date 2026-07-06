@@ -19,7 +19,9 @@ struct CPSLToolStripView: View {
                 } label: {
                     HStack(spacing: CPSLTheme.small) {
                         Image(systemName: "folder.fill")
+                            .symbolRenderingMode(.hierarchical)
                             .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
+                            .foregroundStyle(CPSLTheme.IconPalette.folder)
                         Text("Files")
                             .font(CPSLTheme.controlFont)
                     }
@@ -36,8 +38,8 @@ struct CPSLToolStripView: View {
                 .foregroundStyle(CPSLTheme.text)
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
 
-                CPSLDisabledToolIcon(systemName: "envelope.fill")
-                CPSLDisabledToolIcon(systemName: "calendar")
+                CPSLDisabledToolIcon(systemName: "envelope.fill", color: CPSLTheme.IconPalette.mail)
+                CPSLDisabledToolIcon(systemName: "calendar", color: CPSLTheme.IconPalette.calendar)
             }
             .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
         }
@@ -48,11 +50,13 @@ struct CPSLToolStripView: View {
 
 private struct CPSLDisabledToolIcon: View {
     let systemName: String
+    let color: Color
 
     var body: some View {
         Image(systemName: systemName)
+            .symbolRenderingMode(.hierarchical)
             .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
-            .foregroundStyle(CPSLTheme.mutedText)
+            .foregroundStyle(color)
             .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
             .cpslGlassBackground(
                 in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),

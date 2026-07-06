@@ -18,6 +18,20 @@ enum CPSLTheme {
     static let command = Color(red: 0.076, green: 0.091, blue: 0.145)
     static let error = Color(red: 0.36, green: 0.16, blue: 0.20)
 
+    enum IconPalette {
+        static let primary = CPSLTheme.text
+        static let secondary = CPSLTheme.secondaryText
+        static let folder = Color(red: 0.31, green: 0.49, blue: 0.72)
+        static let home = Self.folder
+        static let file = Self.primary
+        static let pdf = Self.file
+        static let mail = Self.primary
+        static let calendar = Self.primary
+        static let temporary = Self.secondary
+        static let cloud = Self.secondary
+        static let drive = Self.secondary
+    }
+
     static let small: CGFloat = 8
     static let medium: CGFloat = 12
     static let large: CGFloat = 20
