@@ -311,6 +311,55 @@ func prepareRuntimeSkills(opts prepareRuntimeSkillsOptions) ([]Skill, error) {
 	return skills, nil
 }
 
+func (a *App) handleSkillsCommand() {
+	workspace := a.worktreePath
+	if workspace == "" {
+		workspace = a.repoRoot
+	}
+	if workspace == "" {
+		if wd, err := os.Getwd(); err == nil {
+			workspace = wd
+		}
+	}
+
+	skills, err := prepareRuntimeSkills(prepareRuntimeSkillsOptions{
+		workspace: workspace,
+		backend:   a.backend,
+	})
+	if err != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Error loading skills: %v", err)})
+		a.render()
+		return
+	}
+	if len(skills) == 0 {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "No skills found. Add project skills under .agents/skills or global skills under ~/.agents/skills."})
+		a.render()
+		return
+	}
+
+	a.messages = append(a.messages, chatMessage{kind: msgInfo, content: formatSkillsList(skills)})
+	a.render()
+}
+
+func formatSkillsList(skills []Skill) string {
+	var b strings.Builder
+	b.WriteString("Skills\n")
+	for _, skill := range skills {
+		b.WriteString("  ")
+		b.WriteString(skill.Name)
+		if skill.Description != "" {
+			b.WriteString(" - ")
+			b.WriteString(skill.Description)
+		}
+		if skill.Path != "" {
+			b.WriteString("\n    ")
+			b.WriteString(skill.Path)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func skillsRuntimeDir(workspace string) string {
 	if workspace == "" {
 		return ""

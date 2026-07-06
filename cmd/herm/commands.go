@@ -19,7 +19,7 @@ import (
 
 // ─── Commands and autocomplete ───
 
-var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", "/session", "/shell", "/update", "/usage", "/worktrees"}
+var commands = []string{"/branches", "/clear", "/compact", "/config", "/model", "/session", "/shell", "/skills", "/update", "/usage", "/worktrees"}
 var sessionSubcommands = []string{"/session list", "/session load", "/session show"}
 var cpslUnavailableCommands = map[string]bool{
 	"/branches":  true,
@@ -243,6 +243,9 @@ func (a *App) handleCommand(input string) {
 			return
 		}
 		a.enterShellMode(input)
+
+	case "/skills":
+		a.handleSkillsCommand()
 
 	case "/session":
 		a.handleSessionCommand(input)

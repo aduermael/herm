@@ -182,6 +182,58 @@ body
 	}
 }
 
+func TestFormatSkillsListShowsNameDescriptionAndPath(t *testing.T) {
+	got := formatSkillsList([]Skill{
+		{Name: "pdf", Description: "Build PDFs", Path: "/skills/pdf/SKILL.md"},
+		{Name: "style", Path: "/skills/style/SKILL.md"},
+	})
+	for _, want := range []string{
+		"Skills",
+		"pdf - Build PDFs",
+		"/skills/pdf/SKILL.md",
+		"style",
+		"/skills/style/SKILL.md",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("formatSkillsList missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestHandleSkillsCommandListsRuntimeSkills(t *testing.T) {
+	workspace := t.TempDir()
+	writeSkillFile(t, filepath.Join(workspace, ".agents", "skills", "pdf", skillDocFileName), `---
+name: pdf
+description: Build PDFs
+---
+Use semantic HTML.
+`)
+
+	app := &App{
+		headless:     true,
+		width:        80,
+		backend:      backendCPSL,
+		worktreePath: workspace,
+	}
+	app.handleCommand("/skills")
+
+	if len(app.messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(app.messages))
+	}
+	msg := app.messages[0]
+	if msg.kind != msgInfo {
+		t.Fatalf("message kind = %v, want msgInfo", msg.kind)
+	}
+	for _, want := range []string{"Skills", "pdf - Build PDFs", "/skills/pdf/SKILL.md"} {
+		if !strings.Contains(msg.content, want) {
+			t.Fatalf("/skills output missing %q in:\n%s", want, msg.content)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".herm", skillsRuntimeDirName, "pdf", skillDocFileName)); err != nil {
+		t.Fatalf("/skills did not stage runtime skill: %v", err)
+	}
+}
+
 func TestBuildSystemPromptListsSkillsLazily(t *testing.T) {
 	prompt := buildSystemPrompt(buildSystemPromptOptions{
 		tools:          nil,

@@ -305,6 +305,9 @@ func TestCPSLCommandAutocompleteExcludesUnavailableCommands(t *testing.T) {
 	if !seen["/shell"] {
 		t.Fatalf("CPSL autocomplete did not include /shell in %v", matches)
 	}
+	if !seen["/skills"] {
+		t.Fatalf("CPSL autocomplete did not include /skills in %v", matches)
+	}
 	for _, forbidden := range []string{"/branches", "/worktrees"} {
 		if seen[forbidden] {
 			t.Fatalf("CPSL autocomplete included unavailable command %q in %v", forbidden, matches)
