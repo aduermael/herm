@@ -339,6 +339,10 @@ private struct CPSLFileBrowserHeader: View {
                 CPSLFileBrowserHeaderTitle(path: model.browserPath, isRoot: model.isAtFileBrowserRoot)
             }
 
+            if let preview = model.filePreview, preview.showsHeaderInfoButton {
+                CPSLFilePreviewInfoButton(preview: preview)
+            }
+
             CPSLFileOverlayIconButton(
                 systemName: "xmark",
                 accessibilityLabel: "Close Files"
@@ -371,6 +375,64 @@ private struct CPSLFileBrowserBackButton: View {
     }
 }
 
+private struct CPSLFilePreviewInfoButton: View {
+    let preview: CPSLFilePreview
+    @State private var isShowingInfo = false
+
+    var body: some View {
+        CPSLFileOverlayIconButton(
+            systemName: "info.circle",
+            accessibilityLabel: "File Info"
+        ) {
+            isShowingInfo = true
+        }
+        .popover(isPresented: $isShowingInfo) {
+            CPSLFilePreviewInfoPopover(preview: preview)
+        }
+    }
+}
+
+private struct CPSLFilePreviewInfoPopover: View {
+    let preview: CPSLFilePreview
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: CPSLTheme.large) {
+                CPSLFilePreviewInfoHeader(preview: preview)
+                CPSLFileMetadataList(metadata: preview.metadata)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(CPSLTheme.large)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(minWidth: 280, idealWidth: 320, maxWidth: 380, maxHeight: 360)
+    }
+}
+
+private struct CPSLFilePreviewInfoHeader: View {
+    let preview: CPSLFilePreview
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.medium) {
+            CPSLFileIcon(
+                systemName: preview.metadata.category.systemImageName,
+                color: preview.metadata.category.iconColor
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(preview.name)
+                    .font(CPSLTheme.supportingMediumFont)
+                    .foregroundStyle(CPSLTheme.text)
+                    .lineLimit(2)
+
+                Text(preview.metadata.category.displayName)
+                    .font(CPSLTheme.captionFont)
+                    .foregroundStyle(CPSLTheme.secondaryText)
+            }
+        }
+    }
+}
+
 private struct CPSLFilePreviewHeaderTitle: View {
     let preview: CPSLFilePreview
 
@@ -394,21 +456,20 @@ private struct CPSLFilePreviewHeaderTitle: View {
     }
 
     private var iconName: String {
-        switch preview.kind {
-        case .pdf:
-            return "doc.richtext"
-        case .text:
-            return "doc.text.fill"
-        }
+        preview.metadata.category.systemImageName
     }
 
     private var iconColor: Color {
-        switch preview.kind {
-        case .pdf:
-            return CPSLTheme.IconPalette.pdf
-        case .text:
-            return CPSLTheme.IconPalette.file
+        preview.metadata.category.iconColor
+    }
+}
+
+private extension CPSLFilePreview {
+    var showsHeaderInfoButton: Bool {
+        if case .file = kind {
+            return false
         }
+        return true
     }
 }
 
@@ -810,24 +871,14 @@ private struct CPSLFileRowView: View {
         if entry.isDirectory {
             return "folder.fill"
         }
-        switch entry.pathExtension {
-        case "pdf":
-            return "doc.richtext"
-        case "txt":
-            return "doc.text.fill"
-        default:
-            return "doc.text"
-        }
+        return entry.previewCategory.systemImageName
     }
 
     private var iconColor: Color {
         if entry.isDirectory {
             return CPSLTheme.IconPalette.folder
         }
-        if entry.pathExtension == "pdf" {
-            return CPSLTheme.IconPalette.pdf
-        }
-        return CPSLTheme.IconPalette.file
+        return entry.previewCategory.iconColor
     }
 }
 
@@ -907,11 +958,5 @@ private struct CPSLInlineFileLoadingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.leading, CPSLFileRowMetrics.leading + CGFloat(depth) * CPSLFileRowMetrics.indent)
         .frame(height: CPSLFileRowMetrics.height)
-    }
-}
-
-private extension CPSLFileEntry {
-    var pathExtension: String {
-        URL(fileURLWithPath: path).pathExtension.lowercased()
     }
 }

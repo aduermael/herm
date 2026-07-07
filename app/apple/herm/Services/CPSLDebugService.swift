@@ -1,8 +1,17 @@
 import Dispatch
 import Foundation
 import CPSL
+#if canImport(AVFoundation)
+@preconcurrency import AVFoundation
+#endif
 #if canImport(Darwin)
 import Darwin
+#endif
+#if canImport(ImageIO)
+import ImageIO
+#endif
+#if canImport(UniformTypeIdentifiers)
+import UniformTypeIdentifiers
 #endif
 
 actor CPSLDebugService {
@@ -54,7 +63,7 @@ actor CPSLDebugService {
         }
     }
 
-    func previewFile(_ entry: CPSLFileEntry) -> CPSLFilePreviewLoadResult {
+    func previewFile(_ entry: CPSLFileEntry) async -> CPSLFilePreviewLoadResult {
         guard !entry.isDirectory else {
             return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
         }
@@ -63,7 +72,16 @@ actor CPSLDebugService {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             let hostURL = hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
-            let values = try hostURL.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            let values = try hostURL.resourceValues(
+                forKeys: [
+                    .contentModificationDateKey,
+                    .contentTypeKey,
+                    .creationDateKey,
+                    .fileSizeKey,
+                    .isDirectoryKey,
+                    .localizedTypeDescriptionKey,
+                ]
+            )
             guard Self.isHostURL(hostURL, inside: sandboxURLs.root) else {
                 return CPSLFilePreviewLoadResult(
                     preview: nil,
@@ -74,39 +92,193 @@ actor CPSLDebugService {
                 return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
             }
 
-            switch hostURL.pathExtension.lowercased() {
-            case "pdf":
-                return CPSLFilePreviewLoadResult(
-                    preview: CPSLFilePreview(name: entry.name, path: entry.path, kind: .pdf(hostURL)),
-                    error: nil
-                )
-            case "txt":
-                guard (values.fileSize ?? 0) <= Self.textPreviewByteLimit else {
-                    return CPSLFilePreviewLoadResult(
-                        preview: nil,
-                        error: "Text preview is limited to 1 MB."
-                    )
+            var metadata = Self.metadata(for: hostURL, values: values)
+            switch metadata.category {
+            case .pdf:
+                return Self.previewResult(entry: entry, metadata: metadata, kind: .pdf(hostURL))
+            case .code(let language):
+                return try Self.textualPreview(
+                    hostURL: hostURL,
+                    entry: entry,
+                    metadata: metadata,
+                    oversizedReason: "Text preview is limited to 1 MB."
+                ) { text in
+                    .code(text, language: language)
                 }
-                let data = try Data(contentsOf: hostURL)
-                guard let text = String(data: data, encoding: .utf8) else {
-                    return CPSLFilePreviewLoadResult(
-                        preview: nil,
-                        error: "Only UTF-8 text files can be previewed."
-                    )
+            case .text:
+                return try Self.textualPreview(
+                    hostURL: hostURL,
+                    entry: entry,
+                    metadata: metadata,
+                    oversizedReason: "Text preview is limited to 1 MB."
+                ) { text in
+                    .text(text)
                 }
-                return CPSLFilePreviewLoadResult(
-                    preview: CPSLFilePreview(name: entry.name, path: entry.path, kind: .text(text)),
-                    error: nil
-                )
-            default:
-                return CPSLFilePreviewLoadResult(
-                    preview: nil,
-                    error: "Preview is available for TXT and PDF files for now."
-                )
+            case .image:
+                metadata.dimensions = Self.imageDimensions(for: hostURL)
+                return Self.previewResult(entry: entry, metadata: metadata, kind: .image(hostURL))
+            case .audio:
+                metadata.durationSeconds = await Self.mediaDuration(for: hostURL)
+                return Self.previewResult(entry: entry, metadata: metadata, kind: .audio(hostURL))
+            case .video:
+                let mediaInfo = await Self.videoInfo(for: hostURL)
+                metadata.durationSeconds = mediaInfo.durationSeconds
+                metadata.dimensions = mediaInfo.dimensions
+                return Self.previewResult(entry: entry, metadata: metadata, kind: .video(hostURL))
+            case .archive, .data, .file:
+                return Self.previewResult(entry: entry, metadata: metadata, kind: .file(reason: nil))
             }
         } catch {
             return CPSLFilePreviewLoadResult(preview: nil, error: error.localizedDescription)
         }
+    }
+
+    private nonisolated static func previewResult(
+        entry: CPSLFileEntry,
+        metadata: CPSLFileMetadata,
+        kind: CPSLFilePreviewKind
+    ) -> CPSLFilePreviewLoadResult {
+        CPSLFilePreviewLoadResult(
+            preview: CPSLFilePreview(
+                name: entry.name,
+                path: entry.path,
+                metadata: metadata,
+                kind: kind
+            ),
+            error: nil
+        )
+    }
+
+    private nonisolated static func textualPreview(
+        hostURL: URL,
+        entry: CPSLFileEntry,
+        metadata: CPSLFileMetadata,
+        oversizedReason: String,
+        makeKind: (String) -> CPSLFilePreviewKind
+    ) throws -> CPSLFilePreviewLoadResult {
+        guard (metadata.sizeBytes ?? 0) <= textPreviewByteLimit else {
+            return Self.previewResult(
+                entry: entry,
+                metadata: metadata,
+                kind: .file(reason: oversizedReason)
+            )
+        }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: hostURL)
+        } catch {
+            return Self.previewResult(
+                entry: entry,
+                metadata: metadata,
+                kind: .file(reason: "This text file could not be read.")
+            )
+        }
+
+        guard let text = decodedText(from: data) else {
+            return Self.previewResult(
+                entry: entry,
+                metadata: metadata,
+                kind: .file(reason: "This text file could not be decoded.")
+            )
+        }
+
+        return Self.previewResult(entry: entry, metadata: metadata, kind: makeKind(text))
+    }
+
+    private nonisolated static func decodedText(from data: Data) -> String? {
+        for encoding in [
+            String.Encoding.utf8,
+            .utf16,
+            .utf16LittleEndian,
+            .utf16BigEndian,
+            .isoLatin1,
+        ] {
+            if let text = String(data: data, encoding: encoding) {
+                return text
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func metadata(
+        for url: URL,
+        values: URLResourceValues
+    ) -> CPSLFileMetadata {
+        let fileExtension = url.pathExtension.lowercased()
+        let category = CPSLFilePreviewCategory(
+            fileName: url.lastPathComponent,
+            fileExtension: fileExtension,
+            contentTypeIdentifier: values.contentType?.identifier
+        )
+        return CPSLFileMetadata(
+            category: category,
+            typeDescription: values.localizedTypeDescription ?? String(localized: category.displayName),
+            sizeBytes: values.fileSize.map(Int64.init),
+            creationDate: values.creationDate,
+            modificationDate: values.contentModificationDate,
+            durationSeconds: nil,
+            dimensions: nil
+        )
+    }
+
+    private nonisolated static func imageDimensions(for url: URL) -> CPSLFileDimensions? {
+        #if canImport(ImageIO)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            else {
+                return nil
+            }
+            let width = properties[kCGImagePropertyPixelWidth] as? Int
+            let height = properties[kCGImagePropertyPixelHeight] as? Int
+            guard let width, let height else {
+                return nil
+            }
+            return CPSLFileDimensions(width: width, height: height)
+        #else
+            return nil
+        #endif
+    }
+
+    private nonisolated static func mediaDuration(for url: URL) async -> Double? {
+        #if canImport(AVFoundation)
+            let asset = AVURLAsset(url: url)
+            guard let duration = try? await asset.load(.duration) else {
+                return nil
+            }
+            let seconds = CMTimeGetSeconds(duration)
+            guard seconds.isFinite && seconds > 0 else {
+                return nil
+            }
+            return seconds
+        #else
+            return nil
+        #endif
+    }
+
+    private nonisolated static func videoInfo(
+        for url: URL
+    ) async -> (durationSeconds: Double?, dimensions: CPSLFileDimensions?) {
+        #if canImport(AVFoundation)
+            let asset = AVURLAsset(url: url)
+            let durationSeconds = await mediaDuration(for: url)
+            guard let tracks = try? await asset.loadTracks(withMediaType: .video),
+                let track = tracks.first,
+                let naturalSize = try? await track.load(.naturalSize),
+                let preferredTransform = try? await track.load(.preferredTransform)
+            else {
+                return (durationSeconds, nil)
+            }
+            let transformedSize = naturalSize.applying(preferredTransform)
+            let width = Int(abs(transformedSize.width).rounded())
+            let height = Int(abs(transformedSize.height).rounded())
+            guard width > 0, height > 0 else {
+                return (durationSeconds, nil)
+            }
+            return (durationSeconds, CPSLFileDimensions(width: width, height: height))
+        #else
+            return (nil, nil)
+        #endif
     }
 
     func evaluate(_ command: String) async -> CPSLEvalServiceResult {
