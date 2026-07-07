@@ -6,6 +6,8 @@ import CPSL
 #endif
 #if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
 #endif
 #if canImport(ImageIO)
 import ImageIO
@@ -14,15 +16,118 @@ import ImageIO
 import UniformTypeIdentifiers
 #endif
 
+private final class CPSLWebBrowserCallbackBox: @unchecked Sendable {
+    let service: CPSLWebBrowserService
+
+    init(service: CPSLWebBrowserService) {
+        self.service = service
+    }
+}
+
+private final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: String
+
+    init(value: String) {
+        self.value = value
+    }
+
+    func set(_ value: String) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+
+    func get() -> String {
+        lock.lock()
+        let value = value
+        lock.unlock()
+        return value
+    }
+}
+
+private let cpslWebBrowserHandleJSON: @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafePointer<CChar>?
+) -> UnsafeMutablePointer<CChar>? = { userData, requestJSON in
+    guard let userData, let requestJSON else {
+        return cpslWebBrowserOwnedErrorCString("webbrowser callback received NULL input")
+    }
+    guard !Thread.isMainThread else {
+        return cpslWebBrowserOwnedErrorCString("webbrowser callback cannot run on the main thread")
+    }
+
+    let callbackBox = Unmanaged<CPSLWebBrowserCallbackBox>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+    let request = String(cString: requestJSON)
+    let response = CPSLWebBrowserCallbackResponse(
+        value: #"{"ok":false,"error":"webbrowser callback did not complete"}"#
+    )
+    let semaphore = DispatchSemaphore(value: 0)
+    let task = Task { @MainActor in
+        response.set(await callbackBox.service.handleJSON(request))
+        semaphore.signal()
+    }
+
+    if semaphore.wait(timeout: .now() + .seconds(55)) == .timedOut {
+        task.cancel()
+        return cpslWebBrowserOwnedErrorCString("webbrowser callback timed out")
+    }
+    return cpslWebBrowserOwnedCString(response.get())
+}
+
+private let cpslWebBrowserStringFree: @convention(c) (UnsafeMutablePointer<CChar>?) -> Void = { value in
+    guard let value else {
+        return
+    }
+#if canImport(Darwin)
+    Darwin.free(value)
+#elseif canImport(Glibc)
+    Glibc.free(value)
+#endif
+}
+
+private let cpslWebBrowserUserDataFree: @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
+    guard let userData else {
+        return
+    }
+    Unmanaged<CPSLWebBrowserCallbackBox>.fromOpaque(userData).release()
+}
+
+private func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutablePointer<CChar>? {
+    let object: [String: Any] = ["ok": false, "error": message]
+    guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+        return cpslWebBrowserOwnedCString(#"{"ok":false,"error":"webbrowser callback error"}"#)
+    }
+    return cpslWebBrowserOwnedCString(String(decoding: data, as: UTF8.self))
+}
+
+private func cpslWebBrowserOwnedCString(_ value: String) -> UnsafeMutablePointer<CChar>? {
+    let sanitized = value.replacingOccurrences(of: "\0", with: "\\u0000")
+#if canImport(Darwin)
+    return sanitized.withCString { Darwin.strdup($0) }
+#elseif canImport(Glibc)
+    return sanitized.withCString { Glibc.strdup($0) }
+#else
+    return nil
+#endif
+}
+
 actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
     private nonisolated static let textPreviewByteLimit = 1_000_000
 
+    private let webBrowser: CPSLWebBrowserService
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
     private var evaluatingSessionID: Int?
     private var sandboxURLs: CPSLSandboxURLs?
     private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
+
+    init(webBrowser: CPSLWebBrowserService) {
+        self.webBrowser = webBrowser
+    }
 
     deinit {
         if let session {
@@ -323,6 +428,7 @@ actor CPSLDebugService {
         do {
             sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
+            await webBrowser.setSandboxRoot(sandboxURLs.root)
         } catch {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
         }
@@ -445,13 +551,15 @@ actor CPSLDebugService {
         guard session == nil else {
             return nil
         }
+        await webBrowser.setSandboxRoot(sandboxURLs.root)
         guard let configJSON = makeSessionConfigJSON(
             rootPath: sandboxURLs.root.resolvingSymlinksInPath().path
         ) else {
             return "Could not encode session config JSON"
         }
 
-        let result = await Self.performBlockingSessionInit(configJSON: configJSON)
+        let callbackBox = CPSLWebBrowserCallbackBox(service: webBrowser)
+        let result = await Self.performBlockingSessionInit(configJSON: configJSON, callbackBox: callbackBox)
         guard let newSession = result.pointer else {
             return result.errorMessage ?? "cpsl_session_new returned NULL"
         }
@@ -547,7 +655,12 @@ actor CPSLDebugService {
             "language": "luau",
             "http": [
                 "mode": "policy",
-                "allow_domains": [] as [String],
+                "allow_domains": ["*"],
+                "deny_domains": [] as [String]
+            ],
+            "webbrowser": [
+                "mode": "policy",
+                "allow_domains": ["*"],
                 "deny_domains": [] as [String]
             ]
         ]
@@ -575,24 +688,37 @@ actor CPSLDebugService {
     }
 
     private nonisolated static func performBlockingSessionInit(
-        configJSON: String
+        configJSON: String,
+        callbackBox: CPSLWebBrowserCallbackBox
     ) async -> CPSLSessionInitResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .default).async {
-                continuation.resume(returning: createSession(configJSON: configJSON))
+                continuation.resume(returning: createSession(configJSON: configJSON, callbackBox: callbackBox))
             }
         }
     }
 
-    private nonisolated static func createSession(configJSON: String) -> CPSLSessionInitResult {
+    private nonisolated static func createSession(
+        configJSON: String,
+        callbackBox: CPSLWebBrowserCallbackBox
+    ) -> CPSLSessionInitResult {
         configureCPSLLibraryDirectory()
+        let userData = Unmanaged.passRetained(callbackBox).toOpaque()
+        var callbacks = cpsl_webbrowser_callbacks_t(
+            user_data: userData,
+            handle_json: cpslWebBrowserHandleJSON,
+            string_free: cpslWebBrowserStringFree,
+            user_data_free: cpslWebBrowserUserDataFree
+        )
         let pointer = configJSON.withCString { configPointer in
-            cpsl_session_new(configPointer)
+            cpsl_session_new_with_webbrowser_callbacks(configPointer, &callbacks)
         }
         guard let pointer else {
             return CPSLSessionInitResult(
                 pointer: nil,
-                errorMessage: lastErrorMessage(fallback: "cpsl_session_new returned NULL")
+                errorMessage: lastErrorMessage(
+                    fallback: "cpsl_session_new_with_webbrowser_callbacks returned NULL"
+                )
             )
         }
         return CPSLSessionInitResult(pointer: pointer, errorMessage: nil)

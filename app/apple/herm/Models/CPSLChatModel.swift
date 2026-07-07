@@ -23,8 +23,10 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var loadingFilePaths: Set<String> = []
     @Published private(set) var fileBrowserError: String?
     @Published private(set) var filePreview: CPSLFilePreview?
+    @Published private(set) var isWebBrowserOpen = false
 
-    let service = CPSLDebugService()
+    let service: CPSLDebugService
+    let webBrowser: CPSLWebBrowserService
     let dictation = CPSLDictationService()
     private var store: CPSLConversationStore?
     private var storeLoadTask: Task<CPSLConversationStore, Error>?
@@ -76,6 +78,20 @@ final class CPSLChatModel: ObservableObject {
     }
 
     init() {
+        let webBrowser = CPSLWebBrowserService()
+        self.webBrowser = webBrowser
+        service = CPSLDebugService(webBrowser: webBrowser)
+        webBrowser.visibilityChanged = { [weak self] isVisible in
+            guard let self else {
+                return
+            }
+            self.isWebBrowserOpen = isVisible
+            if isVisible {
+                self.isFileBrowserOpen = false
+                self.filePreview = nil
+                self.isDrawerOpen = false
+            }
+        }
         Task {
             await bootstrap()
         }
@@ -98,6 +114,7 @@ final class CPSLChatModel: ObservableObject {
         currentSystemPrompt = nil
         isFileBrowserOpen = false
         filePreview = nil
+        closeWebBrowser()
         isDrawerOpen = false
     }
 
@@ -105,6 +122,7 @@ final class CPSLChatModel: ObservableObject {
         isDrawerOpen.toggle()
         if isDrawerOpen {
             isFileBrowserOpen = false
+            closeWebBrowser()
         }
     }
 
@@ -162,6 +180,7 @@ final class CPSLChatModel: ObservableObject {
         promptText = ""
         isFileBrowserOpen = false
         filePreview = nil
+        closeWebBrowser()
         isDrawerOpen = false
         if input.hasPrefix("!") {
             let command = String(input.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -183,6 +202,7 @@ final class CPSLChatModel: ObservableObject {
         isFileBrowserOpen.toggle()
         if isFileBrowserOpen {
             isDrawerOpen = false
+            closeWebBrowser()
             filePreview = nil
             loadBrowserPath(browserPath)
         } else {
@@ -193,6 +213,23 @@ final class CPSLChatModel: ObservableObject {
     func closeFileBrowser() {
         isFileBrowserOpen = false
         filePreview = nil
+    }
+
+    func toggleWebBrowser() {
+        if isWebBrowserOpen {
+            closeWebBrowser()
+            return
+        }
+        isFileBrowserOpen = false
+        filePreview = nil
+        isDrawerOpen = false
+        isWebBrowserOpen = true
+        webBrowser.showLastBrowserFromUI()
+    }
+
+    func closeWebBrowser() {
+        isWebBrowserOpen = false
+        webBrowser.hideOverlayFromUI()
     }
 
     func loadBrowserPath(_ path: String) {

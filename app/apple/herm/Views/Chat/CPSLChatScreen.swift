@@ -148,10 +148,21 @@ private struct CPSLMainContentStage: View {
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .zIndex(4)
             }
+
+            if model.isWebBrowserOpen {
+                CPSLWebBrowserOverlay(
+                    model: model,
+                    topInset: CPSLTheme.topChromeInset,
+                    bottomInset: contentBottomInset
+                )
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .zIndex(5)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CPSLTheme.background.ignoresSafeArea())
         .animation(CPSLOverlayMotion.animation, value: model.isFileBrowserOpen)
+        .animation(CPSLOverlayMotion.animation, value: model.isWebBrowserOpen)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // PROMPTING AREA + BUTTONS ON TOP
             CPSLBottomChromeView(
