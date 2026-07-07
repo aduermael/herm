@@ -56,7 +56,6 @@
 				Generated/CPSLEnvConstants.swift,
 				Resources/.env,
 				Resources/.env.local,
-				Skills,
 			);
 			target = 85D75D322FE62B6F0095BAB2 /* herm */;
 		};
@@ -86,14 +85,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		850B3C082FE8390F00A21FDF /* BuildSupport */ = {
-			isa = PBXGroup;
-			children = (
-				850B3C052FE8390F00A21FDC /* BuildCPSLAnchor.c */,
-			);
-			path = BuildSupport;
-			sourceTree = "<group>";
-		};
 		10B2D4362FF5768800E04BA4 /* Generated Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -109,6 +100,14 @@
 				85A100002FEA000000000001 /* libsqlite3.tbd */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		850B3C082FE8390F00A21FDF /* BuildSupport */ = {
+			isa = PBXGroup;
+			children = (
+				850B3C052FE8390F00A21FDC /* BuildCPSLAnchor.c */,
+			);
+			path = BuildSupport;
 			sourceTree = "<group>";
 		};
 		85D75D2A2FE62B6F0095BAB2 = {
@@ -226,26 +225,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		85A100072FEA000000000007 /* Build CPSL XCFramework */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Build CPSL XCFramework";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(DERIVED_FILE_DIR)/cpsl-xcframework-linked.stamp",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh\"\n";
-		};
 		85A100032FEA000000000003 /* Generate Env Constants */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -285,6 +264,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/../../scripts/copy-cpsl-pdfium-for-xcode.sh\"\n";
+		};
+		85A100072FEA000000000007 /* Build CPSL XCFramework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build CPSL XCFramework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/cpsl-xcframework-linked.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/../../scripts/link-cpsl-xcframework-for-xcode.sh\"\n";
 		};
 		85B000012FF9000000000001 /* Copy Bundled Skills */ = {
 			isa = PBXShellScriptBuildPhase;
