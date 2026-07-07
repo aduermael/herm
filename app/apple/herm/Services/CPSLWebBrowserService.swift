@@ -117,7 +117,7 @@ final class CPSLWebBrowserService: ObservableObject {
             return
         }
         markActivity()
-        browser.webView.load(URLRequest(url: url))
+        browser.webView.load(Self.browserRequest(for: url))
         browser.url = url.absoluteString
         lastBrowserID = browser.id
         refreshSummaries()
@@ -328,15 +328,16 @@ final class CPSLWebBrowserService: ObservableObject {
             browser = try await createBrowser(resourceMode: resourceMode, networkPolicy: networkPolicy)
         }
 
-        browser.webView.load(URLRequest(url: url))
+        browser.webView.load(Self.browserRequest(for: url))
         try await waitForDocumentReady(browser, timeout: 15)
         if request.waitForResources {
             try await waitForResources(browser, timeout: request.resourceTimeout ?? 8)
         }
 
-        let page = try await pageSnapshot(browser, request: request)
+        let page = try await pageSnapshot(browser)
+        try validateNavigation(page: page, requestedURL: url)
         notifyWebVisit(browser: browser, page: page)
-        return success(browser: browser).merging(["page": page]) { _, new in new }
+        return success(browser: browser).merging(["page": filteredPage(page, request: request)]) { _, new in new }
     }
 
     private func createBrowser(
@@ -374,6 +375,7 @@ final class CPSLWebBrowserService: ObservableObject {
         configuration.userContentController = contentController
 
         let webView = WKWebView(frame: CGRect(origin: .zero, size: windowSize), configuration: configuration)
+        webView.customUserAgent = Self.safariUserAgent()
         webView.allowsBackForwardNavigationGestures = true
         let navigationDelegate = CPSLWebBrowserNavigationDelegate(
             policy: networkPolicy,
@@ -382,13 +384,16 @@ final class CPSLWebBrowserService: ObservableObject {
             }
         )
         webView.navigationDelegate = navigationDelegate
+        let uiDelegate = CPSLWebBrowserUIDelegate()
+        webView.uiDelegate = uiDelegate
         return CPSLWebBrowserSession(
             id: id,
             resourceMode: resourceMode,
             webView: webView,
             windowSize: windowSize,
             networkPolicy: networkPolicy,
-            navigationDelegate: navigationDelegate
+            navigationDelegate: navigationDelegate,
+            uiDelegate: uiDelegate
         )
     }
 
@@ -430,10 +435,21 @@ final class CPSLWebBrowserService: ObservableObject {
         guard browser.resourceMode == .lean else {
             return browser
         }
-        browser.webView.configuration.userContentController.removeAllContentRuleLists()
-        browser.resourceMode = .full
+        let replacement = try await replacementBrowser(
+            for: browser,
+            resourceMode: .full,
+            networkPolicy: browser.networkPolicy
+        )
+        browsers[browser.id] = replacement
+        lastBrowserID = browser.id
+        if let urlString = browser.url?.nilIfEmpty ?? browser.webView.url?.absoluteString.nilIfEmpty,
+           let url = URL(string: urlString),
+           replacement.networkPolicy.allows(url) {
+            replacement.webView.load(Self.browserRequest(for: url))
+            try? await waitForDocumentReady(replacement, timeout: 15)
+        }
         refreshSummaries()
-        return browser
+        return replacement
     }
 
     private func replacementBrowser(
@@ -504,6 +520,16 @@ final class CPSLWebBrowserService: ObservableObject {
         var page = object
         page["browser"] = browser.id
         return filteredPage(page, request: request)
+    }
+
+    private func validateNavigation(page: [String: Any], requestedURL: URL) throws {
+        let pageURL = (page["url"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard pageURL.isEmpty || pageURL == "about:blank" else {
+            return
+        }
+        throw CPSLWebBrowserError.message(
+            "navigation to \(requestedURL.absoluteString) did not commit; browser stayed on \(pageURL.nilIfEmpty ?? "a blank page")"
+        )
     }
 
     private func actionMap(from page: [String: Any]) -> [String: CPSLWebBrowserAction] {
@@ -1038,6 +1064,44 @@ final class CPSLWebBrowserService: ObservableObject {
         } while browsers[candidate] != nil
         return candidate
     }
+
+    nonisolated fileprivate static func browserRequest(for url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        #if os(macOS)
+        if #available(macOS 14.0, *) {
+            request.attribution = .user
+        }
+        #elseif os(iOS)
+        if #available(iOS 17.0, *) {
+            request.attribution = .user
+        }
+        #endif
+        return request
+    }
+
+    private static func safariUserAgent() -> String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let safariVersion = "\(version.majorVersion).\(version.minorVersion)"
+        #if os(macOS)
+        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            + "Version/\(safariVersion) Safari/605.1.15"
+        #elseif canImport(UIKit)
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        let osComponents = version.patchVersion > 0
+            ? [version.majorVersion, version.minorVersion, version.patchVersion]
+            : [version.majorVersion, version.minorVersion]
+        let osVersion = osComponents
+            .map(String.init)
+            .joined(separator: "_")
+        let cpuToken = device == "iPad" ? "CPU OS" : "CPU iPhone OS"
+        return "Mozilla/5.0 (\(device); \(cpuToken) \(osVersion) like Mac OS X) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            + "Version/\(safariVersion) Mobile/15E148 Safari/604.1"
+        #else
+        return "Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/\(safariVersion) Safari/605.1.15"
+        #endif
+    }
 }
 
 private final class CPSLWebBrowserSession {
@@ -1051,6 +1115,7 @@ private final class CPSLWebBrowserSession {
     var isVisible = false
     var networkPolicy: CPSLWebBrowserNetworkPolicy
     let navigationDelegate: CPSLWebBrowserNavigationDelegate
+    let uiDelegate: CPSLWebBrowserUIDelegate
 
     init(
         id: String,
@@ -1058,7 +1123,8 @@ private final class CPSLWebBrowserSession {
         webView: WKWebView,
         windowSize: CGSize,
         networkPolicy: CPSLWebBrowserNetworkPolicy,
-        navigationDelegate: CPSLWebBrowserNavigationDelegate
+        navigationDelegate: CPSLWebBrowserNavigationDelegate,
+        uiDelegate: CPSLWebBrowserUIDelegate
     ) {
         self.id = id
         self.resourceMode = resourceMode
@@ -1066,6 +1132,7 @@ private final class CPSLWebBrowserSession {
         self.windowSize = windowSize
         self.networkPolicy = networkPolicy
         self.navigationDelegate = navigationDelegate
+        self.uiDelegate = uiDelegate
     }
 
     var summary: CPSLWebBrowserSummary {
@@ -1149,10 +1216,27 @@ private struct CPSLWebBrowserNetworkPolicy: Equatable, Sendable {
             && Self.matches(host, entries: allowDomains)
     }
 
+    func allowsNavigationAction(_ navigationAction: WKNavigationAction) -> Bool {
+        guard let url = navigationAction.request.url else {
+            return true
+        }
+        if Self.isBrowserInternal(url) {
+            return true
+        }
+        return allows(url)
+    }
+
     private static func matches(_ host: String, entries: [String]) -> Bool {
         entries.contains { entry in
             entry == "*" || host == entry || host.hasSuffix(".\(entry)")
         }
+    }
+
+    private static func isBrowserInternal(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else {
+            return true
+        }
+        return scheme == "about" || scheme == "blob" || scheme == "data"
     }
 
     private static func stringArray(_ value: Any?, field: String) throws -> [String] {
@@ -1183,11 +1267,15 @@ private final class CPSLWebBrowserNavigationDelegate: NSObject, WKNavigationDele
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        guard let url = navigationAction.request.url else {
+        guard navigationAction.request.url != nil else {
             decisionHandler(.cancel)
             return
         }
-        decisionHandler(policy.allows(url) ? .allow : .cancel)
+        if policy.allowsNavigationAction(navigationAction) {
+            decisionHandler(.allow)
+        } else {
+            decisionHandler(.cancel)
+        }
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
@@ -1210,6 +1298,23 @@ private final class CPSLWebBrowserNavigationDelegate: NSObject, WKNavigationDele
         Task { @MainActor in
             onNavigationChanged(webView)
         }
+    }
+}
+
+private final class CPSLWebBrowserUIDelegate: NSObject, WKUIDelegate {
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        guard navigationAction.targetFrame == nil,
+              let url = navigationAction.request.url
+        else {
+            return nil
+        }
+        webView.load(CPSLWebBrowserService.browserRequest(for: url))
+        return nil
     }
 }
 

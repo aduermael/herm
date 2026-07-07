@@ -23,6 +23,9 @@ Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in stat
 - `webbrowser.create()` and `webbrowser.open()` use lean resource mode by default in CPSL.
 - Lean mode avoids heavy resources such as images, media, and fonts for faster agent browsing.
 - Use `{resource_mode="full"}` when visual resources are needed immediately.
+- Use full mode from the first navigation for heavy JavaScript apps, login flows,
+  social sites such as X, or any page that may treat missing images/fonts/media
+  as a broken or non-browser session.
 - `webbrowser.show(browser)` is the handoff point. The native host should show the browser UI and promote lean pages to full mode before displaying them.
 - `webbrowser.type()` uses the host's natural typing path by default. In Herm, visible macOS pages use AppKit key events; iOS and offscreen pages use natural-paced WebKit input events. Use `{speed=4.0}` if you need to be explicit.
 
