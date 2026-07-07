@@ -1,10 +1,5 @@
 import Combine
 import Foundation
-#if os(macOS)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
 
 @MainActor
 final class CPSLChatModel: ObservableObject {
@@ -164,14 +159,14 @@ final class CPSLChatModel: ObservableObject {
     }
 
 #if DEBUG
-    func copyConversationJSONToPasteboard() {
-        Task { @MainActor in
-            do {
-                let json = try await currentConversationDebugJSON()
-                Self.copyToPasteboard(json)
-            } catch {
-                appendErrorMessage(title: "Debug", body: error.localizedDescription)
-            }
+    func makeConversationJSONTraceShareFile() async -> URL? {
+        let conversationID = selectedConversationID
+        do {
+            let json = try await conversationDebugJSON(conversationID: conversationID)
+            return try Self.writeConversationJSONTraceFile(json, conversationID: conversationID)
+        } catch {
+            appendErrorMessage(title: "Debug", body: error.localizedDescription)
+            return nil
         }
     }
 #endif
@@ -418,10 +413,10 @@ final class CPSLChatModel: ObservableObject {
     }
 
 #if DEBUG
-    private func currentConversationDebugJSON() async throws -> String {
-        if let selectedConversationID {
+    private func conversationDebugJSON(conversationID: String?) async throws -> String {
+        if let conversationID {
             let store = try await loadStore()
-            return try await store.exportConversationJSON(id: selectedConversationID)
+            return try await store.exportConversationJSON(id: conversationID)
         }
 
         let encoder = JSONEncoder()
@@ -430,13 +425,35 @@ final class CPSLChatModel: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private nonisolated static func copyToPasteboard(_ string: String) {
-#if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(string, forType: .string)
-#elseif canImport(UIKit)
-        UIPasteboard.general.string = string
-#endif
+    private nonisolated static func writeConversationJSONTraceFile(
+        _ json: String,
+        conversationID: String?
+    ) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HermDebugTraces", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let conversationComponent = safeTraceFileComponent(conversationID ?? "draft")
+        let fileName = "herm-\(conversationComponent)-trace-\(traceFileTimestamp()).json"
+        let url = directory.appendingPathComponent(fileName, isDirectory: false)
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private nonisolated static func traceFileTimestamp() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+    }
+
+    private nonisolated static func safeTraceFileComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let component = value.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? String(scalar) : "-"
+        }.joined()
+        return component.isEmpty ? "conversation" : component
     }
 #endif
 
