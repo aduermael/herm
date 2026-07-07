@@ -144,7 +144,9 @@ private struct CPSLWebBrowserNavigationBar: View {
                 text: $addressText,
                 isLoading: summary?.isLoading == true
             ) {
-                webBrowser.navigateVisibleBrowserFromUI(to: addressText)
+                Task {
+                    await webBrowser.navigateVisibleBrowserFromUI(to: addressText)
+                }
             }
 
             CPSLWebBrowserNavButton(
@@ -198,6 +200,11 @@ private struct CPSLWebBrowserAddressField: View {
                 .font(CPSLTheme.supportingFont)
                 .foregroundStyle(CPSLTheme.text)
                 .lineLimit(1)
+                #if !os(macOS)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                #endif
                 .submitLabel(.go)
                 .onSubmit(onSubmit)
         }

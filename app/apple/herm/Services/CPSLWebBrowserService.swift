@@ -107,11 +107,22 @@ final class CPSLWebBrowserService: ObservableObject {
         refreshSummaries()
     }
 
-    func navigateVisibleBrowserFromUI(to address: String) {
-        guard let visibleBrowserID, let browser = browsers[visibleBrowserID],
-              let url = normalizedUserURL(address)
-        else {
+    func navigateVisibleBrowserFromUI(to address: String) async {
+        guard let url = normalizedUserURL(address) else {
             return
+        }
+        let browser: CPSLWebBrowserSession
+        if let visibleBrowserID, let visibleBrowser = browsers[visibleBrowserID] {
+            browser = visibleBrowser
+        } else {
+            do {
+                browser = try await createBrowser(resourceMode: .full, networkPolicy: .unrestricted)
+                browser.isVisible = true
+                setOverlayVisible(true, browserID: browser.id)
+            } catch {
+                refreshSummaries()
+                return
+            }
         }
         guard browser.networkPolicy.allows(url) else {
             return
