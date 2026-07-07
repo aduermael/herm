@@ -11,6 +11,13 @@ Use this skill when a task needs web search, page browsing, browser interaction,
 
 Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in state, form interaction, or visual inspection.
 
+## Webbrowser vs HTTP
+
+- Use `webbrowser` for search engines, normal websites, documentation sites, pages that need JavaScript, pages that may use cookies/login state, forms, visual inspection, screenshots, and user handoff.
+- Use `http` for direct API calls, JSON endpoints, known static files, webhooks, or machine-readable resources where browser rendering and cookies are unnecessary.
+- Do not use `http` as a replacement for browsing a site. If the user asks to search, browse, inspect, click, log in, or verify what a page shows, use `webbrowser`.
+- Do not use `webbrowser` for simple API retrieval when `http` can fetch the exact machine-readable endpoint more directly.
+
 ## Defaults
 
 - `webbrowser.create()` and `webbrowser.open()` use lean resource mode by default in CPSL.

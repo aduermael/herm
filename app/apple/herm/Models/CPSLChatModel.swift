@@ -39,6 +39,9 @@ final class CPSLChatModel: ObservableObject {
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
+    var activeToolStatusNodeID: String?
+    var activeToolStatusPayload: CPSLToolStatusPayload?
+    var activeToolStatusStore: CPSLConversationStore?
 
     private let systemPrompt = """
     You are Herm, an AI agent running inside an iOS/macOS app.
@@ -91,6 +94,9 @@ final class CPSLChatModel: ObservableObject {
                 self.filePreview = nil
                 self.isDrawerOpen = false
             }
+        }
+        webBrowser.webVisitOccurred = { [weak self] visit in
+            self?.appendWebSearchVisit(visit)
         }
         Task {
             await bootstrap()
@@ -225,6 +231,20 @@ final class CPSLChatModel: ObservableObject {
         isDrawerOpen = false
         isWebBrowserOpen = true
         webBrowser.showLastBrowserFromUI()
+    }
+
+    func openWebBrowserFromTimeline(browserID: String?) {
+        isFileBrowserOpen = false
+        filePreview = nil
+        isDrawerOpen = false
+        isWebBrowserOpen = true
+        if let browserID {
+            Task {
+                await webBrowser.showBrowserFromUI(id: browserID)
+            }
+        } else {
+            webBrowser.showLastBrowserFromUI()
+        }
     }
 
     func closeWebBrowser() {
@@ -650,6 +670,25 @@ final class CPSLChatModel: ObservableObject {
 
     func appendErrorMessage(title: String?, body: String) {
         messages.append(CPSLChatMessage(role: .error, title: title, body: body))
+    }
+
+    func appendWebSearchVisit(_ visit: CPSLWebSearchVisit) {
+        guard let nodeID = activeToolStatusNodeID,
+              let store = activeToolStatusStore,
+              var payload = activeToolStatusPayload
+        else {
+            return
+        }
+        payload.webVisits.append(visit)
+        activeToolStatusPayload = payload
+        let body = payload.encodedBody()
+        if let messageID = UUID(uuidString: nodeID),
+           let index = messages.firstIndex(where: { $0.id == messageID }) {
+            messages[index].body = body
+        }
+        Task {
+            try? await store.updateNodeBody(id: nodeID, body: body)
+        }
     }
 
     private func normalizedPath(_ path: String) -> String {

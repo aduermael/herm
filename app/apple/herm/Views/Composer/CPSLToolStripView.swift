@@ -29,7 +29,8 @@ struct CPSLToolStripView: View {
                     systemName: "globe",
                     color: CPSLTheme.success,
                     tint: controlTint(isActive: model.isWebBrowserOpen),
-                    strokeOpacity: controlStrokeOpacity(isActive: model.isWebBrowserOpen)
+                    strokeOpacity: controlStrokeOpacity(isActive: model.isWebBrowserOpen),
+                    isGlowing: model.webBrowser.isActivityActive
                 ) {
                     model.toggleWebBrowser()
                 }
@@ -50,30 +51,75 @@ private struct CPSLToolStripButton: View {
     let color: Color
     let tint: Color
     let strokeOpacity: Double
+    var isGlowing = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: CPSLTheme.small) {
-                Image(systemName: systemName)
-                    .symbolRenderingMode(.hierarchical)
-                    .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
-                    .foregroundStyle(color)
-                Text(title)
-                    .font(CPSLTheme.controlFont)
-            }
-            .padding(.horizontal, CPSLTheme.medium)
-            .frame(height: CPSLTheme.controlSize)
-            .cpslGlassBackground(
-                in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+            CPSLToolStripButtonLabel(
+                title: title,
+                systemName: systemName,
+                color: color,
                 tint: tint,
-                strokeOpacity: strokeOpacity
+                strokeOpacity: strokeOpacity,
+                isGlowing: isGlowing
             )
-            .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .foregroundStyle(CPSLTheme.text)
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+    }
+}
+
+private struct CPSLToolStripButtonLabel: View {
+    let title: LocalizedStringKey
+    let systemName: String
+    let color: Color
+    let tint: Color
+    let strokeOpacity: Double
+    let isGlowing: Bool
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            Image(systemName: systemName)
+                .symbolRenderingMode(.hierarchical)
+                .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
+                .foregroundStyle(color)
+            Text(title)
+                .font(CPSLTheme.controlFont)
+        }
+        .padding(.horizontal, CPSLTheme.medium)
+        .frame(height: CPSLTheme.controlSize)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+            tint: tint,
+            strokeOpacity: isGlowing ? 0.18 : strokeOpacity
+        )
+        .overlay {
+            if isGlowing {
+                CPSLBrowserActivityGlow(color: color)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+    }
+}
+
+private struct CPSLBrowserActivityGlow: View {
+    let color: Color
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let opacity = glowOpacity(at: timeline.date)
+            RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
+                .stroke(color.opacity(opacity), lineWidth: 1.6)
+                .shadow(color: color.opacity(opacity * 0.9), radius: 8, x: 0, y: 0)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func glowOpacity(at date: Date) -> Double {
+        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9
+        return 0.35 + (sin(phase * .pi * 2) + 1) * 0.20
     }
 }
 

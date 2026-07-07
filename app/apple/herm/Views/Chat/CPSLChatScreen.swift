@@ -155,7 +155,7 @@ private struct CPSLMainContentStage: View {
                     topInset: CPSLTheme.topChromeInset,
                     bottomInset: contentBottomInset
                 )
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(.opacity)
                     .zIndex(5)
             }
         }

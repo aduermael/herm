@@ -11,16 +11,22 @@ import UIKit
 final class CPSLWebBrowserService: ObservableObject {
     @Published private(set) var visibleBrowserID: String?
     @Published private(set) var summaries: [CPSLWebBrowserSummary] = []
+    @Published private(set) var isActivityActive = false
 
     var visibilityChanged: (@MainActor (Bool) -> Void)?
+    var webVisitOccurred: (@MainActor (CPSLWebSearchVisit) -> Void)?
 
     private var browsers: [String: CPSLWebBrowserSession] = [:]
     private var lastBrowserID: String?
     private var sandboxRootURL: URL?
     private var leanRuleListTask: Task<WKContentRuleList?, Never>?
+    private var activityClearTask: Task<Void, Never>?
+    private let processPool = WKProcessPool()
+    private let websiteDataStore = WKWebsiteDataStore.default()
 
     private let defaultWindowSize = CGSize(width: 900, height: 700)
     private let maxInlineJSONBytes = 16_000
+    private let activityDuration: TimeInterval = 1.6
 
     var visibleWebView: WKWebView? {
         guard let visibleBrowserID else {
@@ -74,6 +80,76 @@ final class CPSLWebBrowserService: ObservableObject {
         setOverlayVisible(false, browserID: nil)
     }
 
+    func createBrowserFromUI() async {
+        do {
+            let browser = try await createBrowser(resourceMode: .full, networkPolicy: .unrestricted)
+            browser.isVisible = true
+            setOverlayVisible(true, browserID: browser.id)
+            refreshSummaries()
+        } catch {
+            refreshSummaries()
+        }
+    }
+
+    func closeBrowserFromUI(id: String) {
+        browsers.removeValue(forKey: id)
+        if lastBrowserID == id {
+            lastBrowserID = browsers.keys.sorted().first
+        }
+        if visibleBrowserID == id {
+            if let nextID = lastBrowserID, let browser = browsers[nextID] {
+                browser.isVisible = true
+                setOverlayVisible(true, browserID: nextID)
+            } else {
+                setOverlayVisible(false, browserID: nil)
+            }
+        }
+        refreshSummaries()
+    }
+
+    func navigateVisibleBrowserFromUI(to address: String) {
+        guard let visibleBrowserID, let browser = browsers[visibleBrowserID],
+              let url = normalizedUserURL(address)
+        else {
+            return
+        }
+        guard browser.networkPolicy.allows(url) else {
+            return
+        }
+        markActivity()
+        browser.webView.load(URLRequest(url: url))
+        browser.url = url.absoluteString
+        lastBrowserID = browser.id
+        refreshSummaries()
+    }
+
+    func goBackFromUI() {
+        guard let visibleBrowserID, let browser = browsers[visibleBrowserID], browser.webView.canGoBack else {
+            return
+        }
+        markActivity()
+        browser.webView.goBack()
+        refreshSummaries()
+    }
+
+    func goForwardFromUI() {
+        guard let visibleBrowserID, let browser = browsers[visibleBrowserID], browser.webView.canGoForward else {
+            return
+        }
+        markActivity()
+        browser.webView.goForward()
+        refreshSummaries()
+    }
+
+    func reloadFromUI() {
+        guard let visibleBrowserID, let browser = browsers[visibleBrowserID] else {
+            return
+        }
+        markActivity()
+        browser.webView.reload()
+        refreshSummaries()
+    }
+
     func updateVisibleBrowserViewport(_ size: CGSize) {
         guard let visibleBrowserID, let browser = browsers[visibleBrowserID] else {
             return
@@ -84,6 +160,7 @@ final class CPSLWebBrowserService: ObservableObject {
     func handleJSON(_ requestJSON: String) async -> String {
         do {
             let request = try CPSLWebBrowserRequest(json: requestJSON)
+            markActivity()
             let response = try await handle(request)
             return encodeResponse(response)
         } catch {
@@ -258,6 +335,7 @@ final class CPSLWebBrowserService: ObservableObject {
         }
 
         let page = try await pageSnapshot(browser, request: request)
+        notifyWebVisit(browser: browser, page: page)
         return success(browser: browser).merging(["page": page]) { _, new in new }
     }
 
@@ -285,7 +363,10 @@ final class CPSLWebBrowserService: ObservableObject {
         networkPolicy: CPSLWebBrowserNetworkPolicy
     ) async throws -> CPSLWebBrowserSession {
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
+        configuration.processPool = processPool
+        // Use the shared persistent WebKit store so cookies, local storage, and
+        // logged-in browsing state survive across tabs and app launches.
+        configuration.websiteDataStore = websiteDataStore
         let contentController = WKUserContentController()
         if resourceMode == .lean, let ruleList = await leanContentRuleList() {
             contentController.add(ruleList)
@@ -294,7 +375,12 @@ final class CPSLWebBrowserService: ObservableObject {
 
         let webView = WKWebView(frame: CGRect(origin: .zero, size: windowSize), configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
-        let navigationDelegate = CPSLWebBrowserNavigationDelegate(policy: networkPolicy)
+        let navigationDelegate = CPSLWebBrowserNavigationDelegate(
+            policy: networkPolicy,
+            onNavigationChanged: { [weak self] webView in
+                self?.refreshBrowserNavigation(id: id, webView: webView)
+            }
+        )
         webView.navigationDelegate = navigationDelegate
         return CPSLWebBrowserSession(
             id: id,
@@ -489,6 +575,15 @@ final class CPSLWebBrowserService: ObservableObject {
         }
         browser.windowSize = size
         browser.webView.frame = CGRect(origin: .zero, size: size)
+        refreshSummaries()
+    }
+
+    private func refreshBrowserNavigation(id: String, webView: WKWebView) {
+        guard let browser = browsers[id], browser.webView === webView else {
+            return
+        }
+        browser.title = webView.title
+        browser.url = webView.url?.absoluteString
         refreshSummaries()
     }
 
@@ -811,6 +906,77 @@ final class CPSLWebBrowserService: ObservableObject {
         visibilityChanged?(isVisible)
     }
 
+    private func markActivity() {
+        activityClearTask?.cancel()
+        isActivityActive = true
+        let duration = activityDuration
+        activityClearTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            await MainActor.run {
+                guard !Task.isCancelled else {
+                    return
+                }
+                self?.isActivityActive = false
+            }
+        }
+    }
+
+    private func notifyWebVisit(browser: CPSLWebBrowserSession, page: [String: Any]) {
+        let pageURL = (page["url"] as? String)?.nilIfEmpty
+            ?? browser.url?.nilIfEmpty
+            ?? browser.webView.url?.absoluteString
+            ?? ""
+        guard !pageURL.isEmpty else {
+            return
+        }
+        let title = (page["title"] as? String)?.nilIfEmpty
+            ?? browser.title?.nilIfEmpty
+            ?? browser.webView.title?.nilIfEmpty
+            ?? pageURL
+        let host = URL(string: pageURL)?.host ?? pageURL
+        let faviconURL = faviconURL(pageURL: pageURL, rawIconURL: page["faviconURL"] as? String)
+        webVisitOccurred?(
+            CPSLWebSearchVisit(
+                browserID: browser.id,
+                url: pageURL,
+                title: title,
+                host: host,
+                faviconURL: faviconURL
+            )
+        )
+    }
+
+    private func faviconURL(pageURL: String, rawIconURL: String?) -> String? {
+        guard let baseURL = URL(string: pageURL) else {
+            return nil
+        }
+        if let rawIconURL = rawIconURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawIconURL.isEmpty,
+           let iconURL = URL(string: rawIconURL, relativeTo: baseURL)?.absoluteURL {
+            return iconURL.absoluteString
+        }
+        guard let scheme = baseURL.scheme, let host = baseURL.host else {
+            return nil
+        }
+        return "\(scheme)://\(host)/favicon.ico"
+    }
+
+    private func normalizedUserURL(_ address: String) -> URL? {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+        if let url = URL(string: trimmed), url.scheme != nil {
+            return url
+        }
+        if trimmed.contains(".") && !trimmed.contains(" ") {
+            return URL(string: "https://\(trimmed)")
+        }
+        var components = URLComponents(string: "https://www.google.com/search")
+        components?.queryItems = [URLQueryItem(name: "q", value: trimmed)]
+        return components?.url
+    }
+
     private func encodeResponse(_ response: [String: Any]) -> String {
         do {
             let data = try JSONSerialization.data(withJSONObject: response, options: [.sortedKeys])
@@ -908,7 +1074,10 @@ private final class CPSLWebBrowserSession {
             title: title ?? webView.title,
             url: url ?? webView.url?.absoluteString,
             resourceMode: resourceMode,
-            isVisible: isVisible
+            isVisible: isVisible,
+            canGoBack: webView.canGoBack,
+            canGoForward: webView.canGoForward,
+            isLoading: webView.isLoading
         )
     }
 }
@@ -919,11 +1088,17 @@ struct CPSLWebBrowserSummary: Identifiable, Equatable, Sendable {
     let url: String?
     let resourceMode: CPSLWebBrowserResourceMode
     let isVisible: Bool
+    let canGoBack: Bool
+    let canGoForward: Bool
+    let isLoading: Bool
 
     var jsonObject: [String: Any] {
         var object: [String: Any] = [
             "browser": id,
             "resourceMode": resourceMode.rawValue,
+            "canGoBack": canGoBack,
+            "canGoForward": canGoForward,
+            "loading": isLoading,
             "visible": isVisible,
         ]
         if let title {
@@ -993,9 +1168,14 @@ private struct CPSLWebBrowserNetworkPolicy: Equatable, Sendable {
 
 private final class CPSLWebBrowserNavigationDelegate: NSObject, WKNavigationDelegate {
     var policy: CPSLWebBrowserNetworkPolicy
+    let onNavigationChanged: @MainActor (WKWebView) -> Void
 
-    init(policy: CPSLWebBrowserNetworkPolicy) {
+    init(
+        policy: CPSLWebBrowserNetworkPolicy,
+        onNavigationChanged: @escaping @MainActor (WKWebView) -> Void
+    ) {
         self.policy = policy
+        self.onNavigationChanged = onNavigationChanged
     }
 
     func webView(
@@ -1008,6 +1188,28 @@ private final class CPSLWebBrowserNavigationDelegate: NSObject, WKNavigationDele
             return
         }
         decisionHandler(policy.allows(url) ? .allow : .cancel)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        notifyNavigationChanged(webView)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        notifyNavigationChanged(webView)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        notifyNavigationChanged(webView)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        notifyNavigationChanged(webView)
+    }
+
+    private func notifyNavigationChanged(_ webView: WKWebView) {
+        Task { @MainActor in
+            onNavigationChanged(webView)
+        }
     }
 }
 
@@ -1360,11 +1562,15 @@ private extension CPSLWebBrowserService {
         type: entry.initiatorType || "resource",
         url: entry.name
       }));
+      const iconElement = document.querySelector(
+        "link[rel~='icon'],link[rel='shortcut icon'],link[rel='apple-touch-icon']"
+      );
       const html = document.documentElement ? document.documentElement.outerHTML : "";
       const text = document.body ? document.body.innerText || "" : "";
       return JSON.stringify({
         title: document.title || "",
         url: location.href,
+        faviconURL: iconElement ? iconElement.href || "" : "",
         text,
         actions,
         resources,
@@ -1580,3 +1786,9 @@ private struct CPSLWebBrowserNativeKey {
     ]
 }
 #endif
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}

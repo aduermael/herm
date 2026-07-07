@@ -17,7 +17,9 @@ struct CPSLChatTimelineView: View {
             ScrollView {
                 LazyVStack(spacing: CPSLTheme.messageVerticalSpacing) {
                     ForEach(model.messages) { message in
-                        CPSLChatMessageView(message: message)
+                        CPSLChatMessageView(message: message) { browserID in
+                            model.openWebBrowserFromTimeline(browserID: browserID)
+                        }
                             .id(message.id)
                     }
                 }
@@ -164,6 +166,7 @@ private struct CPSLEmptyChatView: View {
 
 private struct CPSLChatMessageView: View {
     let message: CPSLChatMessage
+    let openBrowser: (String?) -> Void
 
     var body: some View {
         HStack {
@@ -223,7 +226,7 @@ private struct CPSLChatMessageView: View {
             CPSLCommandBlockBody(text: message.body, foreground: message.role.foreground)
         } else if message.role == .toolStatus {
             if let payload = CPSLToolStatusPayload.decode(from: message.body) {
-                CPSLToolStatusBody(payload: payload)
+                CPSLToolStatusBody(payload: payload, openBrowser: openBrowser)
             } else {
                 Text(message.body)
                     .font(CPSLTheme.supportingFont)
@@ -249,6 +252,7 @@ private struct CPSLChatMessageView: View {
 
 private struct CPSLToolStatusBody: View {
     let payload: CPSLToolStatusPayload
+    let openBrowser: (String?) -> Void
 
 #if DEBUG
     @State private var isExpanded = false
@@ -256,16 +260,36 @@ private struct CPSLToolStatusBody: View {
 
     var body: some View {
 #if DEBUG
-        DisclosureGroup(isExpanded: $isExpanded) {
-            CPSLToolStatusDebugDetails(invocations: payload.invocations)
-                .padding(.top, CPSLTheme.small)
-        } label: {
-            CPSLToolStatusLine(payload: payload)
+        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                CPSLToolStatusDebugDetails(invocations: payload.invocations)
+                    .padding(.top, CPSLTheme.small)
+            } label: {
+                CPSLToolStatusLine(payload: payload)
+            }
+            .disclosureGroupStyle(.automatic)
+
+            if !payload.webVisits.isEmpty {
+                CPSLWebSearchStatusLine(visits: payload.webVisits, openBrowser: openBrowser)
+            }
         }
-        .disclosureGroupStyle(.automatic)
 #else
-        CPSLToolStatusLine(payload: payload)
+        CPSLToolStatusStack(payload: payload, openBrowser: openBrowser)
 #endif
+    }
+}
+
+private struct CPSLToolStatusStack: View {
+    let payload: CPSLToolStatusPayload
+    let openBrowser: (String?) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
+            CPSLToolStatusLine(payload: payload)
+            if !payload.webVisits.isEmpty {
+                CPSLWebSearchStatusLine(visits: payload.webVisits, openBrowser: openBrowser)
+            }
+        }
     }
 }
 
@@ -284,6 +308,87 @@ private struct CPSLToolStatusLine: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minHeight: CPSLTheme.large, alignment: .center)
+    }
+}
+
+private struct CPSLWebSearchStatusLine: View {
+    let visits: [CPSLWebSearchVisit]
+    let openBrowser: (String?) -> Void
+
+    private var latestVisit: CPSLWebSearchVisit? {
+        visits.last
+    }
+
+    var body: some View {
+        Button {
+            openBrowser(latestVisit?.browserID)
+        } label: {
+            HStack(spacing: CPSLTheme.small) {
+                Image(systemName: "magnifyingglass")
+                    .font(CPSLTheme.iconSmallFont)
+                    .foregroundStyle(CPSLTheme.success)
+                    .frame(width: CPSLTheme.large, height: CPSLTheme.large)
+
+                Text("Web search")
+                    .font(CPSLTheme.supportingMediumFont)
+                    .foregroundStyle(CPSLTheme.text)
+                    .lineLimit(1)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(visits) { visit in
+                            CPSLWebSearchFavicon(visit: visit)
+                        }
+                    }
+                    .padding(.vertical, 1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: CPSLTheme.large, alignment: .center)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(latestVisit?.url ?? "Open browser")
+    }
+}
+
+private struct CPSLWebSearchFavicon: View {
+    let visit: CPSLWebSearchVisit
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .fill(CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34))
+
+            if let faviconURL = visit.faviconURL,
+               let url = URL(string: faviconURL) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .padding(3)
+                    default:
+                        fallbackIcon
+                    }
+                }
+            } else {
+                fallbackIcon
+            }
+        }
+        .frame(width: 22, height: 22)
+        .overlay(
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .stroke(CPSLTheme.text.opacity(0.07), lineWidth: 1)
+        )
+        .help(visit.title.isEmpty ? visit.host : visit.title)
+    }
+
+    private var fallbackIcon: some View {
+        Text(String(visit.host.prefix(1)).uppercased())
+            .font(CPSLTheme.captionMediumFont)
+            .foregroundStyle(CPSLTheme.secondaryText)
     }
 }
 

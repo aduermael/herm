@@ -42,7 +42,10 @@ private struct CPSLWebBrowserPanel: View {
 
     var body: some View {
         CPSLFileOverlayPanel {
-            CPSLWebBrowserHeader(model: model, webBrowser: webBrowser)
+            VStack(spacing: 0) {
+                CPSLWebBrowserHeader(model: model, webBrowser: webBrowser)
+                CPSLWebBrowserNavigationBar(webBrowser: webBrowser)
+            }
         } content: {
             CPSLWebBrowserContent(webBrowser: webBrowser)
         }
@@ -100,6 +103,138 @@ private struct CPSLWebBrowserHeader: View {
         .padding(.horizontal, CPSLTheme.medium)
         .padding(.vertical, CPSLTheme.small)
         .frame(minHeight: CPSLTheme.controlSize + CPSLTheme.medium)
+    }
+}
+
+private struct CPSLWebBrowserNavigationBar: View {
+    @ObservedObject var webBrowser: CPSLWebBrowserService
+    @State private var addressText = ""
+
+    private var summary: CPSLWebBrowserSummary? {
+        webBrowser.visibleSummary
+    }
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            CPSLWebBrowserNavButton(
+                systemName: "chevron.left",
+                accessibilityLabel: "Back",
+                isEnabled: summary?.canGoBack == true
+            ) {
+                webBrowser.goBackFromUI()
+            }
+
+            CPSLWebBrowserNavButton(
+                systemName: "chevron.right",
+                accessibilityLabel: "Forward",
+                isEnabled: summary?.canGoForward == true
+            ) {
+                webBrowser.goForwardFromUI()
+            }
+
+            CPSLWebBrowserNavButton(
+                systemName: "arrow.clockwise",
+                accessibilityLabel: "Reload",
+                isEnabled: summary != nil
+            ) {
+                webBrowser.reloadFromUI()
+            }
+
+            CPSLWebBrowserAddressField(
+                text: $addressText,
+                isLoading: summary?.isLoading == true
+            ) {
+                webBrowser.navigateVisibleBrowserFromUI(to: addressText)
+            }
+
+            CPSLWebBrowserNavButton(
+                systemName: "plus",
+                accessibilityLabel: "New Tab",
+                isEnabled: true
+            ) {
+                Task {
+                    await webBrowser.createBrowserFromUI()
+                }
+            }
+
+            CPSLWebBrowserNavButton(
+                systemName: "xmark.square",
+                accessibilityLabel: "Close Tab",
+                isEnabled: summary != nil
+            ) {
+                if let id = summary?.id {
+                    webBrowser.closeBrowserFromUI(id: id)
+                }
+            }
+        }
+        .padding(.horizontal, CPSLTheme.medium)
+        .padding(.bottom, CPSLTheme.small)
+        .onAppear {
+            addressText = summary?.url ?? ""
+        }
+        .onChange(of: summary?.id) { _, _ in
+            addressText = summary?.url ?? ""
+        }
+        .onChange(of: summary?.url) { _, url in
+            addressText = url ?? ""
+        }
+    }
+}
+
+private struct CPSLWebBrowserAddressField: View {
+    @Binding var text: String
+    let isLoading: Bool
+    let onSubmit: () -> Void
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            Image(systemName: isLoading ? "globe.badge.chevron.backward" : "magnifyingglass")
+                .symbolRenderingMode(.hierarchical)
+                .font(CPSLTheme.iconSmallFont)
+                .foregroundStyle(isLoading ? CPSLTheme.success : CPSLTheme.secondaryText)
+
+            TextField("Search or enter website", text: $text)
+                .textFieldStyle(.plain)
+                .font(CPSLTheme.supportingFont)
+                .foregroundStyle(CPSLTheme.text)
+                .lineLimit(1)
+                .submitLabel(.go)
+                .onSubmit(onSubmit)
+        }
+        .padding(.horizontal, CPSLTheme.medium)
+        .frame(height: CPSLTheme.controlSize)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
+            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34),
+            strokeOpacity: 0.05
+        )
+    }
+}
+
+private struct CPSLWebBrowserNavButton: View {
+    let systemName: String
+    let accessibilityLabel: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(CPSLTheme.iconSmallFont)
+                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .foregroundStyle(isEnabled ? CPSLTheme.text : CPSLTheme.mutedText)
+        .opacity(isEnabled ? 1 : 0.45)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
+            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.32),
+            strokeOpacity: 0.045
+        )
     }
 }
 
