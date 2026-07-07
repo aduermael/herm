@@ -11,6 +11,12 @@ Use this skill when a task needs web search, page browsing, browser interaction,
 
 Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in state, form interaction, or visual inspection.
 
+## Background By Default
+
+- Use the browser in the background by default. Do not call `webbrowser.show()` just because you opened, searched, clicked, typed, or inspected a page.
+- Call `webbrowser.show(browser)` only when the user explicitly asks to see the browser, or when the task truly requires user handoff for authentication, consent, CAPTCHA, payment, permission prompts, or subjective visual confirmation.
+- If a page can be inspected with `webbrowser.page()`, `webbrowser.eval()`, or `webbrowser.screenshot()` without interrupting the user, keep the browser hidden.
+
 ## Webbrowser vs HTTP
 
 - Use `webbrowser` for search engines, normal websites, documentation sites, pages that need JavaScript, pages that may use cookies/login state, forms, visual inspection, screenshots, and user handoff.
@@ -26,7 +32,7 @@ Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in stat
 - Use full mode from the first navigation for heavy JavaScript apps, login flows,
   social sites such as X, or any page that may treat missing images/fonts/media
   as a broken or non-browser session.
-- `webbrowser.show(browser)` is the handoff point. The native host should show the browser UI and promote lean pages to full mode before displaying them.
+- `webbrowser.show(browser)` is only for explicit user handoff. The native host should show the browser UI and promote lean pages to full mode before displaying them.
 - `webbrowser.type()` uses the host's natural typing path by default. In Herm, visible macOS pages use AppKit key events; iOS and offscreen pages use natural-paced WebKit input events. Use `{speed=4.0}` if you need to be explicit.
 
 ## Search And Browse
@@ -75,7 +81,7 @@ webbrowser.screenshot(browser, "/tmp/page.png", {
 
 ## User Handoff
 
-Show the browser when authentication, consent, CAPTCHA, payment, or subjective visual confirmation is required.
+Do not show the browser during ordinary browsing. Show it only when the user asked to see it or when authentication, consent, CAPTCHA, payment, permission prompts, or subjective visual confirmation is required.
 
 ```lua
 webbrowser.show(browser)
