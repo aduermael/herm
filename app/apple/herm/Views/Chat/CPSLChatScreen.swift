@@ -14,6 +14,7 @@ private enum CPSLDrawerMotion {
 private enum CPSLOverlayMotion {
     static let duration = 0.2
     static let animation = Animation.easeOut(duration: duration)
+    static let transition = AnyTransition.move(edge: .trailing).combined(with: .opacity)
 }
 
 struct CPSLChatScreen: View {
@@ -151,7 +152,7 @@ private struct CPSLMainContentStage: View {
                     topInset: CPSLTheme.topChromeInset,
                     bottomInset: contentBottomInset
                 )
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(CPSLOverlayMotion.transition)
                     .zIndex(4)
             }
 
@@ -161,7 +162,7 @@ private struct CPSLMainContentStage: View {
                     topInset: CPSLTheme.topChromeInset,
                     bottomInset: contentBottomInset
                 )
-                    .transition(.opacity)
+                    .transition(CPSLOverlayMotion.transition)
                     .zIndex(5)
             }
         }

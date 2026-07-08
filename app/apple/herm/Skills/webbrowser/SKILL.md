@@ -38,10 +38,7 @@ Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in stat
 ## Search And Browse
 
 ```lua
-local opened = webbrowser.open("https://www.google.com/search?q=site%3Aexample.com+query", {
-  wait_resources = true,
-  resource_timeout = 3,
-})
+local opened = webbrowser.open("https://www.google.com/search?q=site%3Aexample.com+query")
 local browser = opened.browser
 
 local page = webbrowser.page(browser, {
@@ -49,6 +46,8 @@ local page = webbrowser.page(browser, {
 })
 print(page.page and page.page.text or page.text or "")
 ```
+
+Do not add `wait_resources` to initial navigation as a precaution. Use `webbrowser.wait_resources(browser, {resource_timeout=3})` or `webbrowser.page(browser, {wait_resources=true, resource_timeout=3})` after opening when scripts, styles, images, or fetches matter.
 
 If the response is short but references a saved JSON file, read the file from `/tmp` with `fs.read()`.
 
@@ -66,6 +65,12 @@ For coordinate-only controls:
 ```lua
 webbrowser.click(browser, 320, 480)
 webbrowser.scroll(browser, 500, 700, 0, 600)
+```
+
+`webbrowser.eval()` returns a table. Read the JavaScript result from `.value`:
+
+```lua
+local title = webbrowser.eval(browser, "return document.title", {function_body=true}).value
 ```
 
 ## Screenshots

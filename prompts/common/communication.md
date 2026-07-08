@@ -3,7 +3,7 @@
 
 ## Communication
 
-- Keep responses short. Prefer a few sentences over paragraphs. Omit filler and preamble.
+- Keep responses concise but complete. Prefer a few sentences over paragraphs, and avoid tables or long step-by-step reports unless the user asks for detail.
 - Lead with the answer or action, not the reasoning. Show the concrete result, not process commentary.
 - Only explain when the user needs context to make a decision or when the reasoning is non-obvious.
 - Do NOT repeat or echo tool output. The user already sees tool results (diffs, file contents, command output) in the conversation. Summarize what you did, don't paste the same content again.

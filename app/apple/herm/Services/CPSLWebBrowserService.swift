@@ -339,8 +339,9 @@ final class CPSLWebBrowserService: ObservableObject {
             browser = try await createBrowser(resourceMode: resourceMode, networkPolicy: networkPolicy)
         }
 
+        let previousURL = browser.webView.url
         browser.webView.load(Self.browserRequest(for: url))
-        try await waitForDocumentReady(browser, timeout: 15)
+        try await waitForDocumentReady(browser, requestedURL: url, previousURL: previousURL, timeout: 15)
         if request.waitForResources {
             try await waitForResources(browser, timeout: request.resourceTimeout ?? 8)
         }
@@ -457,7 +458,7 @@ final class CPSLWebBrowserService: ObservableObject {
            let url = URL(string: urlString),
            replacement.networkPolicy.allows(url) {
             replacement.webView.load(Self.browserRequest(for: url))
-            try? await waitForDocumentReady(replacement, timeout: 15)
+            try? await waitForDocumentReady(replacement, requestedURL: url, timeout: 15)
         }
         refreshSummaries()
         return replacement
@@ -798,15 +799,56 @@ final class CPSLWebBrowserService: ObservableObject {
         try await runActionJavaScript(coordinateScript(action: action, x: x, y: y), in: browser)
     }
 
-    private func waitForDocumentReady(_ browser: CPSLWebBrowserSession, timeout: TimeInterval) async throws {
+    private func waitForDocumentReady(
+        _ browser: CPSLWebBrowserSession,
+        requestedURL: URL? = nil,
+        previousURL: URL? = nil,
+        timeout: TimeInterval
+    ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
+            let location = try? await evaluateJavaScript("location.href", in: browser) as? String
             if let readyState = try? await evaluateJavaScript("document.readyState", in: browser) as? String,
+               isCommittedDocument(
+                   browser: browser,
+                   requestedURL: requestedURL,
+                   previousURL: previousURL,
+                   location: location
+               ),
                readyState == "interactive" || readyState == "complete" {
                 return
             }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
+    }
+
+    private func isCommittedDocument(
+        browser: CPSLWebBrowserSession,
+        requestedURL: URL?,
+        previousURL: URL?,
+        location: String?
+    ) -> Bool {
+        let rawURL = location?.nilIfEmpty ?? browser.webView.url?.absoluteString.nilIfEmpty
+        guard let rawURL,
+              rawURL != "about:blank",
+              let url = URL(string: rawURL),
+              let scheme = url.scheme?.lowercased()
+        else {
+            return false
+        }
+        if let requestedURL {
+            if let previousURL,
+               previousURL.absoluteString != requestedURL.absoluteString,
+               rawURL == previousURL.absoluteString {
+                return false
+            }
+            let requestedScheme = requestedURL.scheme?.lowercased()
+            if requestedScheme == "http" || requestedScheme == "https" {
+                return scheme == "http" || scheme == "https"
+            }
+            return requestedScheme == scheme
+        }
+        return true
     }
 
     private func waitForResources(_ browser: CPSLWebBrowserSession, timeout: TimeInterval) async throws {
