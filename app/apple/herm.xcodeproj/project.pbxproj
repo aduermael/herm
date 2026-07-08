@@ -56,9 +56,8 @@
 				Generated/CPSLEnvConstants.swift,
 				Resources/.env,
 				Resources/.env.local,
-				Skills,
-				Skills/beautiful-pdfs/SKILL.md,
-				Skills/beautiful-pdfs/print.css,
+				"Skills/beautiful-pdfs/print.css",
+				"Skills/beautiful-pdfs/SKILL.md",
 				Skills/webbrowser/SKILL.md,
 			);
 			target = 85D75D322FE62B6F0095BAB2 /* herm */;
