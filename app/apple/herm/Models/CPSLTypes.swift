@@ -225,7 +225,7 @@ struct CPSLFileDimensions: Equatable, Sendable {
     let height: Int
 }
 
-enum CPSLCodeLanguage: String, Equatable, Sendable {
+nonisolated enum CPSLCodeLanguage: String, Equatable, Sendable {
     case c
     case cpp
     case css
