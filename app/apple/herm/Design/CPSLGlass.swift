@@ -2,7 +2,7 @@ import SwiftUI
 
 enum CPSLGlassTuning {
     static let tintOpacityScale: Double = 1.12
-    static let nativeGlassTintOpacity: Double = 0.30
+    static let nativeGlassTintOpacity: Double = 0.66
 
     static func tint(_ color: Color, opacity: Double) -> Color {
         color.opacity(min(opacity * tintOpacityScale, 1))
