@@ -1,10 +1,5 @@
 import Combine
 import Foundation
-#if os(macOS)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
 
 @MainActor
 final class CPSLChatModel: ObservableObject {
@@ -23,8 +18,10 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var loadingFilePaths: Set<String> = []
     @Published private(set) var fileBrowserError: String?
     @Published private(set) var filePreview: CPSLFilePreview?
+    @Published private(set) var isWebBrowserOpen = false
 
-    let service = CPSLDebugService()
+    let service: CPSLDebugService
+    let webBrowser: CPSLWebBrowserService
     let dictation = CPSLDictationService()
     private var store: CPSLConversationStore?
     private var storeLoadTask: Task<CPSLConversationStore, Error>?
@@ -37,6 +34,9 @@ final class CPSLChatModel: ObservableObject {
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
+    var activeToolStatusNodeID: String?
+    var activeToolStatusPayload: CPSLToolStatusPayload?
+    var activeToolStatusStore: CPSLConversationStore?
 
     private let systemPrompt = """
     You are Herm, an AI agent running inside an iOS/macOS app.
@@ -49,10 +49,12 @@ final class CPSLChatModel: ObservableObject {
     local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs.
     Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Do not use require or package-style imports for filesystem or document work.
     Treat help output as human-readable documentation. Call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
+    Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed.
     If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available through CPSL.
     When a requested artifact cannot be produced, do not claim success. Mention any partial artifact only as a fallback, and make clear it is not the requested output.
     agent spawns a focused sub-agent with its own turn budget. Use explore mode for research and reading. Use general mode for execution-heavy or implementation-style work. Keep sub-agent tasks narrow and self-contained.
-    Luau essentials: declare variables with local, use 1-based indexing, concatenate strings with .., use ~= for not-equal, and use pcall(fn) for recoverable errors.
+    Luau essentials: declare variables with local, use 1-based indexing, concatenate strings with .., use ~= for not-equal, and use pcall(fn) for recoverable errors. The os, io, dofile, loadfile, and package libraries are unavailable; use sandbox modules such as datetime, fs, doc, and http instead.
+    Keep final answers concise: lead with the result, include created paths or limitations, and avoid tables or long step-by-step reports unless the user asks for detail.
     Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or paths outside CPSL.
     Do not ask the provider to browse the web, do not imply host shell access, and do not share local files unless the user explicitly requests file content.
     """
@@ -76,6 +78,23 @@ final class CPSLChatModel: ObservableObject {
     }
 
     init() {
+        let webBrowser = CPSLWebBrowserService()
+        self.webBrowser = webBrowser
+        service = CPSLDebugService(webBrowser: webBrowser)
+        webBrowser.visibilityChanged = { [weak self] isVisible in
+            guard let self else {
+                return
+            }
+            self.isWebBrowserOpen = isVisible
+            if isVisible {
+                self.isFileBrowserOpen = false
+                self.filePreview = nil
+                self.isDrawerOpen = false
+            }
+        }
+        webBrowser.webVisitOccurred = { [weak self] visit in
+            self?.appendWebSearchVisit(visit)
+        }
         Task {
             await bootstrap()
         }
@@ -98,6 +117,7 @@ final class CPSLChatModel: ObservableObject {
         currentSystemPrompt = nil
         isFileBrowserOpen = false
         filePreview = nil
+        closeWebBrowser()
         isDrawerOpen = false
     }
 
@@ -105,6 +125,7 @@ final class CPSLChatModel: ObservableObject {
         isDrawerOpen.toggle()
         if isDrawerOpen {
             isFileBrowserOpen = false
+            closeWebBrowser()
         }
     }
 
@@ -140,14 +161,14 @@ final class CPSLChatModel: ObservableObject {
     }
 
 #if DEBUG
-    func copyConversationJSONToPasteboard() {
-        Task { @MainActor in
-            do {
-                let json = try await currentConversationDebugJSON()
-                Self.copyToPasteboard(json)
-            } catch {
-                appendErrorMessage(title: "Debug", body: error.localizedDescription)
-            }
+    func makeConversationJSONTraceShareFile() async -> URL? {
+        let conversationID = selectedConversationID
+        do {
+            let json = try await conversationDebugJSON(conversationID: conversationID)
+            return try Self.writeConversationJSONTraceFile(json, conversationID: conversationID)
+        } catch {
+            appendErrorMessage(title: "Debug", body: error.localizedDescription)
+            return nil
         }
     }
 #endif
@@ -162,6 +183,7 @@ final class CPSLChatModel: ObservableObject {
         promptText = ""
         isFileBrowserOpen = false
         filePreview = nil
+        closeWebBrowser()
         isDrawerOpen = false
         if input.hasPrefix("!") {
             let command = String(input.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -183,6 +205,7 @@ final class CPSLChatModel: ObservableObject {
         isFileBrowserOpen.toggle()
         if isFileBrowserOpen {
             isDrawerOpen = false
+            closeWebBrowser()
             filePreview = nil
             loadBrowserPath(browserPath)
         } else {
@@ -193,6 +216,37 @@ final class CPSLChatModel: ObservableObject {
     func closeFileBrowser() {
         isFileBrowserOpen = false
         filePreview = nil
+    }
+
+    func toggleWebBrowser() {
+        if isWebBrowserOpen {
+            closeWebBrowser()
+            return
+        }
+        isFileBrowserOpen = false
+        filePreview = nil
+        isDrawerOpen = false
+        isWebBrowserOpen = true
+        webBrowser.showLastBrowserFromUI()
+    }
+
+    func openWebBrowserFromTimeline(browserID: String?) {
+        isFileBrowserOpen = false
+        filePreview = nil
+        isDrawerOpen = false
+        isWebBrowserOpen = true
+        if let browserID {
+            Task {
+                await webBrowser.showBrowserFromUI(id: browserID)
+            }
+        } else {
+            webBrowser.showLastBrowserFromUI()
+        }
+    }
+
+    func closeWebBrowser() {
+        isWebBrowserOpen = false
+        webBrowser.hideOverlayFromUI()
     }
 
     func loadBrowserPath(_ path: String) {
@@ -361,10 +415,10 @@ final class CPSLChatModel: ObservableObject {
     }
 
 #if DEBUG
-    private func currentConversationDebugJSON() async throws -> String {
-        if let selectedConversationID {
+    private func conversationDebugJSON(conversationID: String?) async throws -> String {
+        if let conversationID {
             let store = try await loadStore()
-            return try await store.exportConversationJSON(id: selectedConversationID)
+            return try await store.exportConversationJSON(id: conversationID)
         }
 
         let encoder = JSONEncoder()
@@ -373,13 +427,35 @@ final class CPSLChatModel: ObservableObject {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private nonisolated static func copyToPasteboard(_ string: String) {
-#if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(string, forType: .string)
-#elseif canImport(UIKit)
-        UIPasteboard.general.string = string
-#endif
+    private nonisolated static func writeConversationJSONTraceFile(
+        _ json: String,
+        conversationID: String?
+    ) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HermDebugTraces", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let conversationComponent = safeTraceFileComponent(conversationID ?? "draft")
+        let fileName = "herm-\(conversationComponent)-trace-\(traceFileTimestamp()).json"
+        let url = directory.appendingPathComponent(fileName, isDirectory: false)
+        try json.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
+
+    private nonisolated static func traceFileTimestamp() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+            .replacingOccurrences(of: ".", with: "-")
+    }
+
+    private nonisolated static func safeTraceFileComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let component = value.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? String(scalar) : "-"
+        }.joined()
+        return component.isEmpty ? "conversation" : component
     }
 #endif
 
@@ -613,6 +689,25 @@ final class CPSLChatModel: ObservableObject {
 
     func appendErrorMessage(title: String?, body: String) {
         messages.append(CPSLChatMessage(role: .error, title: title, body: body))
+    }
+
+    func appendWebSearchVisit(_ visit: CPSLWebSearchVisit) {
+        guard let nodeID = activeToolStatusNodeID,
+              let store = activeToolStatusStore,
+              var payload = activeToolStatusPayload
+        else {
+            return
+        }
+        payload.webVisits.append(visit)
+        activeToolStatusPayload = payload
+        let body = payload.encodedBody()
+        if let messageID = UUID(uuidString: nodeID),
+           let index = messages.firstIndex(where: { $0.id == messageID }) {
+            messages[index].body = body
+        }
+        Task {
+            try? await store.updateNodeBody(id: nodeID, body: body)
+        }
     }
 
     private func normalizedPath(_ path: String) -> String {

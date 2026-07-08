@@ -6,6 +6,10 @@ extension CPSLChatModel {
         var toolStatusNodeID: String?
         var toolStatus = CPSLToolStatusPayload.running()
         var lastToolStatusState: CPSLToolStatusState = .succeeded
+        clearActiveToolStatus()
+        defer {
+            clearActiveToolStatus()
+        }
 
         for iteration in 0..<context.config.maxToolRounds {
             let sandboxDirectory = await service.currentDirectory()
@@ -93,6 +97,9 @@ extension CPSLChatModel {
                     )
                 )
                 toolStatusNodeID = statusNode.id
+                activeToolStatusNodeID = statusNode.id
+                activeToolStatusPayload = toolStatus
+                activeToolStatusStore = context.store
                 context.parentID = statusNode.id
                 context.onParentIDChange(context.parentID)
                 if let message = statusNode.chatMessage {
@@ -276,7 +283,16 @@ extension CPSLChatModel {
         nodeID: String,
         store: CPSLConversationStore
     ) async throws {
-        let body = payload.encodedBody()
+        var effectivePayload = payload
+        if nodeID == activeToolStatusNodeID,
+           let activeToolStatusPayload,
+           !activeToolStatusPayload.webVisits.isEmpty {
+            effectivePayload.webVisits = activeToolStatusPayload.webVisits
+        }
+        activeToolStatusNodeID = nodeID
+        activeToolStatusPayload = effectivePayload
+        activeToolStatusStore = store
+        let body = effectivePayload.encodedBody()
         try await store.updateNodeBody(id: nodeID, body: body)
         guard let messageID = UUID(uuidString: nodeID),
                 let index = messages.firstIndex(where: { $0.id == messageID })
@@ -284,6 +300,12 @@ extension CPSLChatModel {
             return
         }
         messages[index].body = body
+    }
+
+    private func clearActiveToolStatus() {
+        activeToolStatusNodeID = nil
+        activeToolStatusPayload = nil
+        activeToolStatusStore = nil
     }
 
     private func preparedRequestMessages(_ preparation: CPSLRequestPreparation) -> [CPSLOpenAIMessage] {

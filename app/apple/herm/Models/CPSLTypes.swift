@@ -146,6 +146,31 @@ nonisolated struct CPSLChatMessage: Identifiable, Equatable, Sendable, Codable {
     }
 }
 
+nonisolated struct CPSLWebSearchVisit: Identifiable, Codable, Equatable, Sendable {
+    let id: String
+    let browserID: String
+    let url: String
+    let title: String
+    let host: String
+    let faviconURL: String?
+
+    nonisolated init(
+        id: String = UUID().uuidString,
+        browserID: String,
+        url: String,
+        title: String,
+        host: String,
+        faviconURL: String?
+    ) {
+        self.id = id
+        self.browserID = browserID
+        self.url = url
+        self.title = title
+        self.host = host
+        self.faviconURL = faviconURL
+    }
+}
+
 struct CPSLFileEntry: Identifiable, Equatable, Sendable {
     var id: String { path }
 

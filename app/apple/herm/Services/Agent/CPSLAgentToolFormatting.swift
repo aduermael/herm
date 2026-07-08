@@ -321,6 +321,19 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
     var state: CPSLToolStatusState
     var summary: String
     var invocations: [CPSLToolStatusInvocation]
+    var webVisits: [CPSLWebSearchVisit]
+
+    init(
+        state: CPSLToolStatusState,
+        summary: String,
+        invocations: [CPSLToolStatusInvocation],
+        webVisits: [CPSLWebSearchVisit] = []
+    ) {
+        self.state = state
+        self.summary = summary
+        self.invocations = invocations
+        self.webVisits = webVisits
+    }
 
     static func running(summary: String = "Preparing tools") -> CPSLToolStatusPayload {
         CPSLToolStatusPayload(state: .running, summary: summary, invocations: [])
@@ -338,6 +351,21 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
             return summary
         }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case state
+        case summary
+        case invocations
+        case webVisits
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(CPSLToolStatusState.self, forKey: .state)
+        summary = try container.decode(String.self, forKey: .summary)
+        invocations = try container.decodeIfPresent([CPSLToolStatusInvocation].self, forKey: .invocations) ?? []
+        webVisits = try container.decodeIfPresent([CPSLWebSearchVisit].self, forKey: .webVisits) ?? []
     }
 }
 

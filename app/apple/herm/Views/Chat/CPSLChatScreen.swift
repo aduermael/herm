@@ -1,4 +1,10 @@
+import Foundation
 import SwiftUI
+#if os(macOS)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 private enum CPSLDrawerMotion {
     static let duration = 0.2
@@ -8,6 +14,7 @@ private enum CPSLDrawerMotion {
 private enum CPSLOverlayMotion {
     static let duration = 0.2
     static let animation = Animation.easeOut(duration: duration)
+    static let transition = AnyTransition.move(edge: .trailing).combined(with: .opacity)
 }
 
 struct CPSLChatScreen: View {
@@ -145,13 +152,24 @@ private struct CPSLMainContentStage: View {
                     topInset: CPSLTheme.topChromeInset,
                     bottomInset: contentBottomInset
                 )
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .transition(CPSLOverlayMotion.transition)
                     .zIndex(4)
+            }
+
+            if model.isWebBrowserOpen {
+                CPSLWebBrowserOverlay(
+                    model: model,
+                    topInset: CPSLTheme.topChromeInset,
+                    bottomInset: contentBottomInset
+                )
+                    .transition(CPSLOverlayMotion.transition)
+                    .zIndex(5)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CPSLTheme.background.ignoresSafeArea())
         .animation(CPSLOverlayMotion.animation, value: model.isFileBrowserOpen)
+        .animation(CPSLOverlayMotion.animation, value: model.isWebBrowserOpen)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // PROMPTING AREA + BUTTONS ON TOP
             CPSLBottomChromeView(
@@ -226,15 +244,21 @@ private struct CPSLBottomChromeView: View {
 
 private struct CPSLHeaderActionsView: View {
     @ObservedObject var model: CPSLChatModel
+#if DEBUG
+    @State private var traceShareFile: CPSLJSONTraceShareFile?
+    @State private var isPreparingTraceShareFile = false
+#endif
 
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
             Spacer()
 
 #if DEBUG
-            CPSLChromeIconButton(systemName: "doc.on.doc", accessibilityLabel: "Copy conversation JSON") {
-                model.copyConversationJSONToPasteboard()
+            CPSLChromeIconButton(systemName: "doc.on.doc", accessibilityLabel: "Share conversation JSON") {
+                shareConversationJSONTrace()
             }
+            .disabled(isPreparingTraceShareFile)
+            .opacity(isPreparingTraceShareFile ? 0.45 : 1)
 #endif
 
             CPSLChromeIconButton(systemName: "square.and.pencil", accessibilityLabel: "New conversation") {
@@ -246,8 +270,106 @@ private struct CPSLHeaderActionsView: View {
         .padding(.horizontal, CPSLTheme.medium)
         .padding(.top, CPSLTheme.medium)
         .padding(.bottom, CPSLTheme.medium)
+#if DEBUG
+        .cpslJSONTraceShare(file: $traceShareFile)
+#endif
+    }
+
+#if DEBUG
+    private func shareConversationJSONTrace() {
+        guard !isPreparingTraceShareFile else {
+            return
+        }
+
+        isPreparingTraceShareFile = true
+        Task { @MainActor in
+            defer {
+                isPreparingTraceShareFile = false
+            }
+            traceShareFile = await model.makeConversationJSONTraceShareFile().map { url in
+                CPSLJSONTraceShareFile(url: url)
+            }
+        }
+    }
+#endif
+}
+
+#if DEBUG
+private struct CPSLJSONTraceShareFile: Identifiable {
+    let id = UUID()
+    let url: URL
+
+    init(url: URL) {
+        self.url = url
     }
 }
+
+private extension View {
+    func cpslJSONTraceShare(file: Binding<CPSLJSONTraceShareFile?>) -> some View {
+#if os(macOS)
+        background(CPSLJSONTraceSharingServicePicker(file: file))
+#elseif canImport(UIKit)
+        sheet(item: file) { shareFile in
+            CPSLJSONTraceActivityView(activityItems: [shareFile.url])
+        }
+#else
+        self
+#endif
+    }
+}
+
+#if os(macOS)
+private struct CPSLJSONTraceSharingServicePicker: NSViewRepresentable {
+    @Binding var file: CPSLJSONTraceShareFile?
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let file else {
+            return
+        }
+        guard context.coordinator.presentedID != file.id else {
+            return
+        }
+
+        context.coordinator.presentedID = file.id
+        let fileBinding = $file
+        DispatchQueue.main.async {
+            guard nsView.window != nil else {
+                fileBinding.wrappedValue = nil
+                return
+            }
+
+            let picker = NSSharingServicePicker(items: [file.url])
+            context.coordinator.picker = picker
+            picker.show(relativeTo: nsView.bounds, of: nsView, preferredEdge: .minY)
+            fileBinding.wrappedValue = nil
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var presentedID: UUID?
+        var picker: NSSharingServicePicker?
+    }
+}
+#elseif canImport(UIKit)
+private struct CPSLJSONTraceActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif
+#endif
 
 private struct CPSLDrawerToggleButton: View {
     let isOpen: Bool
