@@ -19,10 +19,12 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var fileBrowserError: String?
     @Published private(set) var filePreview: CPSLFilePreview?
     @Published private(set) var isWebBrowserOpen = false
+    @Published private(set) var isFileActivityActive = false
 
     let service: CPSLDebugService
     let webBrowser: CPSLWebBrowserService
     let dictation = CPSLDictationService()
+    private let fileActivityNotifier = CPSLFileActivityNotifier()
     private var store: CPSLConversationStore?
     private var storeLoadTask: Task<CPSLConversationStore, Error>?
     var currentNodeID: String?
@@ -37,6 +39,8 @@ final class CPSLChatModel: ObservableObject {
     var activeToolStatusNodeID: String?
     var activeToolStatusPayload: CPSLToolStatusPayload?
     var activeToolStatusStore: CPSLConversationStore?
+    private var fileActivityClearTask: Task<Void, Never>?
+    private let fileActivityDuration: TimeInterval = 1.6
 
     private let systemPrompt = """
     You are Herm, an AI agent running inside an iOS/macOS app.
@@ -80,7 +84,13 @@ final class CPSLChatModel: ObservableObject {
     init() {
         let webBrowser = CPSLWebBrowserService()
         self.webBrowser = webBrowser
-        service = CPSLDebugService(webBrowser: webBrowser)
+        service = CPSLDebugService(
+            webBrowser: webBrowser,
+            fileActivityNotifier: fileActivityNotifier
+        )
+        fileActivityNotifier.setHandler { [weak self] _ in
+            self?.markFileActivity()
+        }
         webBrowser.visibilityChanged = { [weak self] isVisible in
             guard let self else {
                 return
@@ -316,6 +326,19 @@ final class CPSLChatModel: ObservableObject {
 
     func closeFilePreview() {
         filePreview = nil
+    }
+
+    func markFileActivity() {
+        fileActivityClearTask?.cancel()
+        isFileActivityActive = true
+        let duration = fileActivityDuration
+        fileActivityClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else {
+                return
+            }
+            self?.isFileActivityActive = false
+        }
     }
 
     func children(for path: String) -> [CPSLFileEntry] {

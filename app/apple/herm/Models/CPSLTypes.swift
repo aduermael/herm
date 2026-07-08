@@ -171,6 +171,37 @@ nonisolated struct CPSLWebSearchVisit: Identifiable, Codable, Equatable, Sendabl
     }
 }
 
+nonisolated struct CPSLFileActivity: Equatable, Sendable {
+    let path: String
+    let operation: String
+}
+
+final class CPSLFileActivityNotifier: @unchecked Sendable {
+    typealias Handler = @MainActor @Sendable (CPSLFileActivity) -> Void
+
+    private let lock = NSLock()
+    private var handler: Handler?
+
+    func setHandler(_ handler: Handler?) {
+        lock.lock()
+        self.handler = handler
+        lock.unlock()
+    }
+
+    func notify(_ activity: CPSLFileActivity) {
+        lock.lock()
+        let handler = self.handler
+        lock.unlock()
+
+        guard let handler else {
+            return
+        }
+        Task { @MainActor in
+            handler(activity)
+        }
+    }
+}
+
 struct CPSLFileEntry: Identifiable, Equatable, Sendable {
     var id: String { path }
 

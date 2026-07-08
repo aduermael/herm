@@ -264,37 +264,22 @@ struct CPSLPromptComposerView: View {
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
                 .disabled(model.isRunning)
 
-                Button {
-                    dismissKeyboard()
-                    if hasPromptInput {
+                if hasPromptInput {
+                    Button {
+                        dismissKeyboard()
                         model.submitPrompt()
-                    } else {
-                        model.showComingSoon("coming soon")
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconLarge, weight: .semibold))
+                            .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                            .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
                     }
-                } label: {
-                    Group {
-                        if hasPromptInput {
-                            Image(systemName: "arrow.up")
-                                .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconLarge, weight: .semibold))
-                                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-                        } else {
-                            HStack(spacing: CPSLTheme.small) {
-                                Image(systemName: "waveform")
-                                    .font(CPSLTheme.iconMediumFont)
-                                Text("Speak")
-                                    .font(CPSLTheme.controlFont)
-                            }
-                            .padding(.horizontal, CPSLTheme.medium)
-                            .frame(height: CPSLTheme.controlSize)
-                        }
-                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CPSLTheme.background)
+                    .background(CPSLTheme.text)
+                    .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
                     .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(CPSLTheme.background)
-                .background(CPSLTheme.text)
-                .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             }
         }
         .padding(CPSLTheme.composerPadding)

@@ -1,5 +1,10 @@
 import Foundation
 import SwiftUI
+#if os(macOS)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 struct CPSLChatTimelineView: View {
     @ObservedObject var model: CPSLChatModel
@@ -241,11 +246,13 @@ private struct CPSLChatMessageView: View {
                 fillsAvailableWidth: message.role.isFullWidth
             )
         } else {
-            Text(message.body)
-                .font(message.role.usesMonospaceBody ? CPSLTheme.monospacedBodyFont : CPSLTheme.bodyFont)
-                .foregroundStyle(message.role.foreground)
-                .lineSpacing(message.role.usesMonospaceBody ? 0 : CPSLTheme.bodyLineSpacing)
-                .textSelection(.enabled)
+            CPSLSelectableText(
+                message.body,
+                style: message.role.usesMonospaceBody ? .monospacedBody : .body,
+                foreground: message.role.foreground,
+                fillsAvailableWidth: false,
+                lineSpacing: message.role.usesMonospaceBody ? 0 : CPSLTheme.bodyLineSpacing
+            )
         }
     }
 }
@@ -319,6 +326,19 @@ private struct CPSLWebSearchStatusLine: View {
         visits.last
     }
 
+    private var domainVisits: [CPSLWebSearchVisit] {
+        var seenDomains = Set<String>()
+        var uniqueVisits: [CPSLWebSearchVisit] = []
+        for visit in visits {
+            let domain = Self.domainKey(for: visit)
+            guard seenDomains.insert(domain).inserted else {
+                continue
+            }
+            uniqueVisits.append(visit)
+        }
+        return uniqueVisits
+    }
+
     var body: some View {
         Button {
             openBrowser(latestVisit?.browserID)
@@ -336,7 +356,7 @@ private struct CPSLWebSearchStatusLine: View {
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        ForEach(visits) { visit in
+                        ForEach(domainVisits) { visit in
                             CPSLWebSearchFavicon(visit: visit)
                         }
                     }
@@ -349,6 +369,14 @@ private struct CPSLWebSearchStatusLine: View {
         }
         .buttonStyle(.plain)
         .help(latestVisit?.url ?? "Open browser")
+    }
+
+    private static func domainKey(for visit: CPSLWebSearchVisit) -> String {
+        let rawHost = URL(string: visit.url)?.host ?? visit.host
+        let lowercasedHost = rawHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lowercasedHost.hasPrefix("www.")
+            ? String(lowercasedHost.dropFirst(4))
+            : lowercasedHost
     }
 }
 
@@ -491,10 +519,13 @@ private struct CPSLToolDebugBlock: View {
                 .font(CPSLTheme.captionMediumFont)
                 .foregroundStyle(CPSLTheme.secondaryText)
 
-            Text(text.isEmpty ? "(empty)" : text)
-                .font(CPSLTheme.monospacedBodyFont)
-                .foregroundStyle(CPSLTheme.text)
-                .textSelection(.enabled)
+            CPSLSelectableText(
+                text.isEmpty ? "(empty)" : text,
+                style: .monospacedBody,
+                foreground: CPSLTheme.text,
+                fillsAvailableWidth: true,
+                lineSpacing: 0
+            )
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CPSLTheme.small)
@@ -513,17 +544,14 @@ private struct CPSLMarkdownMessageBody: View {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             EmptyView()
         } else {
-            VStack(alignment: .leading, spacing: CPSLTheme.small) {
-                ForEach(CPSLMarkdownBlock.blocks(from: text)) { block in
-                    CPSLMarkdownBlockView(
-                        block: block,
-                        foreground: foreground,
-                        fillsAvailableWidth: fillsAvailableWidth
-                    )
-                }
-            }
-            .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
-            .textSelection(.enabled)
+            CPSLSelectableText(
+                text,
+                style: .body,
+                foreground: foreground,
+                fillsAvailableWidth: fillsAvailableWidth,
+                lineSpacing: CPSLTheme.bodyLineSpacing,
+                parsesBlockMarkdown: true
+            )
         }
     }
 }
@@ -866,181 +894,160 @@ private struct CPSLMarkdownTableRow: Identifiable, Equatable {
     let cells: [String]
 }
 
-private struct CPSLMarkdownBlockView: View {
-    let block: CPSLMarkdownBlock
-    let foreground: Color
-    let fillsAvailableWidth: Bool
+enum CPSLSelectableTextStyle: Equatable {
+    case body
+    case monospacedBody
+    case supporting
+    case caption
+    case captionMedium
+    case heading
+    case heading1
+    case heading2
+    case heading3
 
-    var body: some View {
-        switch block.content {
-        case .heading(let level, let text):
-            CPSLMarkdownInlineText(
-                text: text,
-                font: headingFont(for: level),
-                foreground: foreground,
-                fillsAvailableWidth: fillsAvailableWidth
-            )
-                .padding(.top, level == 1 ? CPSLTheme.small : 0)
-        case .paragraph(let lines):
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    CPSLMarkdownInlineText(
-                        text: line,
-                        font: CPSLTheme.bodyFont,
-                        foreground: foreground,
-                        fillsAvailableWidth: fillsAvailableWidth
-                    )
-                }
-            }
-        case .unorderedList(let items):
-            CPSLMarkdownListView(
-                items: items.map { CPSLMarkdownListItem(marker: "\u{2022}", text: $0) },
-                foreground: foreground,
-                fillsAvailableWidth: fillsAvailableWidth
-            )
-        case .orderedList(let items):
-            CPSLMarkdownListView(
-                items: items.map { CPSLMarkdownListItem(marker: "\($0.number).", text: $0.text) },
-                foreground: foreground,
-                fillsAvailableWidth: fillsAvailableWidth
-            )
-        case .table(let table):
-            CPSLMarkdownTableView(
-                table: table,
-                foreground: foreground,
-                fillsAvailableWidth: fillsAvailableWidth
-            )
-        case .codeBlock(let language, let text):
-            CPSLMarkdownCodeBlockView(
-                language: language,
-                text: text,
-                foreground: foreground,
-                fillsAvailableWidth: fillsAvailableWidth
-            )
-        }
-    }
-
-    private func headingFont(for level: Int) -> Font {
-        switch level {
-        case 1:
-            return CPSLTheme.headerFont
-        case 2:
-            return CPSLTheme.userFont(size: 19, weight: .semibold)
-        case 3:
-            return CPSLTheme.userFont(size: 17, weight: .semibold)
-        default:
+    var swiftUIFont: Font {
+        switch self {
+        case .body:
+            return CPSLTheme.bodyFont
+        case .monospacedBody:
+            return CPSLTheme.monospacedBodyFont
+        case .supporting:
+            return CPSLTheme.supportingFont
+        case .caption:
+            return CPSLTheme.captionFont
+        case .captionMedium:
+            return CPSLTheme.captionMediumFont
+        case .heading:
             return CPSLTheme.userFont(size: CPSLTheme.FontSize.body, weight: .semibold)
+        case .heading1:
+            return CPSLTheme.headerFont
+        case .heading2:
+            return CPSLTheme.userFont(size: 19, weight: .semibold)
+        case .heading3:
+            return CPSLTheme.userFont(size: 17, weight: .semibold)
         }
     }
+
+#if canImport(UIKit)
+    var uiFont: UIFont {
+        switch self {
+        case .body:
+            return .systemFont(ofSize: CPSLTheme.FontSize.body)
+        case .monospacedBody:
+            return .monospacedSystemFont(ofSize: CPSLTheme.FontSize.monospaceBody, weight: .regular)
+        case .supporting:
+            return .systemFont(ofSize: CPSLTheme.FontSize.supporting)
+        case .caption:
+            return .systemFont(ofSize: CPSLTheme.FontSize.caption)
+        case .captionMedium:
+            return .systemFont(ofSize: CPSLTheme.FontSize.caption, weight: .medium)
+        case .heading:
+            return .systemFont(ofSize: CPSLTheme.FontSize.body, weight: .semibold)
+        case .heading1:
+            return .systemFont(ofSize: CPSLTheme.FontSize.title, weight: .semibold)
+        case .heading2:
+            return .systemFont(ofSize: 19, weight: .semibold)
+        case .heading3:
+            return .systemFont(ofSize: 17, weight: .semibold)
+        }
+    }
+#endif
+
+#if os(macOS)
+    var nsFont: NSFont {
+        switch self {
+        case .body:
+            return .systemFont(ofSize: CPSLTheme.FontSize.body)
+        case .monospacedBody:
+            return .monospacedSystemFont(ofSize: CPSLTheme.FontSize.monospaceBody, weight: .regular)
+        case .supporting:
+            return .systemFont(ofSize: CPSLTheme.FontSize.supporting)
+        case .caption:
+            return .systemFont(ofSize: CPSLTheme.FontSize.caption)
+        case .captionMedium:
+            return .systemFont(ofSize: CPSLTheme.FontSize.caption, weight: .medium)
+        case .heading:
+            return .systemFont(ofSize: CPSLTheme.FontSize.body, weight: .semibold)
+        case .heading1:
+            return .systemFont(ofSize: CPSLTheme.FontSize.title, weight: .semibold)
+        case .heading2:
+            return .systemFont(ofSize: 19, weight: .semibold)
+        case .heading3:
+            return .systemFont(ofSize: 17, weight: .semibold)
+        }
+    }
+#endif
 }
 
-private struct CPSLMarkdownTableView: View {
-    let table: CPSLMarkdownTable
+struct CPSLSelectableText: View {
+    let text: String
+    let style: CPSLSelectableTextStyle
     let foreground: Color
     let fillsAvailableWidth: Bool
+    let lineSpacing: CGFloat
+    let markdownMode: CPSLSelectableTextMarkdownMode
 
-    var body: some View {
-        if fillsAvailableWidth {
-            CPSLMarkdownTableScrollView(table: table, foreground: foreground)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            ViewThatFits(in: .horizontal) {
-                CPSLMarkdownTableGrid(table: table, foreground: foreground)
-                CPSLMarkdownTableScrollView(table: table, foreground: foreground)
-            }
-            .frame(maxWidth: CPSLTheme.framedMessageMaxWidth, alignment: .leading)
-        }
+    init(
+        _ text: String,
+        style: CPSLSelectableTextStyle,
+        foreground: Color,
+        fillsAvailableWidth: Bool,
+        lineSpacing: CGFloat = CPSLTheme.bodyLineSpacing,
+        parsesInlineMarkdown: Bool = false,
+        parsesBlockMarkdown: Bool = false
+    ) {
+        self.text = text
+        self.style = style
+        self.foreground = foreground
+        self.fillsAvailableWidth = fillsAvailableWidth
+        self.lineSpacing = lineSpacing
+        markdownMode = parsesBlockMarkdown ? .block : (parsesInlineMarkdown ? .inline : .none)
     }
-}
-
-private struct CPSLMarkdownTableScrollView: View {
-    let table: CPSLMarkdownTable
-    let foreground: Color
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            CPSLMarkdownTableGrid(table: table, foreground: foreground)
-        }
-        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-    }
-}
-
-private struct CPSLMarkdownTableGrid: View {
-    let table: CPSLMarkdownTable
-    let foreground: Color
-
-    var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-            GridRow {
-                ForEach(0..<table.columnCount, id: \.self) { column in
-                    CPSLMarkdownTableCell(
-                        text: table.header(at: column),
-                        isHeader: true,
-                        foreground: foreground
-                    )
-                }
-            }
-
-            ForEach(table.rows) { row in
-                GridRow {
-                    ForEach(0..<table.columnCount, id: \.self) { column in
-                        CPSLMarkdownTableCell(
-                            text: table.cell(in: row, at: column),
-                            isHeader: false,
-                            foreground: foreground
-                        )
-                    }
-                }
-            }
-        }
-        .background(CPSLTheme.surface.opacity(0.52))
-        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
-    }
-}
-
-private struct CPSLMarkdownTableCell: View {
-    let text: String
-    let isHeader: Bool
-    let foreground: Color
-
-    var body: some View {
-        CPSLMarkdownInlineText(
-            text: text.isEmpty ? " " : text,
-            font: isHeader ? CPSLTheme.captionMediumFont : CPSLTheme.captionFont,
+#if canImport(UIKit)
+        CPSLSelectableUITextView(
+            text: text,
+            style: style,
             foreground: foreground,
-            fillsAvailableWidth: false
+            fillsAvailableWidth: fillsAvailableWidth,
+            lineSpacing: lineSpacing,
+            markdownMode: markdownMode
         )
-        .padding(.horizontal, CPSLTheme.small)
-        .padding(.vertical, CPSLTheme.small / 2)
-        .frame(minWidth: 72, maxWidth: 220, alignment: .leading)
-        .background(isHeader ? CPSLTheme.elevated.opacity(0.42) : Color.clear)
+#elseif os(macOS)
+        CPSLSelectableNSTextView(
+            text: text,
+            style: style,
+            foreground: foreground,
+            fillsAvailableWidth: fillsAvailableWidth,
+            lineSpacing: lineSpacing,
+            markdownMode: markdownMode
+        )
+#else
+        fallbackText
+#endif
     }
-}
 
-private struct CPSLMarkdownInlineText: View {
-    let text: String
-    let font: Font
-    let foreground: Color
-    let fillsAvailableWidth: Bool
-
-    var body: some View {
-        renderedText
-            .font(font)
+    private var fallbackText: some View {
+        renderedFallbackText
+            .font(style.swiftUIFont)
             .foregroundStyle(foreground)
-            .lineSpacing(CPSLTheme.bodyLineSpacing)
+            .lineSpacing(lineSpacing)
             .lineLimit(nil)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
-            .layoutPriority(1)
+            .textSelection(.enabled)
     }
 
-    private var renderedText: Text {
-        guard let attributedText = try? AttributedString(
-            markdown: text,
-            options: AttributedString.MarkdownParsingOptions(
-                interpretedSyntax: .inlineOnlyPreservingWhitespace
-            )
-        ) else {
+    private var renderedFallbackText: Text {
+        guard markdownMode != .none,
+              let attributedText = try? AttributedString(
+                markdown: text,
+                options: AttributedString.MarkdownParsingOptions(
+                    interpretedSyntax: .inlineOnlyPreservingWhitespace
+                )
+              )
+        else {
             return Text(text)
         }
 
@@ -1048,34 +1055,483 @@ private struct CPSLMarkdownInlineText: View {
     }
 }
 
-private struct CPSLMarkdownListItem: Equatable {
-    let marker: String
-    let text: String
+enum CPSLSelectableTextMarkdownMode: Equatable {
+    case none
+    case inline
+    case block
 }
 
-private struct CPSLMarkdownListView: View {
-    let items: [CPSLMarkdownListItem]
-    let foreground: Color
-    let fillsAvailableWidth: Bool
+private struct CPSLSelectableTextRun {
+    var text: String
+    var style: CPSLSelectableTextStyle?
+    var isBold = false
+    var isItalic = false
+    var isCode = false
+    var isCodeBlock = false
+    var isLink = false
+    var paragraphSpacingBefore: CGFloat = 0
+    var paragraphSpacingAfter: CGFloat = 0
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
-            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                HStack(alignment: .firstTextBaseline, spacing: CPSLTheme.small) {
-                    Text(item.marker)
-                        .font(CPSLTheme.bodyFont)
-                        .foregroundStyle(foreground)
-                        .frame(minWidth: CPSLTheme.large, alignment: .trailing)
+    func applying(
+        style: CPSLSelectableTextStyle? = nil,
+        bold: Bool = false,
+        italic: Bool = false,
+        code: Bool = false,
+        codeBlock: Bool = false,
+        link: Bool = false,
+        paragraphSpacingBefore: CGFloat? = nil,
+        paragraphSpacingAfter: CGFloat? = nil
+    ) -> Self {
+        var run = self
+        run.style = style ?? run.style
+        run.isBold = run.isBold || bold
+        run.isItalic = run.isItalic || italic
+        run.isCode = run.isCode || code
+        run.isCodeBlock = run.isCodeBlock || codeBlock
+        run.isLink = run.isLink || link
+        run.paragraphSpacingBefore = paragraphSpacingBefore ?? run.paragraphSpacingBefore
+        run.paragraphSpacingAfter = paragraphSpacingAfter ?? run.paragraphSpacingAfter
+        return run
+    }
+}
 
-                    CPSLMarkdownInlineText(
-                        text: item.text,
-                        font: CPSLTheme.bodyFont,
-                        foreground: foreground,
-                        fillsAvailableWidth: fillsAvailableWidth
-                    )
-                }
-                .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
+private enum CPSLInlineMarkdownRuns {
+    static func runs(
+        from text: String,
+        markdownMode: CPSLSelectableTextMarkdownMode,
+        baseStyle: CPSLSelectableTextStyle
+    ) -> [CPSLSelectableTextRun] {
+        switch markdownMode {
+        case .none:
+            return [CPSLSelectableTextRun(text: text, style: baseStyle)]
+        case .inline:
+            return parse(text).map { $0.applying(style: baseStyle) }
+        case .block:
+            return CPSLBlockMarkdownRuns.runs(from: text, baseStyle: baseStyle)
+        }
+    }
+
+    private static func parse(_ text: String) -> [CPSLSelectableTextRun] {
+        var runs: [CPSLSelectableTextRun] = []
+        var cursor = text.startIndex
+        var plain = ""
+
+        func flushPlain() {
+            guard !plain.isEmpty else {
+                return
             }
+            runs.append(CPSLSelectableTextRun(text: plain))
+            plain.removeAll(keepingCapacity: true)
+        }
+
+        while cursor < text.endIndex {
+            if text[cursor] == "`",
+               let closing = text[text.index(after: cursor)..<text.endIndex].firstIndex(of: "`") {
+                flushPlain()
+                let start = text.index(after: cursor)
+                runs.append(CPSLSelectableTextRun(text: String(text[start..<closing]), isCode: true))
+                cursor = text.index(after: closing)
+                continue
+            }
+
+            if hasMarker("**", in: text, at: cursor),
+               let closing = closingMarker("**", in: text, after: text.index(cursor, offsetBy: 2)) {
+                flushPlain()
+                let start = text.index(cursor, offsetBy: 2)
+                runs.append(contentsOf: parse(String(text[start..<closing])).map { $0.applying(bold: true) })
+                cursor = text.index(closing, offsetBy: 2)
+                continue
+            }
+
+            if hasMarker("__", in: text, at: cursor),
+               let closing = closingMarker("__", in: text, after: text.index(cursor, offsetBy: 2)) {
+                flushPlain()
+                let start = text.index(cursor, offsetBy: 2)
+                runs.append(contentsOf: parse(String(text[start..<closing])).map { $0.applying(bold: true) })
+                cursor = text.index(closing, offsetBy: 2)
+                continue
+            }
+
+            if text[cursor] == "*",
+               let closing = text[text.index(after: cursor)..<text.endIndex].firstIndex(of: "*") {
+                flushPlain()
+                let start = text.index(after: cursor)
+                runs.append(contentsOf: parse(String(text[start..<closing])).map { $0.applying(italic: true) })
+                cursor = text.index(after: closing)
+                continue
+            }
+
+            if text[cursor] == "_",
+               let closing = text[text.index(after: cursor)..<text.endIndex].firstIndex(of: "_") {
+                flushPlain()
+                let start = text.index(after: cursor)
+                runs.append(contentsOf: parse(String(text[start..<closing])).map { $0.applying(italic: true) })
+                cursor = text.index(after: closing)
+                continue
+            }
+
+            if text[cursor] == "[",
+               let labelEnd = text[text.index(after: cursor)..<text.endIndex].firstIndex(of: "]") {
+                let next = text.index(after: labelEnd)
+                if next < text.endIndex,
+                   text[next] == "(",
+                   let urlEnd = text[text.index(after: next)..<text.endIndex].firstIndex(of: ")") {
+                    flushPlain()
+                    let labelStart = text.index(after: cursor)
+                    runs.append(contentsOf: parse(String(text[labelStart..<labelEnd])).map { $0.applying(link: true) })
+                    cursor = text.index(after: urlEnd)
+                    continue
+                }
+            }
+
+            plain.append(text[cursor])
+            cursor = text.index(after: cursor)
+        }
+
+        flushPlain()
+        return runs.isEmpty ? [CPSLSelectableTextRun(text: "")] : runs
+    }
+
+    private static func hasMarker(_ marker: String, in text: String, at index: String.Index) -> Bool {
+        let end = text.index(index, offsetBy: marker.count, limitedBy: text.endIndex) ?? text.endIndex
+        return text[index..<end] == marker
+    }
+
+    private static func closingMarker(
+        _ marker: String,
+        in text: String,
+        after start: String.Index
+    ) -> String.Index? {
+        text.range(of: marker, range: start..<text.endIndex)?.lowerBound
+    }
+}
+
+private enum CPSLBlockMarkdownRuns {
+    static func runs(from text: String, baseStyle: CPSLSelectableTextStyle) -> [CPSLSelectableTextRun] {
+        var runs: [CPSLSelectableTextRun] = []
+        let blocks = CPSLMarkdownBlock.blocks(from: text)
+        for block in blocks {
+            appendBlock(block, baseStyle: baseStyle, to: &runs)
+        }
+        return runs.isEmpty ? [CPSLSelectableTextRun(text: text, style: baseStyle)] : runs
+    }
+
+    private static func appendBlock(
+        _ block: CPSLMarkdownBlock,
+        baseStyle: CPSLSelectableTextStyle,
+        to runs: inout [CPSLSelectableTextRun]
+    ) {
+        if !runs.isEmpty {
+            runs.append(CPSLSelectableTextRun(text: "\n\n", style: baseStyle))
+        }
+
+        switch block.content {
+        case .heading(let level, let text):
+            appendInline(text, style: headingStyle(for: level), to: &runs)
+        case .paragraph(let lines):
+            appendInline(lines.joined(separator: "\n"), style: baseStyle, to: &runs)
+        case .unorderedList(let items):
+            appendList(
+                items: items.map { ("\u{2022}", $0) },
+                style: baseStyle,
+                to: &runs
+            )
+        case .orderedList(let items):
+            appendList(
+                items: items.map { ("\($0.number).", $0.text) },
+                style: baseStyle,
+                to: &runs
+            )
+        case .table(let table):
+            appendTable(table, style: baseStyle, to: &runs)
+        case .codeBlock(let language, let text):
+            if let language {
+                runs.append(CPSLSelectableTextRun(text: "\(language)\n", style: .captionMedium))
+            }
+            runs.append(CPSLSelectableTextRun(
+                text: text,
+                style: .monospacedBody,
+                isCode: true,
+                isCodeBlock: true
+            ))
+        }
+    }
+
+    private static func appendInline(
+        _ text: String,
+        style: CPSLSelectableTextStyle,
+        to runs: inout [CPSLSelectableTextRun]
+    ) {
+        runs.append(contentsOf: CPSLInlineMarkdownRuns.runs(
+            from: text,
+            markdownMode: .inline,
+            baseStyle: style
+        ))
+    }
+
+    private static func appendList(
+        items: [(marker: String, text: String)],
+        style: CPSLSelectableTextStyle,
+        to runs: inout [CPSLSelectableTextRun]
+    ) {
+        for (index, item) in items.enumerated() {
+            if index > 0 {
+                runs.append(CPSLSelectableTextRun(text: "\n", style: style))
+            }
+            runs.append(CPSLSelectableTextRun(text: "\(item.marker) ", style: style))
+            appendInline(item.text, style: style, to: &runs)
+        }
+    }
+
+    private static func appendTable(
+        _ table: CPSLMarkdownTable,
+        style: CPSLSelectableTextStyle,
+        to runs: inout [CPSLSelectableTextRun]
+    ) {
+        let headers = (0..<table.columnCount).map { table.header(at: $0) }
+        runs.append(CPSLSelectableTextRun(text: headers.joined(separator: " | "), style: .captionMedium))
+        for row in table.rows {
+            runs.append(CPSLSelectableTextRun(text: "\n", style: style))
+            let cells = (0..<table.columnCount).map { table.cell(in: row, at: $0) }
+            runs.append(CPSLSelectableTextRun(text: cells.joined(separator: " | "), style: .caption))
+        }
+    }
+
+    private static func headingStyle(for level: Int) -> CPSLSelectableTextStyle {
+        switch level {
+        case 1:
+            return .heading1
+        case 2:
+            return .heading2
+        case 3:
+            return .heading3
+        default:
+            return .heading
         }
     }
 }
+
+#if canImport(UIKit)
+private struct CPSLSelectableUITextView: UIViewRepresentable {
+    let text: String
+    let style: CPSLSelectableTextStyle
+    let foreground: Color
+    let fillsAvailableWidth: Bool
+    let lineSpacing: CGFloat
+    let markdownMode: CPSLSelectableTextMarkdownMode
+
+    func makeUIView(context: Context) -> CPSLNativeSelectableUITextView {
+        let textView = CPSLNativeSelectableUITextView()
+        textView.backgroundColor = .clear
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isScrollEnabled = false
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.adjustsFontForContentSizeCategory = false
+        textView.panGestureRecognizer.isEnabled = false
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        return textView
+    }
+
+    func updateUIView(_ textView: CPSLNativeSelectableUITextView, context: Context) {
+        let nextText = attributedText
+        if textView.attributedText?.string != nextText.string {
+            textView.attributedText = nextText
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiView textView: CPSLNativeSelectableUITextView,
+        context: Context
+    ) -> CGSize? {
+        textView.attributedText = attributedText
+        let proposedWidth = proposal.width ?? textView.bounds.width
+        let width = proposedWidth > 0 ? proposedWidth : CPSLTheme.framedMessageMaxWidth
+        let size = textView.sizeThatFits(
+            CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        )
+        return CGSize(
+            width: fillsAvailableWidth ? width : min(size.width, width),
+            height: ceil(size.height)
+        )
+    }
+
+    private var attributedText: NSAttributedString {
+        let attributedText = NSMutableAttributedString()
+        let runs = CPSLInlineMarkdownRuns.runs(
+            from: text,
+            markdownMode: markdownMode,
+            baseStyle: style
+        )
+        for run in runs {
+            attributedText.append(NSAttributedString(string: run.text, attributes: attributes(for: run)))
+        }
+        return attributedText
+    }
+
+    private func attributes(for run: CPSLSelectableTextRun) -> [NSAttributedString.Key: Any] {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = lineSpacing
+        paragraphStyle.paragraphSpacingBefore = run.paragraphSpacingBefore
+        paragraphStyle.paragraphSpacing = run.paragraphSpacingAfter
+        return [
+            .font: font(for: run),
+            .foregroundColor: UIColor(foreground),
+            .paragraphStyle: paragraphStyle,
+            .underlineStyle: run.isLink ? NSUnderlineStyle.single.rawValue : 0,
+            .backgroundColor: run.isCodeBlock ? UIColor(CPSLTheme.command) : UIColor.clear
+        ]
+    }
+
+    private func font(for run: CPSLSelectableTextRun) -> UIFont {
+        let baseStyle = run.style ?? style
+        if run.isCode || baseStyle == .monospacedBody {
+            return .monospacedSystemFont(ofSize: baseStyle.uiFont.pointSize, weight: run.isBold ? .semibold : .regular)
+        }
+
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if run.isBold {
+            traits.insert(.traitBold)
+        }
+        if run.isItalic {
+            traits.insert(.traitItalic)
+        }
+
+        guard !traits.isEmpty,
+              let descriptor = baseStyle.uiFont.fontDescriptor.withSymbolicTraits(traits)
+        else {
+            return baseStyle.uiFont
+        }
+        return UIFont(descriptor: descriptor, size: baseStyle.uiFont.pointSize)
+    }
+}
+
+private final class CPSLNativeSelectableUITextView: UITextView {
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            CPSLTransientInteractionReset.unregisterSelectableTextView(self)
+        } else {
+            CPSLTransientInteractionReset.registerSelectableTextView(self)
+        }
+    }
+
+    deinit {
+        CPSLTransientInteractionReset.unregisterSelectableTextView(self)
+    }
+}
+#endif
+
+#if os(macOS)
+private struct CPSLSelectableNSTextView: NSViewRepresentable {
+    let text: String
+    let style: CPSLSelectableTextStyle
+    let foreground: Color
+    let fillsAvailableWidth: Bool
+    let lineSpacing: CGFloat
+    let markdownMode: CPSLSelectableTextMarkdownMode
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSTextView {
+        let textView = NSTextView()
+        textView.drawsBackground = false
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        CPSLTransientInteractionReset.registerSelectableTextView(textView)
+        return textView
+    }
+
+    static func dismantleNSView(_ textView: NSTextView, coordinator: Coordinator) {
+        CPSLTransientInteractionReset.unregisterSelectableTextView(textView)
+    }
+
+    func updateNSView(_ textView: NSTextView, context: Context) {
+        let nextText = attributedText
+        if textView.string != nextText.string {
+            textView.textStorage?.setAttributedString(nextText)
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView textView: NSTextView,
+        context: Context
+    ) -> CGSize? {
+        textView.textStorage?.setAttributedString(attributedText)
+        let width = max(proposal.width ?? CPSLTheme.framedMessageMaxWidth, 1)
+        textView.textContainer?.containerSize = CGSize(
+            width: width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        if let layoutManager = textView.layoutManager,
+           let textContainer = textView.textContainer {
+            layoutManager.ensureLayout(for: textContainer)
+            let rect = layoutManager.usedRect(for: textContainer)
+            return CGSize(
+                width: fillsAvailableWidth ? width : min(ceil(rect.width), width),
+                height: ceil(rect.height)
+            )
+        }
+        return nil
+    }
+
+    private var attributedText: NSAttributedString {
+        let attributedText = NSMutableAttributedString()
+        let runs = CPSLInlineMarkdownRuns.runs(
+            from: text,
+            markdownMode: markdownMode,
+            baseStyle: style
+        )
+        for run in runs {
+            attributedText.append(NSAttributedString(string: run.text, attributes: attributes(for: run)))
+        }
+        return attributedText
+    }
+
+    private func attributes(for run: CPSLSelectableTextRun) -> [NSAttributedString.Key: Any] {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = lineSpacing
+        paragraphStyle.paragraphSpacingBefore = run.paragraphSpacingBefore
+        paragraphStyle.paragraphSpacing = run.paragraphSpacingAfter
+        return [
+            .font: font(for: run),
+            .foregroundColor: NSColor(foreground),
+            .paragraphStyle: paragraphStyle,
+            .underlineStyle: run.isLink ? NSUnderlineStyle.single.rawValue : 0,
+            .backgroundColor: run.isCodeBlock ? NSColor(CPSLTheme.command) : NSColor.clear
+        ]
+    }
+
+    private func font(for run: CPSLSelectableTextRun) -> NSFont {
+        let baseStyle = run.style ?? style
+        if run.isCode || baseStyle == .monospacedBody {
+            return .monospacedSystemFont(ofSize: baseStyle.nsFont.pointSize, weight: run.isBold ? .semibold : .regular)
+        }
+
+        var font = baseStyle.nsFont
+        if run.isBold {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+        }
+        if run.isItalic {
+            font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+        }
+        return font
+    }
+
+    final class Coordinator {}
+}
+#endif

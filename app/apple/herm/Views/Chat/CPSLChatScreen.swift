@@ -6,6 +6,343 @@ import AppKit
 import UIKit
 #endif
 
+enum CPSLTransientInteractionReset {
+#if canImport(UIKit)
+    private final class WeakTextView {
+        weak var value: UITextView?
+
+        init(_ value: UITextView) {
+            self.value = value
+        }
+    }
+
+    private static var selectableTextViews: [WeakTextView] = []
+#elseif os(macOS)
+    private final class WeakTextView {
+        weak var value: NSTextView?
+
+        init(_ value: NSTextView) {
+            self.value = value
+        }
+    }
+
+    private static var selectableTextViews: [WeakTextView] = []
+#endif
+
+#if canImport(UIKit)
+    static func registerSelectableTextView(_ textView: UITextView) {
+        selectableTextViews.removeAll { $0.value == nil || $0.value === textView }
+        selectableTextViews.append(WeakTextView(textView))
+    }
+
+    static func unregisterSelectableTextView(_ textView: UITextView) {
+        selectableTextViews.removeAll { $0.value == nil || $0.value === textView }
+    }
+
+    static func isRegisteredSelectableTextView(_ textView: UITextView) -> Bool {
+        selectableTextViews.contains { $0.value === textView }
+    }
+#elseif os(macOS)
+    static func registerSelectableTextView(_ textView: NSTextView) {
+        selectableTextViews.removeAll { $0.value == nil || $0.value === textView }
+        selectableTextViews.append(WeakTextView(textView))
+    }
+
+    static func unregisterSelectableTextView(_ textView: NSTextView) {
+        selectableTextViews.removeAll { $0.value == nil || $0.value === textView }
+    }
+
+    static func isRegisteredSelectableTextView(_ textView: NSTextView) -> Bool {
+        selectableTextViews.contains { $0.value === textView }
+    }
+#endif
+
+    static func reset() {
+#if canImport(UIKit)
+        selectableTextViews.removeAll { box in
+            guard let textView = box.value else {
+                return true
+            }
+            textView.selectedRange = NSRange(location: 0, length: 0)
+            if textView.isFirstResponder {
+                textView.resignFirstResponder()
+            }
+            return false
+        }
+
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .forEach { $0.endEditing(true) }
+#elseif os(macOS)
+        selectableTextViews.removeAll { box in
+            guard let textView = box.value else {
+                return true
+            }
+            textView.setSelectedRange(NSRange(location: 0, length: 0))
+            if textView.window?.firstResponder === textView {
+                textView.window?.makeFirstResponder(nil)
+            }
+            return false
+        }
+        NSApp.keyWindow?.makeFirstResponder(nil)
+#endif
+    }
+}
+
+private struct CPSLTransientInteractionResetModifier: ViewModifier {
+    let onReset: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                CPSLTransientInteractionResetObserver(onReset: onReset)
+                    .frame(width: 0, height: 0)
+            }
+    }
+}
+
+extension View {
+    func cpslResetTransientsOnBackgroundTap(
+        onReset: @escaping () -> Void
+    ) -> some View {
+        modifier(CPSLTransientInteractionResetModifier(onReset: onReset))
+    }
+}
+
+#if canImport(UIKit)
+private struct CPSLTransientInteractionResetObserver: UIViewRepresentable {
+    let onReset: () -> Void
+
+    func makeUIView(context: Context) -> CPSLTransientInteractionResetUIView {
+        let view = CPSLTransientInteractionResetUIView()
+        view.isUserInteractionEnabled = false
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            if let window {
+                coordinator?.install(in: window)
+            } else {
+                coordinator?.uninstall()
+            }
+        }
+        return view
+    }
+
+    func updateUIView(_ view: CPSLTransientInteractionResetUIView, context: Context) {
+        context.coordinator.onReset = onReset
+        if let window = view.window {
+            context.coordinator.install(in: window)
+        }
+    }
+
+    static func dismantleUIView(
+        _ view: CPSLTransientInteractionResetUIView,
+        coordinator: Coordinator
+    ) {
+        coordinator.uninstall()
+        view.onWindowChange = nil
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onReset: onReset)
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onReset: () -> Void
+        private weak var installedWindow: UIWindow?
+        private var recognizer: UITapGestureRecognizer?
+
+        init(onReset: @escaping () -> Void) {
+            self.onReset = onReset
+        }
+
+        func install(in window: UIWindow) {
+            guard installedWindow !== window else {
+                return
+            }
+            uninstall()
+            let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = self
+            window.addGestureRecognizer(recognizer)
+            installedWindow = window
+            self.recognizer = recognizer
+        }
+
+        func uninstall() {
+            if let recognizer, let installedWindow {
+                installedWindow.removeGestureRecognizer(recognizer)
+            }
+            recognizer = nil
+            installedWindow = nil
+        }
+
+        @objc private func handleTap() {
+            CPSLTransientInteractionReset.reset()
+            onReset()
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldReceive touch: UITouch
+        ) -> Bool {
+            guard let view = touch.view else {
+                return true
+            }
+            return shouldReset(for: view)
+        }
+
+        private func shouldReset(for view: UIView) -> Bool {
+            var current: UIView? = view
+            while let candidate = current {
+                if candidate is UIControl {
+                    return false
+                }
+                if candidate.accessibilityTraits.contains(.button) {
+                    return false
+                }
+                if let textView = candidate as? UITextView,
+                   !CPSLTransientInteractionReset.isRegisteredSelectableTextView(textView) {
+                    return !textView.isEditable
+                }
+                if candidate is UITextInput || candidate is UIKeyInput {
+                    return false
+                }
+                if candidate is UITextField {
+                    return false
+                }
+                current = candidate.superview
+            }
+            return true
+        }
+    }
+}
+
+private final class CPSLTransientInteractionResetUIView: UIView {
+    var onWindowChange: ((UIWindow?) -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onWindowChange?(window)
+    }
+}
+#elseif os(macOS)
+private struct CPSLTransientInteractionResetObserver: NSViewRepresentable {
+    let onReset: () -> Void
+
+    func makeNSView(context: Context) -> CPSLTransientInteractionResetNSView {
+        let view = CPSLTransientInteractionResetNSView()
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            if let window {
+                coordinator?.install(in: window)
+            } else {
+                coordinator?.uninstall()
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ view: CPSLTransientInteractionResetNSView, context: Context) {
+        context.coordinator.onReset = onReset
+        if let window = view.window {
+            context.coordinator.install(in: window)
+        }
+    }
+
+    static func dismantleNSView(
+        _ view: CPSLTransientInteractionResetNSView,
+        coordinator: Coordinator
+    ) {
+        coordinator.uninstall()
+        view.onWindowChange = nil
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onReset: onReset)
+    }
+
+    final class Coordinator {
+        var onReset: () -> Void
+        private weak var installedWindow: NSWindow?
+        private var monitor: Any?
+
+        init(onReset: @escaping () -> Void) {
+            self.onReset = onReset
+        }
+
+        func install(in window: NSWindow) {
+            guard installedWindow !== window else {
+                return
+            }
+            uninstall()
+            installedWindow = window
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self, weak window] event in
+                guard let self, event.window === window else {
+                    return event
+                }
+                if self.shouldReset(for: event, in: window) {
+                    CPSLTransientInteractionReset.reset()
+                    self.onReset()
+                }
+                return event
+            }
+        }
+
+        func uninstall() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            monitor = nil
+            installedWindow = nil
+        }
+
+        private func shouldReset(for event: NSEvent, in window: NSWindow?) -> Bool {
+            guard let targetView = window?.contentView?.hitTest(event.locationInWindow) else {
+                return true
+            }
+
+            var current: NSView? = targetView
+            while let candidate = current {
+                if candidate is NSControl {
+                    return false
+                }
+                if candidate.accessibilityRole() == .button {
+                    return false
+                }
+                if let textView = candidate as? NSTextView,
+                   !CPSLTransientInteractionReset.isRegisteredSelectableTextView(textView) {
+                    return !textView.isEditable
+                }
+                current = candidate.superview
+            }
+            return true
+        }
+    }
+}
+
+private final class CPSLTransientInteractionResetNSView: NSView {
+    var onWindowChange: ((NSWindow?) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange?(window)
+    }
+}
+#else
+private struct CPSLTransientInteractionResetObserver: View {
+    let onReset: () -> Void
+
+    var body: some View {
+        Color.clear
+    }
+}
+#endif
+
 private enum CPSLDrawerMotion {
     static let duration = 0.2
     static let animation = Animation.easeOut(duration: duration)
@@ -68,6 +405,9 @@ struct CPSLChatScreen: View {
                 }
             }
         }
+        .cpslResetTransientsOnBackgroundTap {
+            promptDismissRequest += 1
+        }
         .alert(
             "Coming soon",
             isPresented: Binding(
@@ -120,7 +460,6 @@ private struct CPSLMainContentStage: View {
         ZStack {
             CPSLPrimaryContentView(
                 model: model,
-                promptDismissRequest: $promptDismissRequest,
                 contentTopInset: contentTopInset,
                 contentBottomInset: contentBottomInset
             )
@@ -139,10 +478,6 @@ private struct CPSLMainContentStage: View {
 
             // TOP RIGHT ACTION BUTTONS
             CPSLHeaderActionsView(model: model)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    promptDismissRequest += 1
-                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .zIndex(3)
 
@@ -182,7 +517,6 @@ private struct CPSLMainContentStage: View {
 
 private struct CPSLPrimaryContentView: View {
     @ObservedObject var model: CPSLChatModel
-    @Binding var promptDismissRequest: Int
     let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
 
@@ -194,10 +528,6 @@ private struct CPSLPrimaryContentView: View {
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .top)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            promptDismissRequest += 1
-        }
     }
 }
 
@@ -226,10 +556,6 @@ private struct CPSLBottomChromeView: View {
     var body: some View {
         VStack(spacing: 0) {
             CPSLToolStripView(model: model)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    promptDismissRequest += 1
-                }
 
             CPSLPromptComposerView(
                 model: model,
@@ -254,7 +580,7 @@ private struct CPSLHeaderActionsView: View {
             Spacer()
 
 #if DEBUG
-            CPSLChromeIconButton(systemName: "doc.on.doc", accessibilityLabel: "Share conversation JSON") {
+            CPSLChromeIconButton(systemName: "ladybug.fill", accessibilityLabel: "Share debug JSON") {
                 shareConversationJSONTrace()
             }
             .disabled(isPreparingTraceShareFile)

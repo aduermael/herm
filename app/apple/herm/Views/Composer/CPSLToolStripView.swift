@@ -19,7 +19,8 @@ struct CPSLToolStripView: View {
                     systemName: "folder.fill",
                     color: CPSLTheme.IconPalette.folder,
                     tint: controlTint(isActive: model.isFileBrowserOpen),
-                    strokeOpacity: controlStrokeOpacity(isActive: model.isFileBrowserOpen)
+                    strokeOpacity: controlStrokeOpacity(isActive: model.isFileBrowserOpen),
+                    isGlowing: model.isFileActivityActive
                 ) {
                     model.toggleFileBrowser()
                 }
@@ -95,31 +96,12 @@ private struct CPSLToolStripButtonLabel: View {
             tint: tint,
             strokeOpacity: isGlowing ? 0.18 : strokeOpacity
         )
-        .overlay {
-            if isGlowing {
-                CPSLBrowserActivityGlow(color: color)
-            }
-        }
+        .cpslActivityGlow(
+            when: isGlowing,
+            color: color,
+            in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
+        )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-    }
-}
-
-private struct CPSLBrowserActivityGlow: View {
-    let color: Color
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let opacity = glowOpacity(at: timeline.date)
-            RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
-                .stroke(color.opacity(opacity), lineWidth: 1.6)
-                .shadow(color: color.opacity(opacity * 0.9), radius: 8, x: 0, y: 0)
-        }
-        .allowsHitTesting(false)
-    }
-
-    private func glowOpacity(at date: Date) -> Double {
-        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9
-        return 0.35 + (sin(phase * .pi * 2) + 1) * 0.20
     }
 }
 

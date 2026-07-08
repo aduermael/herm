@@ -17,6 +17,12 @@ Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in stat
 - Call `webbrowser.show(browser)` only when the user explicitly asks to see the browser, or when the task truly requires user handoff for authentication, consent, CAPTCHA, payment, permission prompts, or subjective visual confirmation.
 - If a page can be inspected with `webbrowser.page()`, `webbrowser.eval()`, or `webbrowser.screenshot()` without interrupting the user, keep the browser hidden.
 
+## Sub-Agent First For Research
+
+- For broad web research, multi-page comparison, repeated search result triage, or anything likely to produce a lot of page text, delegate the browsing task to an `agent` sub-agent in explore mode.
+- Keep the main conversation context focused on the user's request, the sub-agent task, and the concise result. Do not stream raw search result pages, long page dumps, or every visited URL into the main context unless the user asks for that detail.
+- Use the main agent directly only for small, targeted browsing where one or two page inspections are enough.
+
 ## Webbrowser vs HTTP
 
 - Use `webbrowser` for search engines, normal websites, documentation sites, pages that need JavaScript, pages that may use cookies/login state, forms, visual inspection, screenshots, and user handoff.

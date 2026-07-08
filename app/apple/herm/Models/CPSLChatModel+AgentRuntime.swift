@@ -5,7 +5,7 @@ extension CPSLChatModel {
     func runProviderLoop(_ context: inout CPSLProviderLoopContext) async throws {
         var toolStatusNodeID: String?
         var toolStatus = CPSLToolStatusPayload.running()
-        var lastToolStatusState: CPSLToolStatusState = .succeeded
+        var hasUnresolvedToolFailure = false
         clearActiveToolStatus()
         defer {
             clearActiveToolStatus()
@@ -65,6 +65,10 @@ extension CPSLChatModel {
             }
 
             guard !completion.toolCalls.isEmpty else {
+                if hasUnresolvedToolFailure, let toolStatusNodeID {
+                    toolStatus.state = .failed
+                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+                }
                 if completion.text.isEmpty {
                     try await appendProviderLoopError("Provider returned an empty response.", context: &context)
                 }
@@ -130,7 +134,13 @@ extension CPSLChatModel {
                     )
                 )
                 executedToolCalls.append((toolCall, toolResult))
-                lastToolStatusState = toolResult.isError ? .failed : .succeeded
+                if toolResult.isError {
+                    hasUnresolvedToolFailure = true
+                    toolStatus.state = .running
+                } else {
+                    hasUnresolvedToolFailure = false
+                    toolStatus.state = .succeeded
+                }
 #if DEBUG
                 toolStatus.invocations.append(toolResult.debugInvocation)
                 toolStatus.summary = statusSummary
@@ -150,12 +160,16 @@ extension CPSLChatModel {
                 context: &context
             )
             toolStatus.summary = statusSummary
-            toolStatus.state = lastToolStatusState
+            toolStatus.state = hasUnresolvedToolFailure ? .running : .succeeded
             if let toolStatusNodeID {
                 try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
             }
         }
 
+        if hasUnresolvedToolFailure, let toolStatusNodeID {
+            toolStatus.state = .failed
+            try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+        }
         try await synthesizeAfterToolLimit(&context)
     }
 

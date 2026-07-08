@@ -1,32 +1,5 @@
 import SwiftUI
 
-struct CPSLMarkdownCodeBlockView: View {
-    let language: String?
-    let text: String
-    let foreground: Color
-    let fillsAvailableWidth: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
-            if let language {
-                Text(language)
-                    .font(CPSLTheme.captionMediumFont)
-                    .foregroundStyle(foreground.opacity(0.62))
-            }
-
-            Text(text)
-                .font(CPSLTheme.monospacedBodyFont)
-                .foregroundStyle(foreground)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: fillsAvailableWidth ? .infinity : nil, alignment: .leading)
-        }
-        .padding(CPSLTheme.small)
-        .background(CPSLTheme.command)
-        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
-    }
-}
-
 struct CPSLCommandBlockBody: View {
     let text: String
     let foreground: Color
@@ -35,10 +8,13 @@ struct CPSLCommandBlockBody: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: contentHeight > CPSLTheme.commandBlockMaxHeight) {
-            Text(text)
-                .font(CPSLTheme.monospacedBodyFont)
-                .foregroundStyle(foreground)
-                .textSelection(.enabled)
+            CPSLSelectableText(
+                text,
+                style: .monospacedBody,
+                foreground: foreground,
+                fillsAvailableWidth: true,
+                lineSpacing: 0
+            )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     GeometryReader { proxy in
