@@ -23,6 +23,8 @@ final class CPSLChatModel: ObservableObject {
 
     let service: CPSLDebugService
     let webBrowser: CPSLWebBrowserService
+    let calendar = CPSLCalendarService()
+    let location = CPSLLocationService()
     let dictation = CPSLDictationService()
     private let fileActivityNotifier = CPSLFileActivityNotifier()
     private var store: CPSLConversationStore?
@@ -54,6 +56,7 @@ final class CPSLChatModel: ObservableObject {
     Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Do not use require or package-style imports for filesystem or document work.
     Treat help output as human-readable documentation. Call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
     Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed.
+    Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
     If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available through CPSL.
     When a requested artifact cannot be produced, do not claim success. Mention any partial artifact only as a fallback, and make clear it is not the requested output.
     agent spawns a focused sub-agent with its own turn budget. Use explore mode for research and reading. Use general mode for execution-heavy or implementation-style work. Keep sub-agent tasks narrow and self-contained.
@@ -86,6 +89,7 @@ final class CPSLChatModel: ObservableObject {
         self.webBrowser = webBrowser
         service = CPSLDebugService(
             webBrowser: webBrowser,
+            location: location,
             fileActivityNotifier: fileActivityNotifier
         )
         fileActivityNotifier.setHandler { [weak self] _ in
@@ -251,6 +255,53 @@ final class CPSLChatModel: ObservableObject {
             }
         } else {
             webBrowser.showLastBrowserFromUI()
+        }
+    }
+
+    func openFilePathFromTimeline(_ path: String) {
+        let normalized = normalizedPath(path)
+        guard isBrowserPathAllowed(normalized) else {
+            comingSoonMessage = "This file location is not available from Files."
+            return
+        }
+
+        isDrawerOpen = false
+        closeWebBrowser()
+        isFileBrowserOpen = true
+        filePreview = nil
+
+        Task {
+            let lookup = await service.fileEntry(at: normalized)
+            guard let entry = lookup.entry else {
+                loadBrowserPath(parentPath(of: normalized))
+                fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
+                return
+            }
+
+            if entry.isDirectory {
+                loadBrowserPath(entry.path)
+            } else {
+                loadBrowserPath(parentPath(of: entry.path))
+                await loadPreview(for: entry)
+            }
+        }
+    }
+
+    func toggleCalendarAccess() {
+        Task {
+            let access = await calendar.requestAccess()
+            if access == .denied {
+                comingSoonMessage = "Calendar access is denied. Enable Calendar access for Herm in iOS Settings or macOS System Settings."
+            }
+        }
+    }
+
+    func toggleLocationAccess() {
+        Task {
+            let access = await location.requestAccess()
+            if access == .denied {
+                comingSoonMessage = "Location access is denied. Enable Location access for Herm in iOS Settings or macOS System Settings."
+            }
         }
     }
 

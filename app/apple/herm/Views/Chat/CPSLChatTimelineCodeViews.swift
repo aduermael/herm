@@ -3,6 +3,7 @@ import SwiftUI
 struct CPSLCommandBlockBody: View {
     let text: String
     let foreground: Color
+    var openFilePath: (String) -> Void = { _ in }
 
     @State private var contentHeight: CGFloat = 0
 
@@ -13,7 +14,8 @@ struct CPSLCommandBlockBody: View {
                 style: .monospacedBody,
                 foreground: foreground,
                 fillsAvailableWidth: true,
-                lineSpacing: 0
+                lineSpacing: 0,
+                openFilePath: openFilePath
             )
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(

@@ -901,6 +901,7 @@ extension CPSLChatModel {
         CPSL is your execution environment: a Unix-like local environment with Luau as the command interface instead of Bash. Luau is the only supported execution language.
         Use /home/herm as the default home for durable user-created files and /tmp for temporary files. Other Unix-style directories under / remain available when the task calls for them.
         You may use local_sandbox_exec for CPSL work. You have no host shell, package manager, browser, or provider-hosted capabilities.
+        Calendar and location are available only through CPSL when compiled into the app sandbox and authorized by the user. Use them only when the assigned task materially needs schedule, event, availability, or current-place context. Access states are granted, denied, or undefined; undefined access may prompt, and denied access must be fixed in iOS Settings or macOS System Settings.
         """
     }
 

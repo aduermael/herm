@@ -32,6 +32,14 @@ private nonisolated final class CPSLFileActivityCallbackBox: @unchecked Sendable
     }
 }
 
+private nonisolated final class CPSLLocationCallbackBox: @unchecked Sendable {
+    let service: CPSLLocationService
+
+    init(service: CPSLLocationService) {
+        self.service = service
+    }
+}
+
 private typealias CPSLFileActivityHandleFunction = @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafePointer<CChar>?,
@@ -42,15 +50,42 @@ private typealias CPSLFileActivityUserDataFreeFunction = @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Void
 
+private typealias CPSLLocationHandleJSONFunction = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafePointer<CChar>?
+) -> UnsafeMutablePointer<CChar>?
+
+private typealias CPSLLocationStringFreeFunction = @convention(c) (
+    UnsafeMutablePointer<CChar>?
+) -> Void
+
+private typealias CPSLLocationUserDataFreeFunction = @convention(c) (
+    UnsafeMutableRawPointer?
+) -> Void
+
 private nonisolated struct CPSLFileActivityCallbacks {
     var user_data: UnsafeMutableRawPointer?
     var handle_activity: CPSLFileActivityHandleFunction?
     var user_data_free: CPSLFileActivityUserDataFreeFunction?
 }
 
+private nonisolated struct CPSLLocationCallbacks {
+    var user_data: UnsafeMutableRawPointer?
+    var handle_json: CPSLLocationHandleJSONFunction?
+    var string_free: CPSLLocationStringFreeFunction?
+    var user_data_free: CPSLLocationUserDataFreeFunction?
+}
+
 private typealias CPSLSessionNewWithCallbacksFunction = @convention(c) (
     UnsafePointer<CChar>?,
     UnsafePointer<cpsl_webbrowser_callbacks_t>?,
+    UnsafeRawPointer?
+) -> OpaquePointer?
+
+private typealias CPSLSessionNewWithHostCallbacksFunction = @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafePointer<cpsl_webbrowser_callbacks_t>?,
+    UnsafeRawPointer?,
     UnsafeRawPointer?
 ) -> OpaquePointer?
 
@@ -125,6 +160,45 @@ private nonisolated let cpslWebBrowserUserDataFree: @convention(c) (UnsafeMutabl
     Unmanaged<CPSLWebBrowserCallbackBox>.fromOpaque(userData).release()
 }
 
+private nonisolated let cpslLocationHandleJSON: CPSLLocationHandleJSONFunction = { userData, requestJSON in
+    guard let userData, let requestJSON else {
+        return cpslWebBrowserOwnedErrorCString("location callback received NULL input")
+    }
+    guard !Thread.isMainThread else {
+        return cpslWebBrowserOwnedErrorCString("location callback cannot run on the main thread")
+    }
+
+    let callbackBox = Unmanaged<CPSLLocationCallbackBox>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+    let request = String(cString: requestJSON)
+    let response = CPSLWebBrowserCallbackResponse(
+        value: #"{"ok":false,"error":"location callback did not complete"}"#
+    )
+    let semaphore = DispatchSemaphore(value: 0)
+    let task = Task { @MainActor in
+        response.set(await callbackBox.service.handleJSON(request))
+        semaphore.signal()
+    }
+
+    if semaphore.wait(timeout: .now() + .seconds(55)) == .timedOut {
+        task.cancel()
+        return cpslWebBrowserOwnedErrorCString("location callback timed out")
+    }
+    return cpslWebBrowserOwnedCString(response.get())
+}
+
+private nonisolated let cpslLocationStringFree: CPSLLocationStringFreeFunction = { value in
+    cpslWebBrowserStringFree(value)
+}
+
+private nonisolated let cpslLocationUserDataFree: CPSLLocationUserDataFreeFunction = { userData in
+    guard let userData else {
+        return
+    }
+    Unmanaged<CPSLLocationCallbackBox>.fromOpaque(userData).release()
+}
+
 private nonisolated let cpslFileActivityHandle: CPSLFileActivityHandleFunction = { userData, path, operation in
     guard let userData, let path, let operation else {
         return
@@ -162,6 +236,21 @@ private nonisolated func cpslSessionNewWithCallbacksFunction() -> CPSLSessionNew
     return unsafeBitCast(symbol, to: CPSLSessionNewWithCallbacksFunction.self)
 }
 
+private nonisolated func cpslSessionNewWithHostCallbacksFunction() -> CPSLSessionNewWithHostCallbacksFunction? {
+#if canImport(Darwin)
+    let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
+#else
+    let lookupHandle: UnsafeMutableRawPointer? = nil
+#endif
+    let symbol = "cpsl_session_new_with_host_callbacks".withCString { name in
+        dlsym(lookupHandle, name)
+    }
+    guard let symbol else {
+        return nil
+    }
+    return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksFunction.self)
+}
+
 private nonisolated func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutablePointer<CChar>? {
     let object: [String: Any] = ["ok": false, "error": message]
     guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
@@ -186,6 +275,7 @@ actor CPSLDebugService {
     private nonisolated static let textPreviewByteLimit = 1_000_000
 
     private let webBrowser: CPSLWebBrowserService
+    private let location: CPSLLocationService
     private let fileActivityNotifier: CPSLFileActivityNotifier
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
@@ -193,8 +283,13 @@ actor CPSLDebugService {
     private var sandboxURLs: CPSLSandboxURLs?
     private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
 
-    init(webBrowser: CPSLWebBrowserService, fileActivityNotifier: CPSLFileActivityNotifier) {
+    init(
+        webBrowser: CPSLWebBrowserService,
+        location: CPSLLocationService,
+        fileActivityNotifier: CPSLFileActivityNotifier
+    ) {
         self.webBrowser = webBrowser
+        self.location = location
         self.fileActivityNotifier = fileActivityNotifier
     }
 
@@ -237,6 +332,32 @@ actor CPSLDebugService {
             return CPSLDirectoryListing(entries: entries, error: nil)
         } catch {
             return CPSLDirectoryListing(entries: [], error: error.localizedDescription)
+        }
+    }
+
+    func fileEntry(at virtualPath: String) -> CPSLFileEntryLookup {
+        do {
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            let normalizedPath = Self.normalizedVirtualPath(virtualPath)
+            let hostURL = hostURL(forVirtualPath: normalizedPath, sandboxURLs: sandboxURLs)
+            guard FileManager.default.fileExists(atPath: hostURL.path) else {
+                return CPSLFileEntryLookup(entry: nil, error: "File does not exist.")
+            }
+            let values = try hostURL.resourceValues(forKeys: [.isDirectoryKey])
+            let name = normalizedPath == CPSLVirtualPath.root
+                ? CPSLVirtualPath.root
+                : hostURL.lastPathComponent
+            return CPSLFileEntryLookup(
+                entry: CPSLFileEntry(
+                    name: name,
+                    path: normalizedPath,
+                    isDirectory: values.isDirectory == true
+                ),
+                error: nil
+            )
+        } catch {
+            return CPSLFileEntryLookup(entry: nil, error: error.localizedDescription)
         }
     }
 
@@ -635,10 +756,12 @@ actor CPSLDebugService {
 
         let callbackBox = CPSLWebBrowserCallbackBox(service: webBrowser)
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
+        let locationCallbackBox = CPSLLocationCallbackBox(service: location)
         let result = await Self.performBlockingSessionInit(
             configJSON: configJSON,
             callbackBox: callbackBox,
-            fileActivityCallbackBox: fileActivityCallbackBox
+            fileActivityCallbackBox: fileActivityCallbackBox,
+            locationCallbackBox: locationCallbackBox
         )
         guard let newSession = result.pointer else {
             return result.errorMessage ?? "cpsl_session_new returned NULL"
@@ -770,14 +893,16 @@ actor CPSLDebugService {
     private nonisolated static func performBlockingSessionInit(
         configJSON: String,
         callbackBox: CPSLWebBrowserCallbackBox,
-        fileActivityCallbackBox: CPSLFileActivityCallbackBox
+        fileActivityCallbackBox: CPSLFileActivityCallbackBox,
+        locationCallbackBox: CPSLLocationCallbackBox
     ) async -> CPSLSessionInitResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .default).async {
                 continuation.resume(returning: createSession(
                     configJSON: configJSON,
                     callbackBox: callbackBox,
-                    fileActivityCallbackBox: fileActivityCallbackBox
+                    fileActivityCallbackBox: fileActivityCallbackBox,
+                    locationCallbackBox: locationCallbackBox
                 ))
             }
         }
@@ -786,7 +911,8 @@ actor CPSLDebugService {
     private nonisolated static func createSession(
         configJSON: String,
         callbackBox: CPSLWebBrowserCallbackBox,
-        fileActivityCallbackBox: CPSLFileActivityCallbackBox
+        fileActivityCallbackBox: CPSLFileActivityCallbackBox,
+        locationCallbackBox: CPSLLocationCallbackBox
     ) -> CPSLSessionInitResult {
         configureCPSLLibraryDirectory()
         let userData = Unmanaged.passRetained(callbackBox).toOpaque()
@@ -802,9 +928,31 @@ actor CPSLDebugService {
             handle_activity: cpslFileActivityHandle,
             user_data_free: cpslFileActivityUserDataFree
         )
+        let locationUserData = Unmanaged.passRetained(locationCallbackBox).toOpaque()
+        var locationCallbacks = CPSLLocationCallbacks(
+            user_data: locationUserData,
+            handle_json: cpslLocationHandleJSON,
+            string_free: cpslLocationStringFree,
+            user_data_free: cpslLocationUserDataFree
+        )
         let pointer: OpaquePointer?
         let fallback: String
-        if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
+        if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
+            pointer = configJSON.withCString { configPointer in
+                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                    withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                        sessionNewWithHostCallbacks(
+                            configPointer,
+                            &callbacks,
+                            UnsafeRawPointer(fileActivityCallbacksPointer),
+                            UnsafeRawPointer(locationCallbacksPointer)
+                        )
+                    }
+                }
+            }
+            fallback = "cpsl_session_new_with_host_callbacks returned NULL"
+        } else if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
+            cpslLocationUserDataFree(locationUserData)
             pointer = configJSON.withCString { configPointer in
                 withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
                     sessionNewWithCallbacks(
@@ -817,6 +965,7 @@ actor CPSLDebugService {
             fallback = "cpsl_session_new_with_callbacks returned NULL"
         } else {
             cpslFileActivityUserDataFree(fileActivityUserData)
+            cpslLocationUserDataFree(locationUserData)
             pointer = configJSON.withCString { configPointer in
                 cpsl_session_new_with_webbrowser_callbacks(configPointer, &callbacks)
             }

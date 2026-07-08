@@ -69,6 +69,16 @@ nonisolated enum CPSLVirtualPath {
     static let initialDirectory = home
 }
 
+enum CPSLFeatureAccessState: String, Equatable, Sendable {
+    case granted
+    case denied
+    case undefined
+
+    var isGranted: Bool {
+        self == .granted
+    }
+}
+
 nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     case assistant
     case user
@@ -212,6 +222,11 @@ struct CPSLFileEntry: Identifiable, Equatable, Sendable {
 
 struct CPSLDirectoryListing: Sendable {
     let entries: [CPSLFileEntry]
+    let error: String?
+}
+
+struct CPSLFileEntryLookup: Sendable {
+    let entry: CPSLFileEntry?
     let error: String?
 }
 

@@ -13,6 +13,10 @@ struct CPSLChatTimelineView: View {
     @State private var isPinnedToBottom = true
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
+    private var timelineIdentity: String {
+        model.selectedConversationID ?? "draft"
+    }
+
     var body: some View {
         ZStack {
             if model.messages.isEmpty {
@@ -22,9 +26,15 @@ struct CPSLChatTimelineView: View {
             ScrollView {
                 LazyVStack(spacing: CPSLTheme.messageVerticalSpacing) {
                     ForEach(model.messages) { message in
-                        CPSLChatMessageView(message: message) { browserID in
-                            model.openWebBrowserFromTimeline(browserID: browserID)
-                        }
+                        CPSLChatMessageView(
+                            message: message,
+                            openBrowser: { browserID in
+                                model.openWebBrowserFromTimeline(browserID: browserID)
+                            },
+                            openFilePath: { path in
+                                model.openFilePathFromTimeline(path)
+                            }
+                        )
                             .id(message.id)
                     }
                 }
@@ -32,6 +42,7 @@ struct CPSLChatTimelineView: View {
                 .padding(.top, topInset)
                 .padding(.bottom, bottomInset)
             }
+            .id(timelineIdentity)
             .scrollPosition($scrollPosition)
             .scrollDismissesKeyboard(.interactively)
             .contentMargins(.top, topInset, for: .scrollIndicators)
@@ -48,6 +59,9 @@ struct CPSLChatTimelineView: View {
             }
             .onChange(of: bottomInset) { _, _ in
                 scrollToBottomIfPinned()
+            }
+            .onChange(of: timelineIdentity) { _, _ in
+                resetScrollState()
             }
             .onScrollGeometryChange(
                 for: CPSLTimelineScrollState.self,
@@ -73,6 +87,12 @@ struct CPSLChatTimelineView: View {
         } else {
             scrollPosition.scrollTo(edge: .bottom)
         }
+    }
+
+    private func resetScrollState() {
+        isPinnedToBottom = true
+        scrollPosition = ScrollPosition(edge: .bottom)
+        scrollToBottom(animated: false)
     }
 
     private func scrollToBottomIfPinned() {
@@ -172,6 +192,7 @@ private struct CPSLEmptyChatView: View {
 private struct CPSLChatMessageView: View {
     let message: CPSLChatMessage
     let openBrowser: (String?) -> Void
+    let openFilePath: (String) -> Void
 
     var body: some View {
         HStack {
@@ -228,7 +249,11 @@ private struct CPSLChatMessageView: View {
     @ViewBuilder
     private var messageBody: some View {
         if message.role == .command {
-            CPSLCommandBlockBody(text: message.body, foreground: message.role.foreground)
+            CPSLCommandBlockBody(
+                text: message.body,
+                foreground: message.role.foreground,
+                openFilePath: openFilePath
+            )
         } else if message.role == .toolStatus {
             if let payload = CPSLToolStatusPayload.decode(from: message.body) {
                 CPSLToolStatusBody(payload: payload, openBrowser: openBrowser)
@@ -243,7 +268,8 @@ private struct CPSLChatMessageView: View {
             CPSLMarkdownMessageBody(
                 text: message.body,
                 foreground: message.role.foreground,
-                fillsAvailableWidth: message.role.isFullWidth
+                fillsAvailableWidth: message.role.isFullWidth,
+                openFilePath: openFilePath
             )
         } else {
             CPSLSelectableText(
@@ -251,7 +277,8 @@ private struct CPSLChatMessageView: View {
                 style: message.role.usesMonospaceBody ? .monospacedBody : .body,
                 foreground: message.role.foreground,
                 fillsAvailableWidth: false,
-                lineSpacing: message.role.usesMonospaceBody ? 0 : CPSLTheme.bodyLineSpacing
+                lineSpacing: message.role.usesMonospaceBody ? 0 : CPSLTheme.bodyLineSpacing,
+                openFilePath: openFilePath
             )
         }
     }
@@ -539,6 +566,7 @@ private struct CPSLMarkdownMessageBody: View {
     let text: String
     let foreground: Color
     let fillsAvailableWidth: Bool
+    let openFilePath: (String) -> Void
 
     var body: some View {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -550,7 +578,8 @@ private struct CPSLMarkdownMessageBody: View {
                 foreground: foreground,
                 fillsAvailableWidth: fillsAvailableWidth,
                 lineSpacing: CPSLTheme.bodyLineSpacing,
-                parsesBlockMarkdown: true
+                parsesBlockMarkdown: true,
+                openFilePath: openFilePath
             )
         }
     }
@@ -986,6 +1015,7 @@ struct CPSLSelectableText: View {
     let fillsAvailableWidth: Bool
     let lineSpacing: CGFloat
     let markdownMode: CPSLSelectableTextMarkdownMode
+    let openFilePath: (String) -> Void
 
     init(
         _ text: String,
@@ -994,7 +1024,8 @@ struct CPSLSelectableText: View {
         fillsAvailableWidth: Bool,
         lineSpacing: CGFloat = CPSLTheme.bodyLineSpacing,
         parsesInlineMarkdown: Bool = false,
-        parsesBlockMarkdown: Bool = false
+        parsesBlockMarkdown: Bool = false,
+        openFilePath: @escaping (String) -> Void = { _ in }
     ) {
         self.text = text
         self.style = style
@@ -1002,6 +1033,7 @@ struct CPSLSelectableText: View {
         self.fillsAvailableWidth = fillsAvailableWidth
         self.lineSpacing = lineSpacing
         markdownMode = parsesBlockMarkdown ? .block : (parsesInlineMarkdown ? .inline : .none)
+        self.openFilePath = openFilePath
     }
 
     var body: some View {
@@ -1012,7 +1044,8 @@ struct CPSLSelectableText: View {
             foreground: foreground,
             fillsAvailableWidth: fillsAvailableWidth,
             lineSpacing: lineSpacing,
-            markdownMode: markdownMode
+            markdownMode: markdownMode,
+            openFilePath: openFilePath
         )
 #elseif os(macOS)
         CPSLSelectableNSTextView(
@@ -1021,7 +1054,8 @@ struct CPSLSelectableText: View {
             foreground: foreground,
             fillsAvailableWidth: fillsAvailableWidth,
             lineSpacing: lineSpacing,
-            markdownMode: markdownMode
+            markdownMode: markdownMode,
+            openFilePath: openFilePath
         )
 #else
         fallbackText
@@ -1069,6 +1103,7 @@ private struct CPSLSelectableTextRun {
     var isCode = false
     var isCodeBlock = false
     var isLink = false
+    var linkURL: URL?
     var paragraphSpacingBefore: CGFloat = 0
     var paragraphSpacingAfter: CGFloat = 0
 
@@ -1079,6 +1114,7 @@ private struct CPSLSelectableTextRun {
         code: Bool = false,
         codeBlock: Bool = false,
         link: Bool = false,
+        linkURL: URL? = nil,
         paragraphSpacingBefore: CGFloat? = nil,
         paragraphSpacingAfter: CGFloat? = nil
     ) -> Self {
@@ -1089,8 +1125,201 @@ private struct CPSLSelectableTextRun {
         run.isCode = run.isCode || code
         run.isCodeBlock = run.isCodeBlock || codeBlock
         run.isLink = run.isLink || link
+        run.linkURL = linkURL ?? run.linkURL
         run.paragraphSpacingBefore = paragraphSpacingBefore ?? run.paragraphSpacingBefore
         run.paragraphSpacingAfter = paragraphSpacingAfter ?? run.paragraphSpacingAfter
+        return run
+    }
+}
+
+private enum CPSLDiscussionPathLinks {
+    private static let linkScheme = "herm-file"
+
+    static func runs(from runs: [CPSLSelectableTextRun]) -> [CPSLSelectableTextRun] {
+        runs.flatMap { run in
+            linkified(run)
+        }
+    }
+
+    static func filePath(from url: URL) -> String? {
+        guard url.scheme == linkScheme,
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.host == "open"
+        else {
+            return nil
+        }
+        return components.queryItems?.first { $0.name == "path" }?.value
+    }
+
+    private static func linkified(_ run: CPSLSelectableTextRun) -> [CPSLSelectableTextRun] {
+        guard !run.isCode, !run.isCodeBlock else {
+            return [run]
+        }
+
+        let text = run.text
+        var output: [CPSLSelectableTextRun] = []
+        var cursor = text.startIndex
+
+        while let match = nextMatch(in: text, from: cursor) {
+            if cursor < match.range.lowerBound {
+                output.append(run.applying().withText(String(text[cursor..<match.range.lowerBound])))
+            }
+
+            if let url = fileURL(for: match.path) {
+                output.append(
+                    run
+                        .applying(link: true, linkURL: url)
+                        .withText(displayPath(for: match.path) + match.lineSuffix)
+                )
+            } else {
+                output.append(run.applying().withText(String(text[match.range])))
+            }
+            cursor = match.range.upperBound
+        }
+
+        if cursor < text.endIndex {
+            output.append(run.applying().withText(String(text[cursor..<text.endIndex])))
+        }
+        return output.isEmpty ? [run] : output
+    }
+
+    private static func nextMatch(
+        in text: String,
+        from cursor: String.Index
+    ) -> (range: Range<String.Index>, path: String, lineSuffix: String)? {
+        let prefixes = ["/home/herm", "/tmp", "~/"]
+        var best: (range: Range<String.Index>, prefix: String)?
+
+        for prefix in prefixes {
+            guard let range = text.range(of: prefix, range: cursor..<text.endIndex),
+                  isValidStart(in: text, range: range, prefix: prefix)
+            else {
+                continue
+            }
+            if best == nil || range.lowerBound < best!.range.lowerBound {
+                best = (range, prefix)
+            }
+        }
+
+        guard let best else {
+            return nil
+        }
+
+        let rawEnd = candidateEnd(in: text, from: best.range.lowerBound)
+        let trimmedEnd = trimmingTrailingPunctuation(in: text, range: best.range.lowerBound..<rawEnd)
+        guard best.range.lowerBound < trimmedEnd else {
+            return nil
+        }
+
+        let rawCandidate = String(text[best.range.lowerBound..<trimmedEnd])
+        let normalized = normalizedPathAndLineSuffix(rawCandidate)
+        guard isAllowedPath(normalized.path) else {
+            let nextCursor = text.index(after: best.range.lowerBound)
+            return nextMatch(in: text, from: nextCursor)
+        }
+
+        return (
+            range: best.range.lowerBound..<trimmedEnd,
+            path: normalized.path,
+            lineSuffix: normalized.lineSuffix
+        )
+    }
+
+    private static func isValidStart(
+        in text: String,
+        range: Range<String.Index>,
+        prefix: String
+    ) -> Bool {
+        if range.lowerBound > text.startIndex {
+            let previous = text[text.index(before: range.lowerBound)]
+            if previous.isLetter || previous.isNumber || previous == "_" || previous == "/" {
+                return false
+            }
+        }
+
+        if prefix == "/home/herm" || prefix == "/tmp" {
+            guard range.upperBound == text.endIndex || text[range.upperBound] == "/" else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func candidateEnd(in text: String, from start: String.Index) -> String.Index {
+        var cursor = start
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.isWhitespace || "\"'`<>".contains(character) {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        return cursor
+    }
+
+    private static func trimmingTrailingPunctuation(
+        in text: String,
+        range: Range<String.Index>
+    ) -> String.Index {
+        var end = range.upperBound
+        while end > range.lowerBound {
+            let character = text[text.index(before: end)]
+            if ".,;!?)]}".contains(character) {
+                end = text.index(before: end)
+            } else {
+                break
+            }
+        }
+        return end
+    }
+
+    private static func normalizedPathAndLineSuffix(_ rawPath: String) -> (path: String, lineSuffix: String) {
+        let virtualPath = rawPath.hasPrefix("~/")
+            ? CPSLVirtualPath.home + String(rawPath.dropFirst())
+            : rawPath
+        var parts = virtualPath.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        var suffixParts: [String] = []
+        while parts.count > 1, let last = parts.last, last.allSatisfy(\.isNumber) {
+            suffixParts.insert(last, at: 0)
+            parts.removeLast()
+            if suffixParts.count == 2 {
+                break
+            }
+        }
+        let suffix = suffixParts.isEmpty ? "" : ":" + suffixParts.joined(separator: ":")
+        return (parts.joined(separator: ":"), suffix)
+    }
+
+    private static func isAllowedPath(_ path: String) -> Bool {
+        path == CPSLVirtualPath.home ||
+            path.hasPrefix("\(CPSLVirtualPath.home)/") ||
+            path == CPSLVirtualPath.temporary ||
+            path.hasPrefix("\(CPSLVirtualPath.temporary)/")
+    }
+
+    private static func displayPath(for path: String) -> String {
+        if path == CPSLVirtualPath.home {
+            return "~"
+        }
+        if path.hasPrefix("\(CPSLVirtualPath.home)/") {
+            return "~/" + String(path.dropFirst(CPSLVirtualPath.home.count + 1))
+        }
+        return path
+    }
+
+    private static func fileURL(for path: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = linkScheme
+        components.host = "open"
+        components.queryItems = [URLQueryItem(name: "path", value: path)]
+        return components.url
+    }
+}
+
+private extension CPSLSelectableTextRun {
+    func withText(_ text: String) -> Self {
+        var run = self
+        run.text = text
         return run
     }
 }
@@ -1319,6 +1548,11 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
     let fillsAvailableWidth: Bool
     let lineSpacing: CGFloat
     let markdownMode: CPSLSelectableTextMarkdownMode
+    let openFilePath: (String) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(openFilePath: openFilePath)
+    }
 
     func makeUIView(context: Context) -> CPSLNativeSelectableUITextView {
         let textView = CPSLNativeSelectableUITextView()
@@ -1332,12 +1566,14 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
         textView.panGestureRecognizer.isEnabled = false
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        textView.delegate = context.coordinator
         return textView
     }
 
     func updateUIView(_ textView: CPSLNativeSelectableUITextView, context: Context) {
+        context.coordinator.openFilePath = openFilePath
         let nextText = attributedText
-        if textView.attributedText?.string != nextText.string {
+        if textView.attributedText?.isEqual(to: nextText) != true {
             textView.attributedText = nextText
         }
     }
@@ -1366,7 +1602,7 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
             markdownMode: markdownMode,
             baseStyle: style
         )
-        for run in runs {
+        for run in CPSLDiscussionPathLinks.runs(from: runs) {
             attributedText.append(NSAttributedString(string: run.text, attributes: attributes(for: run)))
         }
         return attributedText
@@ -1377,13 +1613,18 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
         paragraphStyle.lineSpacing = lineSpacing
         paragraphStyle.paragraphSpacingBefore = run.paragraphSpacingBefore
         paragraphStyle.paragraphSpacing = run.paragraphSpacingAfter
-        return [
+        var attributes: [NSAttributedString.Key: Any] = [
             .font: font(for: run),
             .foregroundColor: UIColor(foreground),
             .paragraphStyle: paragraphStyle,
             .underlineStyle: run.isLink ? NSUnderlineStyle.single.rawValue : 0,
             .backgroundColor: run.isCodeBlock ? UIColor(CPSLTheme.command) : UIColor.clear
         ]
+        if let linkURL = run.linkURL {
+            attributes[.link] = linkURL
+            attributes[.foregroundColor] = UIColor(CPSLTheme.success)
+        }
+        return attributes
     }
 
     private func font(for run: CPSLSelectableTextRun) -> UIFont {
@@ -1406,6 +1647,27 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
             return baseStyle.uiFont
         }
         return UIFont(descriptor: descriptor, size: baseStyle.uiFont.pointSize)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var openFilePath: (String) -> Void
+
+        init(openFilePath: @escaping (String) -> Void) {
+            self.openFilePath = openFilePath
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldInteractWith URL: URL,
+            in characterRange: NSRange,
+            interaction: UITextItemInteraction
+        ) -> Bool {
+            guard let path = CPSLDiscussionPathLinks.filePath(from: URL) else {
+                return true
+            }
+            openFilePath(path)
+            return false
+        }
     }
 }
 
@@ -1433,9 +1695,10 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
     let fillsAvailableWidth: Bool
     let lineSpacing: CGFloat
     let markdownMode: CPSLSelectableTextMarkdownMode
+    let openFilePath: (String) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(openFilePath: openFilePath)
     }
 
     func makeNSView(context: Context) -> NSTextView {
@@ -1451,6 +1714,7 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
         textView.isVerticallyResizable = true
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.required, for: .vertical)
+        textView.delegate = context.coordinator
         CPSLTransientInteractionReset.registerSelectableTextView(textView)
         return textView
     }
@@ -1460,8 +1724,9 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ textView: NSTextView, context: Context) {
+        context.coordinator.openFilePath = openFilePath
         let nextText = attributedText
-        if textView.string != nextText.string {
+        if !textView.attributedString().isEqual(to: nextText) {
             textView.textStorage?.setAttributedString(nextText)
         }
     }
@@ -1496,7 +1761,7 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
             markdownMode: markdownMode,
             baseStyle: style
         )
-        for run in runs {
+        for run in CPSLDiscussionPathLinks.runs(from: runs) {
             attributedText.append(NSAttributedString(string: run.text, attributes: attributes(for: run)))
         }
         return attributedText
@@ -1507,13 +1772,18 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
         paragraphStyle.lineSpacing = lineSpacing
         paragraphStyle.paragraphSpacingBefore = run.paragraphSpacingBefore
         paragraphStyle.paragraphSpacing = run.paragraphSpacingAfter
-        return [
+        var attributes: [NSAttributedString.Key: Any] = [
             .font: font(for: run),
             .foregroundColor: NSColor(foreground),
             .paragraphStyle: paragraphStyle,
             .underlineStyle: run.isLink ? NSUnderlineStyle.single.rawValue : 0,
             .backgroundColor: run.isCodeBlock ? NSColor(CPSLTheme.command) : NSColor.clear
         ]
+        if let linkURL = run.linkURL {
+            attributes[.link] = linkURL
+            attributes[.foregroundColor] = NSColor(CPSLTheme.success)
+        }
+        return attributes
     }
 
     private func font(for run: CPSLSelectableTextRun) -> NSFont {
@@ -1532,6 +1802,22 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
         return font
     }
 
-    final class Coordinator {}
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var openFilePath: (String) -> Void
+
+        init(openFilePath: @escaping (String) -> Void) {
+            self.openFilePath = openFilePath
+        }
+
+        func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+            guard let url = link as? URL,
+                  let path = CPSLDiscussionPathLinks.filePath(from: url)
+            else {
+                return false
+            }
+            openFilePath(path)
+            return true
+        }
+    }
 }
 #endif
