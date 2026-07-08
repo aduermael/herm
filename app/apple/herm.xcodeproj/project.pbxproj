@@ -230,13 +230,14 @@
 /* Begin PBXShellScriptBuildPhase section */
 		85A100032FEA000000000003 /* Generate Env Constants */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../../scripts/generate-apple-env-constants.sh",
+				"$(SRCROOT)/../../scripts/generate-apple-env-constants.swift",
 			);
 			name = "Generate Env Constants";
 			outputFileListPaths = (
@@ -250,13 +251,14 @@
 		};
 		85A100062FEA000000000006 /* Copy CPSL PDFium */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../../scripts/copy-cpsl-pdfium-for-xcode.sh",
+				"$(SRCROOT)/../../scripts/lib/cpsl-xcframework.sh",
 			);
 			name = "Copy CPSL PDFium";
 			outputFileListPaths = (
@@ -290,7 +292,6 @@
 		};
 		85B000012FF9000000000001 /* Copy Bundled Skills */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);

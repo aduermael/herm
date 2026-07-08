@@ -21,7 +21,6 @@ final class CPSLWebBrowserService: ObservableObject {
     private var sandboxRootURL: URL?
     private var leanRuleListTask: Task<WKContentRuleList?, Never>?
     private var activityClearTask: Task<Void, Never>?
-    private let processPool = WKProcessPool()
     private let websiteDataStore = WKWebsiteDataStore.default()
 
     private let defaultWindowSize = CGSize(width: 900, height: 700)
@@ -376,7 +375,6 @@ final class CPSLWebBrowserService: ObservableObject {
         networkPolicy: CPSLWebBrowserNetworkPolicy
     ) async throws -> CPSLWebBrowserSession {
         let configuration = WKWebViewConfiguration()
-        configuration.processPool = processPool
         // Use the shared persistent WebKit store so cookies, local storage, and
         // logged-in browsing state survive across tabs and app launches.
         configuration.websiteDataStore = websiteDataStore
@@ -952,7 +950,7 @@ final class CPSLWebBrowserService: ObservableObject {
         return await task.value
     }
 
-    private nonisolated static func compileLeanContentRuleList() async -> WKContentRuleList? {
+    private static func compileLeanContentRuleList() async -> WKContentRuleList? {
         await withCheckedContinuation { continuation in
             WKContentRuleListStore.default().compileContentRuleList(
                 forIdentifier: "herm-webbrowser-lean-resource-mode-v1",

@@ -519,8 +519,11 @@ private final class CPSLMediaPlaybackModel: ObservableObject {
             queue: .main
         ) { [weak self] time in
             let seconds = CMTimeGetSeconds(time)
+            guard let playback = self else {
+                return
+            }
             Task { @MainActor in
-                self?.updateCurrentTime(seconds)
+                playback.updateCurrentTime(seconds)
             }
         }
 
@@ -529,8 +532,11 @@ private final class CPSLMediaPlaybackModel: ObservableObject {
             object: player.currentItem,
             queue: .main
         ) { [weak self] _ in
+            guard let playback = self else {
+                return
+            }
             Task { @MainActor in
-                self?.finishPlayback()
+                playback.finishPlayback()
             }
         }
     }

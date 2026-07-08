@@ -16,7 +16,7 @@ import ImageIO
 import UniformTypeIdentifiers
 #endif
 
-private final class CPSLWebBrowserCallbackBox: @unchecked Sendable {
+private nonisolated final class CPSLWebBrowserCallbackBox: @unchecked Sendable {
     let service: CPSLWebBrowserService
 
     init(service: CPSLWebBrowserService) {
@@ -24,7 +24,7 @@ private final class CPSLWebBrowserCallbackBox: @unchecked Sendable {
     }
 }
 
-private final class CPSLFileActivityCallbackBox: @unchecked Sendable {
+private nonisolated final class CPSLFileActivityCallbackBox: @unchecked Sendable {
     let notifier: CPSLFileActivityNotifier
 
     init(notifier: CPSLFileActivityNotifier) {
@@ -42,7 +42,7 @@ private typealias CPSLFileActivityUserDataFreeFunction = @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Void
 
-private struct CPSLFileActivityCallbacks {
+private nonisolated struct CPSLFileActivityCallbacks {
     var user_data: UnsafeMutableRawPointer?
     var handle_activity: CPSLFileActivityHandleFunction?
     var user_data_free: CPSLFileActivityUserDataFreeFunction?
@@ -54,7 +54,7 @@ private typealias CPSLSessionNewWithCallbacksFunction = @convention(c) (
     UnsafeRawPointer?
 ) -> OpaquePointer?
 
-private final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
+private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
     private let lock = NSLock()
     private var value: String
 
@@ -76,7 +76,7 @@ private final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
     }
 }
 
-private let cpslWebBrowserHandleJSON: @convention(c) (
+private nonisolated let cpslWebBrowserHandleJSON: @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafePointer<CChar>?
 ) -> UnsafeMutablePointer<CChar>? = { userData, requestJSON in
@@ -107,7 +107,7 @@ private let cpslWebBrowserHandleJSON: @convention(c) (
     return cpslWebBrowserOwnedCString(response.get())
 }
 
-private let cpslWebBrowserStringFree: @convention(c) (UnsafeMutablePointer<CChar>?) -> Void = { value in
+private nonisolated let cpslWebBrowserStringFree: @convention(c) (UnsafeMutablePointer<CChar>?) -> Void = { value in
     guard let value else {
         return
     }
@@ -118,14 +118,14 @@ private let cpslWebBrowserStringFree: @convention(c) (UnsafeMutablePointer<CChar
 #endif
 }
 
-private let cpslWebBrowserUserDataFree: @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
+private nonisolated let cpslWebBrowserUserDataFree: @convention(c) (UnsafeMutableRawPointer?) -> Void = { userData in
     guard let userData else {
         return
     }
     Unmanaged<CPSLWebBrowserCallbackBox>.fromOpaque(userData).release()
 }
 
-private let cpslFileActivityHandle: CPSLFileActivityHandleFunction = { userData, path, operation in
+private nonisolated let cpslFileActivityHandle: CPSLFileActivityHandleFunction = { userData, path, operation in
     guard let userData, let path, let operation else {
         return
     }
@@ -140,14 +140,14 @@ private let cpslFileActivityHandle: CPSLFileActivityHandleFunction = { userData,
     )
 }
 
-private let cpslFileActivityUserDataFree: CPSLFileActivityUserDataFreeFunction = { userData in
+private nonisolated let cpslFileActivityUserDataFree: CPSLFileActivityUserDataFreeFunction = { userData in
     guard let userData else {
         return
     }
     Unmanaged<CPSLFileActivityCallbackBox>.fromOpaque(userData).release()
 }
 
-private func cpslSessionNewWithCallbacksFunction() -> CPSLSessionNewWithCallbacksFunction? {
+private nonisolated func cpslSessionNewWithCallbacksFunction() -> CPSLSessionNewWithCallbacksFunction? {
 #if canImport(Darwin)
     let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
 #else
@@ -162,7 +162,7 @@ private func cpslSessionNewWithCallbacksFunction() -> CPSLSessionNewWithCallback
     return unsafeBitCast(symbol, to: CPSLSessionNewWithCallbacksFunction.self)
 }
 
-private func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutablePointer<CChar>? {
+private nonisolated func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutablePointer<CChar>? {
     let object: [String: Any] = ["ok": false, "error": message]
     guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
         return cpslWebBrowserOwnedCString(#"{"ok":false,"error":"webbrowser callback error"}"#)
@@ -170,7 +170,7 @@ private func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutable
     return cpslWebBrowserOwnedCString(String(decoding: data, as: UTF8.self))
 }
 
-private func cpslWebBrowserOwnedCString(_ value: String) -> UnsafeMutablePointer<CChar>? {
+private nonisolated func cpslWebBrowserOwnedCString(_ value: String) -> UnsafeMutablePointer<CChar>? {
     let sanitized = value.replacingOccurrences(of: "\0", with: "\\u0000")
 #if canImport(Darwin)
     return sanitized.withCString { Darwin.strdup($0) }

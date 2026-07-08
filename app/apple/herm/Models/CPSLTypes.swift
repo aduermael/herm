@@ -176,7 +176,7 @@ nonisolated struct CPSLFileActivity: Equatable, Sendable {
     let operation: String
 }
 
-final class CPSLFileActivityNotifier: @unchecked Sendable {
+nonisolated final class CPSLFileActivityNotifier: @unchecked Sendable {
     typealias Handler = @MainActor @Sendable (CPSLFileActivity) -> Void
 
     private let lock = NSLock()
@@ -456,7 +456,7 @@ enum CPSLCodeLanguage: String, Equatable, Sendable {
     }
 }
 
-enum CPSLFilePreviewCategory: Equatable, Sendable {
+nonisolated enum CPSLFilePreviewCategory: Equatable, Sendable {
     case archive
     case audio
     case code(CPSLCodeLanguage)
