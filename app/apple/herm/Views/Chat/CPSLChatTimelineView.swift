@@ -12,6 +12,7 @@ struct CPSLChatTimelineView: View {
     let bottomInset: CGFloat
     let isScrollGeometryPaused: Bool
     @State private var isPinnedToBottom = true
+    @State private var streamingScrollGeneration = 0
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
     private var timelineIdentity: String {
@@ -56,7 +57,7 @@ struct CPSLChatTimelineView: View {
                 scrollToBottom(animated: true)
             }
             .onChange(of: model.messages.last?.body) { _, _ in
-                scrollToBottom(animated: true)
+                followStreamingBottomIfPinned()
             }
             .onChange(of: bottomInset) { _, _ in
                 scrollToBottomIfPinned()
@@ -97,6 +98,7 @@ struct CPSLChatTimelineView: View {
     }
 
     private func resetScrollState() {
+        streamingScrollGeneration += 1
         isPinnedToBottom = true
         scrollPosition = ScrollPosition(edge: .bottom)
         scrollToBottom(animated: false)
@@ -107,6 +109,22 @@ struct CPSLChatTimelineView: View {
             return
         }
         scrollToBottom(animated: false)
+    }
+
+    private func followStreamingBottomIfPinned() {
+        guard isPinnedToBottom else {
+            return
+        }
+
+        streamingScrollGeneration += 1
+        let generation = streamingScrollGeneration
+        Task { @MainActor in
+            await Task.yield()
+            guard generation == streamingScrollGeneration, isPinnedToBottom else {
+                return
+            }
+            scrollToBottom(animated: false)
+        }
     }
 
     private func handleScrollGeometryChange(
@@ -1101,6 +1119,56 @@ enum CPSLSelectableTextMarkdownMode: Equatable {
     case block
 }
 
+private struct CPSLSelectableTextRenderKey: Equatable {
+    let text: String
+    let style: CPSLSelectableTextStyle
+    let foregroundDescription: String
+    let lineSpacing: CGFloat
+    let markdownMode: CPSLSelectableTextMarkdownMode
+}
+
+private struct CPSLSelectableTextSizeKey: Equatable {
+    let renderKey: CPSLSelectableTextRenderKey
+    let width: CGFloat
+    let fillsAvailableWidth: Bool
+}
+
+private final class CPSLSelectableTextRenderCache {
+    private var renderKey: CPSLSelectableTextRenderKey?
+    private var renderedText: NSAttributedString?
+    private var sizeKey: CPSLSelectableTextSizeKey?
+    private var measuredSize: CGSize?
+
+    func attributedText(
+        for key: CPSLSelectableTextRenderKey,
+        make: () -> NSAttributedString
+    ) -> NSAttributedString {
+        if renderKey == key, let renderedText {
+            return renderedText
+        }
+
+        let nextText = make()
+        renderKey = key
+        renderedText = nextText
+        sizeKey = nil
+        measuredSize = nil
+        return nextText
+    }
+
+    func size(for key: CPSLSelectableTextSizeKey) -> CGSize? {
+        sizeKey == key ? measuredSize : nil
+    }
+
+    func cache(size: CGSize, for key: CPSLSelectableTextSizeKey) {
+        sizeKey = key
+        measuredSize = size
+    }
+}
+
+private func normalizedSelectableTextMeasurementWidth(_ width: CGFloat) -> CGFloat {
+    max(1, (width * 2).rounded(.toNearestOrAwayFromZero) / 2)
+}
+
 private struct CPSLSelectableTextRun {
     var text: String
     var style: CPSLSelectableTextStyle?
@@ -1556,6 +1624,16 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
     let markdownMode: CPSLSelectableTextMarkdownMode
     let openFilePath: (String) -> Void
 
+    private var renderKey: CPSLSelectableTextRenderKey {
+        CPSLSelectableTextRenderKey(
+            text: text,
+            style: style,
+            foregroundDescription: String(describing: foreground),
+            lineSpacing: lineSpacing,
+            markdownMode: markdownMode
+        )
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(openFilePath: openFilePath)
     }
@@ -1578,10 +1656,8 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
 
     func updateUIView(_ textView: CPSLNativeSelectableUITextView, context: Context) {
         context.coordinator.openFilePath = openFilePath
-        let nextText = attributedText
-        if textView.attributedText?.isEqual(to: nextText) != true {
-            textView.attributedText = nextText
-        }
+        let nextText = context.coordinator.attributedText(for: self)
+        setAttributedText(nextText, on: textView)
     }
 
     func sizeThatFits(
@@ -1589,19 +1665,32 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
         uiView textView: CPSLNativeSelectableUITextView,
         context: Context
     ) -> CGSize? {
-        textView.attributedText = attributedText
+        let nextText = context.coordinator.attributedText(for: self)
+        setAttributedText(nextText, on: textView)
         let proposedWidth = proposal.width ?? textView.bounds.width
-        let width = proposedWidth > 0 ? proposedWidth : CPSLTheme.framedMessageMaxWidth
+        let rawWidth = proposedWidth > 0 ? proposedWidth : CPSLTheme.framedMessageMaxWidth
+        let width = normalizedSelectableTextMeasurementWidth(rawWidth)
+        let sizeKey = CPSLSelectableTextSizeKey(
+            renderKey: renderKey,
+            width: width,
+            fillsAvailableWidth: fillsAvailableWidth
+        )
+        if let cachedSize = context.coordinator.size(for: sizeKey) {
+            return cachedSize
+        }
+
         let size = textView.sizeThatFits(
             CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         )
-        return CGSize(
+        let measuredSize = CGSize(
             width: fillsAvailableWidth ? width : min(size.width, width),
             height: ceil(size.height)
         )
+        context.coordinator.cache(size: measuredSize, for: sizeKey)
+        return measuredSize
     }
 
-    private var attributedText: NSAttributedString {
+    private func makeAttributedText() -> NSAttributedString {
         let attributedText = NSMutableAttributedString()
         let runs = CPSLInlineMarkdownRuns.runs(
             from: text,
@@ -1612,6 +1701,12 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
             attributedText.append(NSAttributedString(string: run.text, attributes: attributes(for: run)))
         }
         return attributedText
+    }
+
+    private func setAttributedText(_ nextText: NSAttributedString, on textView: UITextView) {
+        if textView.attributedText?.isEqual(to: nextText) != true {
+            textView.attributedText = nextText
+        }
     }
 
     private func attributes(for run: CPSLSelectableTextRun) -> [NSAttributedString.Key: Any] {
@@ -1657,9 +1752,24 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var openFilePath: (String) -> Void
+        private let renderCache = CPSLSelectableTextRenderCache()
 
         init(openFilePath: @escaping (String) -> Void) {
             self.openFilePath = openFilePath
+        }
+
+        func attributedText(for view: CPSLSelectableUITextView) -> NSAttributedString {
+            renderCache.attributedText(for: view.renderKey) {
+                view.makeAttributedText()
+            }
+        }
+
+        func size(for key: CPSLSelectableTextSizeKey) -> CGSize? {
+            renderCache.size(for: key)
+        }
+
+        func cache(size: CGSize, for key: CPSLSelectableTextSizeKey) {
+            renderCache.cache(size: size, for: key)
         }
 
         @available(iOS 17.0, macCatalyst 17.0, *)
@@ -1707,6 +1817,16 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
     let markdownMode: CPSLSelectableTextMarkdownMode
     let openFilePath: (String) -> Void
 
+    private var renderKey: CPSLSelectableTextRenderKey {
+        CPSLSelectableTextRenderKey(
+            text: text,
+            style: style,
+            foregroundDescription: String(describing: foreground),
+            lineSpacing: lineSpacing,
+            markdownMode: markdownMode
+        )
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(openFilePath: openFilePath)
     }
@@ -1735,7 +1855,7 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
 
     func updateNSView(_ textView: NSTextView, context: Context) {
         context.coordinator.openFilePath = openFilePath
-        let nextText = attributedText
+        let nextText = context.coordinator.attributedText(for: self)
         if !textView.attributedString().isEqual(to: nextText) {
             textView.textStorage?.setAttributedString(nextText)
         }
@@ -1746,8 +1866,22 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
         nsView textView: NSTextView,
         context: Context
     ) -> CGSize? {
-        textView.textStorage?.setAttributedString(attributedText)
-        let width = max(proposal.width ?? CPSLTheme.framedMessageMaxWidth, 1)
+        let nextText = context.coordinator.attributedText(for: self)
+        if !textView.attributedString().isEqual(to: nextText) {
+            textView.textStorage?.setAttributedString(nextText)
+        }
+        let width = normalizedSelectableTextMeasurementWidth(
+            proposal.width ?? CPSLTheme.framedMessageMaxWidth
+        )
+        let sizeKey = CPSLSelectableTextSizeKey(
+            renderKey: renderKey,
+            width: width,
+            fillsAvailableWidth: fillsAvailableWidth
+        )
+        if let cachedSize = context.coordinator.size(for: sizeKey) {
+            return cachedSize
+        }
+
         textView.textContainer?.containerSize = CGSize(
             width: width,
             height: CGFloat.greatestFiniteMagnitude
@@ -1756,15 +1890,17 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
            let textContainer = textView.textContainer {
             layoutManager.ensureLayout(for: textContainer)
             let rect = layoutManager.usedRect(for: textContainer)
-            return CGSize(
+            let measuredSize = CGSize(
                 width: fillsAvailableWidth ? width : min(ceil(rect.width), width),
                 height: ceil(rect.height)
             )
+            context.coordinator.cache(size: measuredSize, for: sizeKey)
+            return measuredSize
         }
         return nil
     }
 
-    private var attributedText: NSAttributedString {
+    private func makeAttributedText() -> NSAttributedString {
         let attributedText = NSMutableAttributedString()
         let runs = CPSLInlineMarkdownRuns.runs(
             from: text,
@@ -1814,9 +1950,24 @@ private struct CPSLSelectableNSTextView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var openFilePath: (String) -> Void
+        private let renderCache = CPSLSelectableTextRenderCache()
 
         init(openFilePath: @escaping (String) -> Void) {
             self.openFilePath = openFilePath
+        }
+
+        func attributedText(for view: CPSLSelectableNSTextView) -> NSAttributedString {
+            renderCache.attributedText(for: view.renderKey) {
+                view.makeAttributedText()
+            }
+        }
+
+        func size(for key: CPSLSelectableTextSizeKey) -> CGSize? {
+            renderCache.size(for: key)
+        }
+
+        func cache(size: CGSize, for key: CPSLSelectableTextSizeKey) {
+            renderCache.cache(size: size, for: key)
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

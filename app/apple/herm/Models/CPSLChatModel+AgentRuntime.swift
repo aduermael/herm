@@ -594,12 +594,22 @@ extension CPSLChatModel {
                 return
             }
 
-            let chunkSize = min(typewriterBuffer.count, typewriterBuffer.count > 240 ? 8 : 3)
+            let chunkSize = min(typewriterBuffer.count, typewriterChunkSize)
             let chunk = String(typewriterBuffer.prefix(chunkSize))
             typewriterBuffer.removeFirst(chunk.count)
             appendToStreamingAssistant(chunk)
-            try? await Task.sleep(nanoseconds: 12_000_000)
+            try? await Task.sleep(nanoseconds: 24_000_000)
         }
+    }
+
+    private var typewriterChunkSize: Int {
+        if typewriterBuffer.count > 1_024 {
+            return 96
+        }
+        if typewriterBuffer.count > 240 {
+            return 48
+        }
+        return 16
     }
 
     func finishTypewriter() async {
