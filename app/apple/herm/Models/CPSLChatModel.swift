@@ -160,8 +160,16 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func toggleDrawer() {
-        isDrawerOpen.toggle()
-        if isDrawerOpen {
+        setDrawerOpen(!isDrawerOpen)
+    }
+
+    func setDrawerOpen(_ isOpen: Bool) {
+        guard isDrawerOpen != isOpen else {
+            return
+        }
+
+        isDrawerOpen = isOpen
+        if isOpen {
             isFileBrowserOpen = false
             isCalendarOpen = false
             isLocationOpen = false
@@ -170,7 +178,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func closeDrawer() {
-        isDrawerOpen = false
+        setDrawerOpen(false)
     }
 
     func selectConversation(id: String) {

@@ -33,6 +33,7 @@ struct CPSLWebBrowserOverlay: View {
         ) {
             CPSLWebBrowserPanel(model: model, webBrowser: webBrowser)
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 }
 

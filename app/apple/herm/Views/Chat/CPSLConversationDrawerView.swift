@@ -72,7 +72,7 @@ private struct CPSLConversationDrawerContent: View {
 
 private struct CPSLDrawerAppHeader: View {
     var body: some View {
-        Text("Herm")
+        Text("Herm 🐚")
             .font(CPSLTheme.headerFont)
             .foregroundStyle(CPSLTheme.text)
             .frame(maxWidth: .infinity, alignment: .leading)

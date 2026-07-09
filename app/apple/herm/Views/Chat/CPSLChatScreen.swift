@@ -5,6 +5,9 @@ import AppKit
 #elseif canImport(UIKit)
 import UIKit
 #endif
+#if canImport(WebKit)
+import WebKit
+#endif
 
 enum CPSLTransientInteractionReset {
 #if canImport(UIKit)
@@ -210,6 +213,11 @@ private struct CPSLTransientInteractionResetObserver: UIViewRepresentable {
                    !CPSLTransientInteractionReset.isRegisteredSelectableTextView(textView) {
                     return !textView.isEditable
                 }
+#if canImport(WebKit)
+                if candidate is WKWebView {
+                    return false
+                }
+#endif
                 if candidate is UITextInput || candidate is UIKeyInput {
                     return false
                 }
@@ -318,6 +326,11 @@ private struct CPSLTransientInteractionResetObserver: NSViewRepresentable {
                    !CPSLTransientInteractionReset.isRegisteredSelectableTextView(textView) {
                     return !textView.isEditable
                 }
+#if canImport(WebKit)
+                if candidate is WKWebView {
+                    return false
+                }
+#endif
                 current = candidate.superview
             }
             return true
@@ -358,6 +371,7 @@ struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
     @State private var drawerProgress: CGFloat = 0
+    @State private var activeDrawerDragStartProgress: CGFloat?
 
     private var contentBottomInset: CGFloat {
         CPSLTheme.medium
@@ -391,11 +405,12 @@ struct CPSLChatScreen: View {
                     model.toggleDrawer()
                 }
                 .padding(.leading, CPSLTheme.medium)
-                .padding(.top, CPSLTheme.medium)
+                .padding(.top, CPSLTheme.topChromeSafeAreaGap)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
                 .zIndex(2)
 
             }
+            .simultaneousGesture(drawerDragGesture(width: proxy.size.width))
             .onAppear {
                 drawerProgress = drawerTargetProgress
             }
@@ -434,7 +449,13 @@ struct CPSLChatScreen: View {
     }
 
     private func drawerToggleOffset(width: CGFloat) -> CGFloat {
-        max(0, width - CPSLTheme.controlSize - CPSLTheme.medium * 2) * drawerProgress
+        max(
+            0,
+            width
+                - CPSLTheme.controlSize
+                - CPSLTheme.medium
+                - CPSLTheme.drawerToggleOpenTrailingInset
+        ) * drawerProgress
     }
 
     private var drawerTargetProgress: CGFloat {
@@ -442,11 +463,67 @@ struct CPSLChatScreen: View {
     }
 
     private func drawerTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
-        topSafeAreaInset + CPSLTheme.medium
+        topSafeAreaInset + CPSLTheme.topChromeSafeAreaGap
     }
 
     private func contentTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
         topSafeAreaInset + CPSLTheme.topChromeInset
+    }
+
+    private func drawerDragGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .onChanged { value in
+                updateDrawerDrag(value, width: width)
+            }
+            .onEnded { value in
+                finishDrawerDrag(value, width: width)
+            }
+    }
+
+    private func updateDrawerDrag(_ value: DragGesture.Value, width: CGFloat) {
+        guard width > 0 else {
+            return
+        }
+        guard let startProgress = activeDrawerDragStartProgress
+            ?? drawerDragStartProgress(value, width: width) else {
+            return
+        }
+
+        activeDrawerDragStartProgress = startProgress
+        drawerProgress = clampedDrawerProgress(startProgress + value.translation.width / width)
+    }
+
+    private func finishDrawerDrag(_ value: DragGesture.Value, width: CGFloat) {
+        guard width > 0 else {
+            activeDrawerDragStartProgress = nil
+            return
+        }
+        guard let startProgress = activeDrawerDragStartProgress
+            ?? drawerDragStartProgress(value, width: width) else {
+            return
+        }
+
+        let predictedProgress = clampedDrawerProgress(
+            startProgress + value.predictedEndTranslation.width / width
+        )
+        let shouldOpen = predictedProgress >= 0.5
+        activeDrawerDragStartProgress = nil
+        model.setDrawerOpen(shouldOpen)
+        withAnimation(CPSLDrawerMotion.animation) {
+            drawerProgress = shouldOpen ? 1 : 0
+        }
+    }
+
+    private func drawerDragStartProgress(_ value: DragGesture.Value, width: CGFloat) -> CGFloat? {
+        if model.isDrawerOpen {
+            return value.startLocation.x >= width - CPSLTheme.drawerGestureEdgeWidth ? drawerProgress : nil
+        }
+
+        return value.startLocation.x <= CPSLTheme.drawerGestureEdgeWidth ? drawerProgress : nil
+    }
+
+    private func clampedDrawerProgress(_ progress: CGFloat) -> CGFloat {
+        min(max(progress, 0), 1)
     }
 }
 
@@ -616,7 +693,7 @@ private struct CPSLHeaderActionsView: View {
             .opacity(model.isRunning ? 0.45 : 1)
         }
         .padding(.horizontal, CPSLTheme.medium)
-        .padding(.top, CPSLTheme.medium)
+        .padding(.top, CPSLTheme.topChromeSafeAreaGap)
         .padding(.bottom, CPSLTheme.medium)
 #if DEBUG
         .cpslJSONTraceShare(file: $traceShareFile)
