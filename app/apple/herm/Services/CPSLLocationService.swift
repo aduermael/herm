@@ -10,6 +10,8 @@ final class CPSLLocationService: NSObject, ObservableObject {
     @Published private(set) var currentLocation: CLLocation?
     @Published private(set) var isRequestingAccess = false
     @Published private(set) var isUpdatingLocation = false
+    @Published private(set) var isLoadingCurrentLocation = false
+    @Published private(set) var locationError: String?
     var activityOccurred: (@MainActor @Sendable () -> Void)?
 
 #if canImport(CoreLocation)
@@ -57,6 +59,41 @@ final class CPSLLocationService: NSObject, ObservableObject {
 #endif
     }
 
+    func loadCurrentLocation() async -> CPSLFeatureAccessState {
+        let requestedAccess = await requestAccess()
+        guard requestedAccess == .granted else {
+            currentLocation = nil
+            locationError = settingsMessage
+            return requestedAccess
+        }
+
+#if canImport(CoreLocation)
+        isLoadingCurrentLocation = true
+        locationError = nil
+        defer {
+            isLoadingCurrentLocation = false
+        }
+
+        guard await Self.locationServicesEnabled() else {
+            currentLocation = nil
+            locationError = "Location Services are disabled; enable them in iOS Settings or macOS System Settings."
+            return .denied
+        }
+
+        startUpdatingIfAllowed()
+        let location = await freshestLocation()
+        guard let location else {
+            locationError = "Current location is not available yet."
+            return requestedAccess
+        }
+
+        currentLocation = location
+#else
+        locationError = "CoreLocation is unavailable on this platform."
+#endif
+        return requestedAccess
+    }
+
     func handleJSON(_ requestJSON: String) async -> String {
         do {
             guard let data = requestJSON.data(using: .utf8),
@@ -70,11 +107,11 @@ final class CPSLLocationService: NSObject, ObservableObject {
             case "status":
                 activityOccurred?()
                 refreshStatus()
-                return Self.successJSON(statusPayload())
+                return Self.successJSON(await statusPayload())
             case "request_access":
                 activityOccurred?()
                 _ = await requestAccess()
-                return Self.successJSON(statusPayload())
+                return Self.successJSON(await statusPayload())
             case "current":
                 activityOccurred?()
                 return await currentLocationJSON()
@@ -88,22 +125,15 @@ final class CPSLLocationService: NSObject, ObservableObject {
 
     private func currentLocationJSON() async -> String {
 #if canImport(CoreLocation)
-        let requestedAccess = access == .undefined ? await requestAccess() : access
+        let requestedAccess = await loadCurrentLocation()
         guard requestedAccess == .granted else {
-            return Self.errorJSON(settingsMessage)
+            return Self.errorJSON("location: \(locationError ?? settingsMessage)")
         }
-        guard CLLocationManager.locationServicesEnabled() else {
-            access = .denied
-            return Self.errorJSON("location: Location Services are disabled; enable them in iOS Settings or macOS System Settings.")
-        }
-
-        startUpdatingIfAllowed()
-        let location = await freshestLocation()
-        guard let location else {
-            return Self.errorJSON("location: current location is not available yet")
+        guard let location = currentLocation else {
+            return Self.errorJSON("location: \(locationError ?? "current location is not available yet")")
         }
 
-        var payload = statusPayload()
+        var payload = await statusPayload()
         payload["location"] = locationPayload(location)
         return Self.successJSON(payload)
 #else
@@ -115,14 +145,14 @@ final class CPSLLocationService: NSObject, ObservableObject {
         "location: access denied; enable Location access for Herm in iOS Settings or macOS System Settings."
     }
 
-    private func statusPayload() -> [String: Any] {
+    private func statusPayload() async -> [String: Any] {
 #if canImport(CoreLocation)
         [
             "ok": true,
             "access": access.rawValue,
             "state": access.rawValue,
             "supported": true,
-            "services_enabled": CLLocationManager.locationServicesEnabled()
+            "services_enabled": await Self.locationServicesEnabled()
         ]
 #else
         [
@@ -137,18 +167,37 @@ final class CPSLLocationService: NSObject, ObservableObject {
 
 #if canImport(CoreLocation)
     private func startUpdatingIfAllowed() {
-        guard access == .granted, CLLocationManager.locationServicesEnabled() else {
-            if isUpdatingLocation {
-                manager.stopUpdatingLocation()
-                isUpdatingLocation = false
+        guard access == .granted else {
+            stopUpdatingIfNeeded()
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
             }
+            guard await Self.locationServicesEnabled() else {
+                self.stopUpdatingIfNeeded()
+                return
+            }
+            guard self.access == .granted else {
+                self.stopUpdatingIfNeeded()
+                return
+            }
+            guard !self.isUpdatingLocation else {
+                return
+            }
+            self.manager.startUpdatingLocation()
+            self.isUpdatingLocation = true
+        }
+    }
+
+    private func stopUpdatingIfNeeded() {
+        guard isUpdatingLocation else {
             return
         }
-        guard !isUpdatingLocation else {
-            return
-        }
-        manager.startUpdatingLocation()
-        isUpdatingLocation = true
+        manager.stopUpdatingLocation()
+        isUpdatingLocation = false
     }
 
     private func freshestLocation() async -> CLLocation? {
@@ -222,6 +271,12 @@ final class CPSLLocationService: NSObject, ObservableObject {
         @unknown default:
             return .denied
         }
+    }
+
+    private nonisolated static func locationServicesEnabled() async -> Bool {
+        await Task.detached(priority: .utility) {
+            CLLocationManager.locationServicesEnabled()
+        }.value
     }
 #endif
 

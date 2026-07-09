@@ -96,6 +96,7 @@ final class CPSLCalendarService: ObservableObject {
             }
             .prefix(12)
             .map(Self.event(from:))
+        upcomingEvents = Self.eventsWithUniqueIDs(upcomingEvents)
 #else
         upcomingEvents = []
         eventError = "Calendar is unavailable on this platform."
@@ -105,13 +106,18 @@ final class CPSLCalendarService: ObservableObject {
 
 #if canImport(EventKit)
     private static func event(from event: EKEvent) -> CPSLCalendarEvent {
-        let fallbackID = [
-            event.title ?? "",
+        let id = [
+            event.eventIdentifier,
+            event.calendarItemIdentifier,
+            event.calendar?.calendarIdentifier,
             String(event.startDate.timeIntervalSince1970),
-            String(event.endDate.timeIntervalSince1970)
-        ].joined(separator: "|")
+            String(event.endDate.timeIntervalSince1970),
+            event.title
+        ]
+        .compactMap { $0?.cpslNilIfEmpty }
+        .joined(separator: "|")
         return CPSLCalendarEvent(
-            id: event.eventIdentifier ?? fallbackID,
+            id: id,
             title: event.title?.cpslNilIfEmpty ?? "Untitled event",
             calendarTitle: event.calendar?.title ?? "Calendar",
             startDate: event.startDate,
@@ -119,6 +125,26 @@ final class CPSLCalendarService: ObservableObject {
             isAllDay: event.isAllDay,
             location: event.location?.cpslNilIfEmpty
         )
+    }
+
+    private static func eventsWithUniqueIDs(_ events: [CPSLCalendarEvent]) -> [CPSLCalendarEvent] {
+        var countsByID: [String: Int] = [:]
+        return events.map { event in
+            let count = countsByID[event.id, default: 0]
+            countsByID[event.id] = count + 1
+            guard count > 0 else {
+                return event
+            }
+            return CPSLCalendarEvent(
+                id: "\(event.id)|duplicate-\(count)",
+                title: event.title,
+                calendarTitle: event.calendarTitle,
+                startDate: event.startDate,
+                endDate: event.endDate,
+                isAllDay: event.isAllDay,
+                location: event.location
+            )
+        }
     }
 
     private static func accessState(for status: EKAuthorizationStatus) -> CPSLFeatureAccessState {
@@ -138,9 +164,11 @@ final class CPSLCalendarService: ObservableObject {
         switch status {
         case .authorized:
             return .granted
+        case .fullAccess:
+            return .granted
         case .notDetermined:
             return .undefined
-        case .denied, .restricted:
+        case .denied, .restricted, .writeOnly:
             return .denied
         @unknown default:
             return .denied

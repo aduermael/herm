@@ -2,9 +2,6 @@ import SwiftUI
 #if canImport(CoreLocation)
 @preconcurrency import CoreLocation
 #endif
-#if canImport(MapKit)
-import MapKit
-#endif
 
 struct CPSLToolStripView: View {
     @ObservedObject var model: CPSLChatModel
@@ -64,9 +61,10 @@ struct CPSLToolStripView: View {
                 CPSLLocationToolStripButton(
                     access: location.access,
                     location: location.currentLocation,
+                    isOpen: model.isLocationOpen,
                     isGlowing: model.isLocationActivityActive
                 ) {
-                    model.toggleLocationAccess()
+                    model.toggleLocation()
                 }
 
                 CPSLDisabledToolIcon(systemName: "envelope.fill", color: CPSLTheme.IconPalette.mail)
@@ -81,6 +79,7 @@ struct CPSLToolStripView: View {
 private struct CPSLLocationToolStripButton: View {
     let access: CPSLFeatureAccessState
     let location: CLLocation?
+    let isOpen: Bool
     let isGlowing: Bool
     let action: () -> Void
 
@@ -91,15 +90,15 @@ private struct CPSLLocationToolStripButton: View {
     var body: some View {
         Button(action: action) {
             if hasMapBackground, let location {
-                CPSLLocationToolStripMapLabel(location: location, isGlowing: isGlowing)
+                CPSLLocationToolStripMapLabel(location: location, isOpen: isOpen, isGlowing: isGlowing)
             } else {
                 CPSLToolStripIconLabel(
                     systemName: "location.fill",
                     color: CPSLTheme.success,
-                    tint: access.isGranted
+                    tint: isOpen || access.isGranted
                         ? CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.52)
                         : CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.40),
-                    strokeOpacity: access.isGranted ? 0.10 : 0.045,
+                    strokeOpacity: isOpen || access.isGranted ? 0.10 : 0.045,
                     isGlowing: isGlowing
                 )
             }
@@ -114,28 +113,19 @@ private struct CPSLLocationToolStripButton: View {
 
 private struct CPSLLocationToolStripMapLabel: View {
     let location: CLLocation
+    let isOpen: Bool
     let isGlowing: Bool
 
     var body: some View {
-        CPSLLocationMapThumbnail(location: location)
+        CPSLLocationMapView(location: location, markerSize: 9)
         .frame(width: CPSLTheme.controlSize * 1.45, height: CPSLTheme.controlSize)
         .background {
             CPSLTheme.background.opacity(0.18)
         }
         .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-        .overlay {
-            Circle()
-                .fill(.blue)
-                .frame(width: 9, height: 9)
-                .overlay(
-                    Circle()
-                        .stroke(.white, lineWidth: 2)
-                )
-                .shadow(color: .black.opacity(0.24), radius: 2, y: 1)
-        }
         .overlay(
             RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
-                .stroke(CPSLTheme.text.opacity(isGlowing ? 0.18 : 0.10), lineWidth: 1)
+                .stroke(CPSLTheme.text.opacity(isGlowing ? 0.18 : isOpen ? 0.14 : 0.10), lineWidth: 1)
         )
         .foregroundStyle(.white)
         .shadow(color: .black.opacity(0.18), radius: 3, y: 1)
@@ -145,18 +135,6 @@ private struct CPSLLocationToolStripMapLabel: View {
             in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
         )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-    }
-}
-
-private struct CPSLLocationMapThumbnail: View {
-    let location: CLLocation
-
-    var body: some View {
-#if canImport(MapKit)
-        CPSLLocationMapRepresentable(coordinate: location.coordinate)
-#else
-        CPSLTheme.success.opacity(0.35)
-#endif
     }
 }
 
@@ -212,75 +190,6 @@ private struct CPSLToolStripIconButton: View {
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
     }
 }
-
-#if canImport(MapKit) && canImport(UIKit)
-private struct CPSLLocationMapRepresentable: UIViewRepresentable {
-    let coordinate: CLLocationCoordinate2D
-
-    func makeUIView(context: Context) -> MKMapView {
-        let mapView = MKMapView(frame: .zero)
-        configure(mapView)
-        return mapView
-    }
-
-    func updateUIView(_ mapView: MKMapView, context: Context) {
-        update(mapView)
-    }
-
-    private func configure(_ mapView: MKMapView) {
-        mapView.isUserInteractionEnabled = false
-        mapView.isScrollEnabled = false
-        mapView.isZoomEnabled = false
-        mapView.isPitchEnabled = false
-        mapView.isRotateEnabled = false
-        mapView.showsCompass = false
-        mapView.showsScale = false
-        mapView.showsUserLocation = false
-        update(mapView)
-    }
-
-    private func update(_ mapView: MKMapView) {
-        let region = MKCoordinateRegion(
-            center: coordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-        )
-        mapView.setRegion(region, animated: false)
-    }
-}
-#elseif canImport(MapKit) && os(macOS)
-private struct CPSLLocationMapRepresentable: NSViewRepresentable {
-    let coordinate: CLLocationCoordinate2D
-
-    func makeNSView(context: Context) -> MKMapView {
-        let mapView = MKMapView(frame: .zero)
-        configure(mapView)
-        return mapView
-    }
-
-    func updateNSView(_ mapView: MKMapView, context: Context) {
-        update(mapView)
-    }
-
-    private func configure(_ mapView: MKMapView) {
-        mapView.isScrollEnabled = false
-        mapView.isZoomEnabled = false
-        mapView.isPitchEnabled = false
-        mapView.isRotateEnabled = false
-        mapView.showsCompass = false
-        mapView.showsScale = false
-        mapView.showsUserLocation = false
-        update(mapView)
-    }
-
-    private func update(_ mapView: MKMapView) {
-        let region = MKCoordinateRegion(
-            center: coordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-        )
-        mapView.setRegion(region, animated: false)
-    }
-}
-#endif
 
 private struct CPSLToolStripButtonLabel: View {
     let title: LocalizedStringKey

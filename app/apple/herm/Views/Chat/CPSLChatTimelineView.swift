@@ -1656,18 +1656,22 @@ private struct CPSLSelectableUITextView: UIViewRepresentable {
             self.openFilePath = openFilePath
         }
 
+        @available(iOS 17.0, macCatalyst 17.0, *)
         func textView(
             _ textView: UITextView,
-            shouldInteractWith URL: URL,
-            in characterRange: NSRange,
-            interaction: UITextItemInteraction
-        ) -> Bool {
-            guard let path = CPSLDiscussionPathLinks.filePath(from: URL) else {
-                return true
+            primaryActionFor textItem: UITextItem,
+            defaultAction: UIAction
+        ) -> UIAction? {
+            guard case .link(let url) = textItem.content,
+                  let path = CPSLDiscussionPathLinks.filePath(from: url)
+            else {
+                return defaultAction
             }
-            openFilePath(path)
-            return false
+            return UIAction { [weak self] _ in
+                self?.openFilePath(path)
+            }
         }
+
     }
 }
 

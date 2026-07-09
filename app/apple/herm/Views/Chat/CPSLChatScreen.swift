@@ -510,12 +510,23 @@ private struct CPSLMainContentStage: View {
                     .transition(CPSLOverlayMotion.transition)
                     .zIndex(6)
             }
+
+            if model.isLocationOpen {
+                CPSLLocationOverlay(
+                    model: model,
+                    topInset: CPSLTheme.topChromeInset,
+                    bottomInset: contentBottomInset
+                )
+                    .transition(CPSLOverlayMotion.transition)
+                    .zIndex(7)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CPSLTheme.background.ignoresSafeArea())
         .animation(CPSLOverlayMotion.animation, value: model.isFileBrowserOpen)
         .animation(CPSLOverlayMotion.animation, value: model.isWebBrowserOpen)
         .animation(CPSLOverlayMotion.animation, value: model.isCalendarOpen)
+        .animation(CPSLOverlayMotion.animation, value: model.isLocationOpen)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // PROMPTING AREA + BUTTONS ON TOP
             CPSLBottomChromeView(

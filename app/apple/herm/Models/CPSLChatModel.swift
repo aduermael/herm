@@ -28,6 +28,7 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var isFileActivityActive = false
     @Published private(set) var isCalendarOpen = false
     @Published private(set) var isCalendarActivityActive = false
+    @Published private(set) var isLocationOpen = false
     @Published private(set) var isLocationActivityActive = false
 
     let service: CPSLDebugService
@@ -124,6 +125,7 @@ final class CPSLChatModel: ObservableObject {
                 self.filePreview = nil
                 self.isDrawerOpen = false
                 self.isCalendarOpen = false
+                self.isLocationOpen = false
             }
         }
         webBrowser.webVisitOccurred = { [weak self] visit in
@@ -151,6 +153,7 @@ final class CPSLChatModel: ObservableObject {
         currentSystemPrompt = nil
         isFileBrowserOpen = false
         isCalendarOpen = false
+        isLocationOpen = false
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
@@ -161,6 +164,7 @@ final class CPSLChatModel: ObservableObject {
         if isDrawerOpen {
             isFileBrowserOpen = false
             isCalendarOpen = false
+            isLocationOpen = false
             closeWebBrowser()
         }
     }
@@ -178,6 +182,7 @@ final class CPSLChatModel: ObservableObject {
             isDrawerOpen = false
             isFileBrowserOpen = false
             isCalendarOpen = false
+            isLocationOpen = false
             filePreview = nil
             return
         }
@@ -220,6 +225,7 @@ final class CPSLChatModel: ObservableObject {
         promptText = ""
         isFileBrowserOpen = false
         isCalendarOpen = false
+        isLocationOpen = false
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
@@ -245,6 +251,7 @@ final class CPSLChatModel: ObservableObject {
             isDrawerOpen = false
             closeWebBrowser()
             isCalendarOpen = false
+            isLocationOpen = false
             filePreview = nil
             loadBrowserPath(browserPath)
         } else {
@@ -265,6 +272,7 @@ final class CPSLChatModel: ObservableObject {
         isFileBrowserOpen = false
         filePreview = nil
         isCalendarOpen = false
+        isLocationOpen = false
         isDrawerOpen = false
         isWebBrowserOpen = true
         webBrowser.showLastBrowserFromUI()
@@ -274,6 +282,7 @@ final class CPSLChatModel: ObservableObject {
         isFileBrowserOpen = false
         filePreview = nil
         isCalendarOpen = false
+        isLocationOpen = false
         isDrawerOpen = false
         isWebBrowserOpen = true
         if let browserID {
@@ -295,6 +304,7 @@ final class CPSLChatModel: ObservableObject {
         isDrawerOpen = false
         closeWebBrowser()
         isCalendarOpen = false
+        isLocationOpen = false
         isFileBrowserOpen = true
         filePreview = nil
 
@@ -324,6 +334,7 @@ final class CPSLChatModel: ObservableObject {
         isDrawerOpen = false
         isFileBrowserOpen = false
         filePreview = nil
+        isLocationOpen = false
         closeWebBrowser()
         isCalendarOpen = true
         Task {
@@ -338,13 +349,29 @@ final class CPSLChatModel: ObservableObject {
         isCalendarOpen = false
     }
 
-    func toggleLocationAccess() {
+    func toggleLocation() {
+        if isLocationOpen {
+            closeLocation()
+            return
+        }
+
+        isDrawerOpen = false
+        isFileBrowserOpen = false
+        filePreview = nil
+        isCalendarOpen = false
+        closeWebBrowser()
+        isLocationOpen = true
         Task {
-            let access = await location.requestAccess()
+            let access = await location.loadCurrentLocation()
             if access == .denied {
-                comingSoonMessage = "Location access is denied. Enable Location access for Herm in iOS Settings or macOS System Settings."
+                comingSoonMessage = location.locationError
+                    ?? "Location access is denied. Enable Location access for Herm in iOS Settings or macOS System Settings."
             }
         }
+    }
+
+    func closeLocation() {
+        isLocationOpen = false
     }
 
     func closeWebBrowser() {
@@ -550,6 +577,7 @@ final class CPSLChatModel: ObservableObject {
             isDrawerOpen = false
             isFileBrowserOpen = false
             isCalendarOpen = false
+            isLocationOpen = false
             filePreview = nil
         } catch {
             appendErrorMessage(title: "Conversation", body: error.localizedDescription)
@@ -574,6 +602,7 @@ final class CPSLChatModel: ObservableObject {
                 currentSystemPrompt = nil
                 messages = []
                 isCalendarOpen = false
+                isLocationOpen = false
             }
         } catch {
             appendErrorMessage(title: "Conversation", body: error.localizedDescription)
