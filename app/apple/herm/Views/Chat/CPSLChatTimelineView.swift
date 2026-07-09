@@ -10,6 +10,7 @@ struct CPSLChatTimelineView: View {
     @ObservedObject var model: CPSLChatModel
     let topInset: CGFloat
     let bottomInset: CGFloat
+    let isScrollGeometryPaused: Bool
     @State private var isPinnedToBottom = true
     @State private var scrollPosition = ScrollPosition(edge: .bottom)
 
@@ -69,6 +70,10 @@ struct CPSLChatTimelineView: View {
                     CPSLTimelineScrollState(geometry: geometry)
                 },
                 action: { oldState, newState in
+                    guard !isScrollGeometryPaused else {
+                        return
+                    }
+
                     handleScrollGeometryChange(oldState: oldState, newState: newState)
                 }
             )
@@ -85,7 +90,9 @@ struct CPSLChatTimelineView: View {
                 scrollPosition.scrollTo(edge: .bottom)
             }
         } else {
-            scrollPosition.scrollTo(edge: .bottom)
+            updateScrollPositionImmediately {
+                scrollPosition.scrollTo(edge: .bottom)
+            }
         }
     }
 
@@ -113,15 +120,13 @@ struct CPSLChatTimelineView: View {
 
         let didResize = abs(oldState.viewportHeight - newState.viewportHeight) > 0.5
         let shouldPreserveBottom = oldState.isPinnedToBottom || isPinnedToBottom
-        let isViewportExpanding = newState.viewportHeight > oldState.viewportHeight
 
         if didResize {
             preserveVisibleScrollPosition(
                 CPSLTimelineScrollPreservation(
                     oldState: oldState,
                     newState: newState,
-                    pinnedToBottom: shouldPreserveBottom,
-                    animated: isViewportExpanding
+                    pinnedToBottom: shouldPreserveBottom
                 )
             )
         } else {
@@ -138,13 +143,15 @@ struct CPSLChatTimelineView: View {
         )
 
         isPinnedToBottom = preservation.pinnedToBottom || preservation.newState.isPinnedToBottom
-        if preservation.animated {
-            withAnimation(.easeOut(duration: 0.2)) {
-                scrollPosition.scrollTo(y: targetY)
-            }
-        } else {
+        updateScrollPositionImmediately {
             scrollPosition.scrollTo(y: targetY)
         }
+    }
+
+    private func updateScrollPositionImmediately(_ update: () -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction, update)
     }
 }
 
@@ -152,7 +159,6 @@ private struct CPSLTimelineScrollPreservation {
     let oldState: CPSLTimelineScrollState
     let newState: CPSLTimelineScrollState
     let pinnedToBottom: Bool
-    let animated: Bool
 }
 
 private struct CPSLTimelineScrollState: Equatable {

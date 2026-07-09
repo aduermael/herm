@@ -371,6 +371,8 @@ struct CPSLChatScreen: View {
     @StateObject private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
     @State private var drawerProgress: CGFloat = 0
+    @State private var drawerMotionGeneration = 0
+    @State private var isDrawerMotionActive = false
     @State private var activeDrawerDragStartProgress: CGFloat?
 
     private var contentBottomInset: CGFloat {
@@ -388,36 +390,36 @@ struct CPSLChatScreen: View {
                     bottomInset: CPSLTheme.medium
                 )
                 .ignoresSafeArea(.container, edges: .vertical)
-                .allowsHitTesting(model.isDrawerOpen)
+                .allowsHitTesting(isDrawerVisible)
                 .offset(x: drawerOffset(width: proxy.size.width))
 
                 CPSLMainContentStage(
                     model: model,
                     promptDismissRequest: $promptDismissRequest,
                     contentTopInset: contentTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
-                    contentBottomInset: contentBottomInset
+                    contentBottomInset: contentBottomInset,
+                    isTimelineScrollGeometryPaused: isTimelineScrollGeometryPaused
                 )
                 .offset(x: mainContentOffset(width: proxy.size.width))
-                .allowsHitTesting(!model.isDrawerOpen)
+                .allowsHitTesting(!isDrawerVisible)
                 .zIndex(1)
 
                 CPSLDrawerToggleButton(isOpen: model.isDrawerOpen) {
-                    model.toggleDrawer()
+                    toggleDrawer()
                 }
                 .padding(.leading, CPSLTheme.medium)
                 .padding(.top, CPSLTheme.topChromeSafeAreaGap)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
-                .zIndex(2)
+                .zIndex(3)
 
             }
             .simultaneousGesture(drawerDragGesture(width: proxy.size.width))
             .onAppear {
                 drawerProgress = drawerTargetProgress
+                isDrawerMotionActive = false
             }
             .onChange(of: model.isDrawerOpen) { _, _ in
-                withAnimation(CPSLDrawerMotion.animation) {
-                    drawerProgress = drawerTargetProgress
-                }
+                animateDrawerProgress(to: drawerTargetProgress)
             }
         }
         .cpslResetTransientsOnBackgroundTap {
@@ -462,6 +464,17 @@ struct CPSLChatScreen: View {
         model.isDrawerOpen ? 1 : 0
     }
 
+    private var isDrawerVisible: Bool {
+        model.isDrawerOpen
+            || drawerProgress > 0
+            || isDrawerMotionActive
+            || activeDrawerDragStartProgress != nil
+    }
+
+    private var isTimelineScrollGeometryPaused: Bool {
+        isDrawerVisible
+    }
+
     private func drawerTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
         topSafeAreaInset + CPSLTheme.topChromeSafeAreaGap
     }
@@ -478,6 +491,11 @@ struct CPSLChatScreen: View {
             .onEnded { value in
                 finishDrawerDrag(value, width: width)
             }
+    }
+
+    private func toggleDrawer() {
+        isDrawerMotionActive = true
+        model.toggleDrawer()
     }
 
     private func updateDrawerDrag(_ value: DragGesture.Value, width: CGFloat) {
@@ -507,10 +525,13 @@ struct CPSLChatScreen: View {
             startProgress + value.predictedEndTranslation.width / width
         )
         let shouldOpen = predictedProgress >= 0.5
+        let wasOpen = model.isDrawerOpen
+        isDrawerMotionActive = true
         activeDrawerDragStartProgress = nil
         model.setDrawerOpen(shouldOpen)
-        withAnimation(CPSLDrawerMotion.animation) {
-            drawerProgress = shouldOpen ? 1 : 0
+
+        if wasOpen == shouldOpen {
+            animateDrawerProgress(to: shouldOpen ? 1 : 0)
         }
     }
 
@@ -525,6 +546,24 @@ struct CPSLChatScreen: View {
     private func clampedDrawerProgress(_ progress: CGFloat) -> CGFloat {
         min(max(progress, 0), 1)
     }
+
+    private func animateDrawerProgress(to targetProgress: CGFloat) {
+        drawerMotionGeneration += 1
+        let generation = drawerMotionGeneration
+        isDrawerMotionActive = true
+
+        withAnimation(CPSLDrawerMotion.animation) {
+            drawerProgress = targetProgress
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(CPSLDrawerMotion.duration * 1_000_000_000))
+            guard drawerMotionGeneration == generation else {
+                return
+            }
+            isDrawerMotionActive = false
+        }
+    }
 }
 
 private struct CPSLMainContentStage: View {
@@ -532,13 +571,15 @@ private struct CPSLMainContentStage: View {
     @Binding var promptDismissRequest: Int
     let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
+    let isTimelineScrollGeometryPaused: Bool
 
     var body: some View {
         ZStack {
             CPSLPrimaryContentView(
                 model: model,
                 contentTopInset: contentTopInset,
-                contentBottomInset: contentBottomInset
+                contentBottomInset: contentBottomInset,
+                isTimelineScrollGeometryPaused: isTimelineScrollGeometryPaused
             )
 
             // TOP & BOTTOM GRADIENTS FOR NICE CONTENT FADE OUT
@@ -618,12 +659,14 @@ private struct CPSLPrimaryContentView: View {
     @ObservedObject var model: CPSLChatModel
     let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
+    let isTimelineScrollGeometryPaused: Bool
 
     var body: some View {
         CPSLChatTimelineView(
             model: model,
             topInset: contentTopInset,
-            bottomInset: contentBottomInset
+            bottomInset: contentBottomInset,
+            isScrollGeometryPaused: isTimelineScrollGeometryPaused
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .top)
