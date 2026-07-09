@@ -4,10 +4,23 @@ import Foundation
 import EventKit
 #endif
 
+struct CPSLCalendarEvent: Identifiable, Equatable, Sendable {
+    let id: String
+    let title: String
+    let calendarTitle: String
+    let startDate: Date
+    let endDate: Date
+    let isAllDay: Bool
+    let location: String?
+}
+
 @MainActor
 final class CPSLCalendarService: ObservableObject {
     @Published private(set) var access: CPSLFeatureAccessState = .undefined
     @Published private(set) var isRequestingAccess = false
+    @Published private(set) var isLoadingEvents = false
+    @Published private(set) var upcomingEvents: [CPSLCalendarEvent] = []
+    @Published private(set) var eventError: String?
 
 #if canImport(EventKit)
     private let eventStore = EKEventStore()
@@ -54,7 +67,60 @@ final class CPSLCalendarService: ObservableObject {
         return access
     }
 
+    func loadUpcomingEvents() async -> CPSLFeatureAccessState {
+        let access = await requestAccess()
+        guard access == .granted else {
+            upcomingEvents = []
+            eventError = "Calendar access is denied. Enable Calendar access for Herm in iOS Settings or macOS System Settings."
+            return access
+        }
+
 #if canImport(EventKit)
+        isLoadingEvents = true
+        eventError = nil
+        defer {
+            isLoadingEvents = false
+        }
+
+        let now = Date()
+        let endDate = Foundation.Calendar.current.date(byAdding: .day, value: 14, to: now)
+            ?? now.addingTimeInterval(14 * 24 * 60 * 60)
+        let predicate = eventStore.predicateForEvents(
+            withStart: now,
+            end: endDate,
+            calendars: nil
+        )
+        upcomingEvents = eventStore.events(matching: predicate)
+            .sorted { lhs, rhs in
+                lhs.startDate < rhs.startDate
+            }
+            .prefix(12)
+            .map(Self.event(from:))
+#else
+        upcomingEvents = []
+        eventError = "Calendar is unavailable on this platform."
+#endif
+        return access
+    }
+
+#if canImport(EventKit)
+    private static func event(from event: EKEvent) -> CPSLCalendarEvent {
+        let fallbackID = [
+            event.title ?? "",
+            String(event.startDate.timeIntervalSince1970),
+            String(event.endDate.timeIntervalSince1970)
+        ].joined(separator: "|")
+        return CPSLCalendarEvent(
+            id: event.eventIdentifier ?? fallbackID,
+            title: event.title?.cpslNilIfEmpty ?? "Untitled event",
+            calendarTitle: event.calendar?.title ?? "Calendar",
+            startDate: event.startDate,
+            endDate: event.endDate,
+            isAllDay: event.isAllDay,
+            location: event.location?.cpslNilIfEmpty
+        )
+    }
+
     private static func accessState(for status: EKAuthorizationStatus) -> CPSLFeatureAccessState {
         if #available(iOS 17.0, macOS 14.0, *) {
             switch status {
@@ -81,4 +147,10 @@ final class CPSLCalendarService: ObservableObject {
         }
     }
 #endif
+}
+
+private extension String {
+    var cpslNilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
 }

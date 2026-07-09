@@ -10,6 +10,7 @@ final class CPSLLocationService: NSObject, ObservableObject {
     @Published private(set) var currentLocation: CLLocation?
     @Published private(set) var isRequestingAccess = false
     @Published private(set) var isUpdatingLocation = false
+    var activityOccurred: (@MainActor @Sendable () -> Void)?
 
 #if canImport(CoreLocation)
     private let manager = CLLocationManager()
@@ -67,12 +68,15 @@ final class CPSLLocationService: NSObject, ObservableObject {
 
             switch command {
             case "status":
+                activityOccurred?()
                 refreshStatus()
                 return Self.successJSON(statusPayload())
             case "request_access":
+                activityOccurred?()
                 _ = await requestAccess()
                 return Self.successJSON(statusPayload())
             case "current":
+                activityOccurred?()
                 return await currentLocationJSON()
             default:
                 return Self.errorJSON("location: unsupported command \(command)")

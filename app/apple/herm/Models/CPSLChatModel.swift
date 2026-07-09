@@ -1,6 +1,12 @@
 import Combine
 import Foundation
 
+private enum CPSLTransientActivity {
+    case file
+    case calendar
+    case location
+}
+
 @MainActor
 final class CPSLChatModel: ObservableObject {
     @Published var promptText = ""
@@ -20,6 +26,9 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var filePreview: CPSLFilePreview?
     @Published private(set) var isWebBrowserOpen = false
     @Published private(set) var isFileActivityActive = false
+    @Published private(set) var isCalendarOpen = false
+    @Published private(set) var isCalendarActivityActive = false
+    @Published private(set) var isLocationActivityActive = false
 
     let service: CPSLDebugService
     let webBrowser: CPSLWebBrowserService
@@ -27,6 +36,7 @@ final class CPSLChatModel: ObservableObject {
     let location = CPSLLocationService()
     let dictation = CPSLDictationService()
     private let fileActivityNotifier = CPSLFileActivityNotifier()
+    private let calendarActivityNotifier = CPSLCalendarActivityNotifier()
     private var store: CPSLConversationStore?
     private var storeLoadTask: Task<CPSLConversationStore, Error>?
     var currentNodeID: String?
@@ -42,7 +52,9 @@ final class CPSLChatModel: ObservableObject {
     var activeToolStatusPayload: CPSLToolStatusPayload?
     var activeToolStatusStore: CPSLConversationStore?
     private var fileActivityClearTask: Task<Void, Never>?
-    private let fileActivityDuration: TimeInterval = 1.6
+    private var calendarActivityClearTask: Task<Void, Never>?
+    private var locationActivityClearTask: Task<Void, Never>?
+    private let activityPulseDuration: TimeInterval = 1.6
 
     private let systemPrompt = """
     You are Herm, an AI agent running inside an iOS/macOS app.
@@ -90,10 +102,17 @@ final class CPSLChatModel: ObservableObject {
         service = CPSLDebugService(
             webBrowser: webBrowser,
             location: location,
+            calendarActivityNotifier: calendarActivityNotifier,
             fileActivityNotifier: fileActivityNotifier
         )
         fileActivityNotifier.setHandler { [weak self] _ in
             self?.markFileActivity()
+        }
+        calendarActivityNotifier.setHandler { [weak self] _ in
+            self?.markCalendarActivity()
+        }
+        location.activityOccurred = { [weak self] in
+            self?.markLocationActivity()
         }
         webBrowser.visibilityChanged = { [weak self] isVisible in
             guard let self else {
@@ -104,6 +123,7 @@ final class CPSLChatModel: ObservableObject {
                 self.isFileBrowserOpen = false
                 self.filePreview = nil
                 self.isDrawerOpen = false
+                self.isCalendarOpen = false
             }
         }
         webBrowser.webVisitOccurred = { [weak self] visit in
@@ -130,6 +150,7 @@ final class CPSLChatModel: ObservableObject {
         currentNodeID = nil
         currentSystemPrompt = nil
         isFileBrowserOpen = false
+        isCalendarOpen = false
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
@@ -139,6 +160,7 @@ final class CPSLChatModel: ObservableObject {
         isDrawerOpen.toggle()
         if isDrawerOpen {
             isFileBrowserOpen = false
+            isCalendarOpen = false
             closeWebBrowser()
         }
     }
@@ -155,6 +177,7 @@ final class CPSLChatModel: ObservableObject {
         if selectedConversationID == id {
             isDrawerOpen = false
             isFileBrowserOpen = false
+            isCalendarOpen = false
             filePreview = nil
             return
         }
@@ -196,6 +219,7 @@ final class CPSLChatModel: ObservableObject {
         dictation.cancel()
         promptText = ""
         isFileBrowserOpen = false
+        isCalendarOpen = false
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
@@ -220,6 +244,7 @@ final class CPSLChatModel: ObservableObject {
         if isFileBrowserOpen {
             isDrawerOpen = false
             closeWebBrowser()
+            isCalendarOpen = false
             filePreview = nil
             loadBrowserPath(browserPath)
         } else {
@@ -239,6 +264,7 @@ final class CPSLChatModel: ObservableObject {
         }
         isFileBrowserOpen = false
         filePreview = nil
+        isCalendarOpen = false
         isDrawerOpen = false
         isWebBrowserOpen = true
         webBrowser.showLastBrowserFromUI()
@@ -247,6 +273,7 @@ final class CPSLChatModel: ObservableObject {
     func openWebBrowserFromTimeline(browserID: String?) {
         isFileBrowserOpen = false
         filePreview = nil
+        isCalendarOpen = false
         isDrawerOpen = false
         isWebBrowserOpen = true
         if let browserID {
@@ -267,6 +294,7 @@ final class CPSLChatModel: ObservableObject {
 
         isDrawerOpen = false
         closeWebBrowser()
+        isCalendarOpen = false
         isFileBrowserOpen = true
         filePreview = nil
 
@@ -287,13 +315,27 @@ final class CPSLChatModel: ObservableObject {
         }
     }
 
-    func toggleCalendarAccess() {
+    func toggleCalendar() {
+        if isCalendarOpen {
+            closeCalendar()
+            return
+        }
+
+        isDrawerOpen = false
+        isFileBrowserOpen = false
+        filePreview = nil
+        closeWebBrowser()
+        isCalendarOpen = true
         Task {
-            let access = await calendar.requestAccess()
+            let access = await calendar.loadUpcomingEvents()
             if access == .denied {
                 comingSoonMessage = "Calendar access is denied. Enable Calendar access for Herm in iOS Settings or macOS System Settings."
             }
         }
+    }
+
+    func closeCalendar() {
+        isCalendarOpen = false
     }
 
     func toggleLocationAccess() {
@@ -380,15 +422,63 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func markFileActivity() {
-        fileActivityClearTask?.cancel()
-        isFileActivityActive = true
-        let duration = fileActivityDuration
-        fileActivityClearTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-            guard !Task.isCancelled else {
-                return
-            }
-            self?.isFileActivityActive = false
+        markTransientActivity(.file)
+    }
+
+    func markCalendarActivity() {
+        markTransientActivity(.calendar)
+    }
+
+    func markLocationActivity() {
+        markTransientActivity(.location)
+    }
+
+    private func markTransientActivity(_ activity: CPSLTransientActivity) {
+        clearTask(for: activity)?.cancel()
+        setActivity(activity, isActive: true)
+        let duration = activityPulseDuration
+        setClearTask(
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+                guard !Task.isCancelled else {
+                    return
+                }
+                self?.setActivity(activity, isActive: false)
+            },
+            for: activity
+        )
+    }
+
+    private func setActivity(_ activity: CPSLTransientActivity, isActive: Bool) {
+        switch activity {
+        case .file:
+            isFileActivityActive = isActive
+        case .calendar:
+            isCalendarActivityActive = isActive
+        case .location:
+            isLocationActivityActive = isActive
+        }
+    }
+
+    private func clearTask(for activity: CPSLTransientActivity) -> Task<Void, Never>? {
+        switch activity {
+        case .file:
+            return fileActivityClearTask
+        case .calendar:
+            return calendarActivityClearTask
+        case .location:
+            return locationActivityClearTask
+        }
+    }
+
+    private func setClearTask(_ task: Task<Void, Never>?, for activity: CPSLTransientActivity) {
+        switch activity {
+        case .file:
+            fileActivityClearTask = task
+        case .calendar:
+            calendarActivityClearTask = task
+        case .location:
+            locationActivityClearTask = task
         }
     }
 
@@ -459,6 +549,7 @@ final class CPSLChatModel: ObservableObject {
             conversations = try await store.loadSummaries()
             isDrawerOpen = false
             isFileBrowserOpen = false
+            isCalendarOpen = false
             filePreview = nil
         } catch {
             appendErrorMessage(title: "Conversation", body: error.localizedDescription)
@@ -482,6 +573,7 @@ final class CPSLChatModel: ObservableObject {
                 currentNodeID = nil
                 currentSystemPrompt = nil
                 messages = []
+                isCalendarOpen = false
             }
         } catch {
             appendErrorMessage(title: "Conversation", body: error.localizedDescription)

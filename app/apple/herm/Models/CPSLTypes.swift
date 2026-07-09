@@ -225,6 +225,35 @@ struct CPSLDirectoryListing: Sendable {
     let error: String?
 }
 
+nonisolated struct CPSLCalendarActivity: Equatable, Sendable {
+    let operation: String
+}
+
+nonisolated final class CPSLCalendarActivityNotifier: @unchecked Sendable {
+    typealias Handler = @MainActor @Sendable (CPSLCalendarActivity) -> Void
+
+    private let lock = NSLock()
+    private var handler: Handler?
+
+    func setHandler(_ handler: Handler?) {
+        lock.lock()
+        self.handler = handler
+        lock.unlock()
+    }
+
+    func notify(_ activity: CPSLCalendarActivity) {
+        lock.lock()
+        let handler = handler
+        lock.unlock()
+        guard let handler else {
+            return
+        }
+        Task { @MainActor in
+            handler(activity)
+        }
+    }
+}
+
 struct CPSLFileEntryLookup: Sendable {
     let entry: CPSLFileEntry?
     let error: String?

@@ -32,6 +32,14 @@ private nonisolated final class CPSLFileActivityCallbackBox: @unchecked Sendable
     }
 }
 
+private nonisolated final class CPSLCalendarActivityCallbackBox: @unchecked Sendable {
+    let notifier: CPSLCalendarActivityNotifier
+
+    init(notifier: CPSLCalendarActivityNotifier) {
+        self.notifier = notifier
+    }
+}
+
 private nonisolated final class CPSLLocationCallbackBox: @unchecked Sendable {
     let service: CPSLLocationService
 
@@ -47,6 +55,15 @@ private typealias CPSLFileActivityHandleFunction = @convention(c) (
 ) -> Void
 
 private typealias CPSLFileActivityUserDataFreeFunction = @convention(c) (
+    UnsafeMutableRawPointer?
+) -> Void
+
+private typealias CPSLCalendarActivityHandleFunction = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafePointer<CChar>?
+) -> Void
+
+private typealias CPSLCalendarActivityUserDataFreeFunction = @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Void
 
@@ -69,6 +86,12 @@ private nonisolated struct CPSLFileActivityCallbacks {
     var user_data_free: CPSLFileActivityUserDataFreeFunction?
 }
 
+private nonisolated struct CPSLCalendarActivityCallbacks {
+    var user_data: UnsafeMutableRawPointer?
+    var handle_activity: CPSLCalendarActivityHandleFunction?
+    var user_data_free: CPSLCalendarActivityUserDataFreeFunction?
+}
+
 private nonisolated struct CPSLLocationCallbacks {
     var user_data: UnsafeMutableRawPointer?
     var handle_json: CPSLLocationHandleJSONFunction?
@@ -85,6 +108,14 @@ private typealias CPSLSessionNewWithCallbacksFunction = @convention(c) (
 private typealias CPSLSessionNewWithHostCallbacksFunction = @convention(c) (
     UnsafePointer<CChar>?,
     UnsafePointer<cpsl_webbrowser_callbacks_t>?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?
+) -> OpaquePointer?
+
+private typealias CPSLSessionNewWithHostCallbacksV2Function = @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafePointer<cpsl_webbrowser_callbacks_t>?,
+    UnsafeRawPointer?,
     UnsafeRawPointer?,
     UnsafeRawPointer?
 ) -> OpaquePointer?
@@ -221,6 +252,25 @@ private nonisolated let cpslFileActivityUserDataFree: CPSLFileActivityUserDataFr
     Unmanaged<CPSLFileActivityCallbackBox>.fromOpaque(userData).release()
 }
 
+private nonisolated let cpslCalendarActivityHandle: CPSLCalendarActivityHandleFunction = { userData, operation in
+    guard let userData, let operation else {
+        return
+    }
+    let callbackBox = Unmanaged<CPSLCalendarActivityCallbackBox>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+    callbackBox.notifier.notify(
+        CPSLCalendarActivity(operation: String(cString: operation))
+    )
+}
+
+private nonisolated let cpslCalendarActivityUserDataFree: CPSLCalendarActivityUserDataFreeFunction = { userData in
+    guard let userData else {
+        return
+    }
+    Unmanaged<CPSLCalendarActivityCallbackBox>.fromOpaque(userData).release()
+}
+
 private nonisolated func cpslSessionNewWithCallbacksFunction() -> CPSLSessionNewWithCallbacksFunction? {
 #if canImport(Darwin)
     let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
@@ -251,6 +301,21 @@ private nonisolated func cpslSessionNewWithHostCallbacksFunction() -> CPSLSessio
     return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksFunction.self)
 }
 
+private nonisolated func cpslSessionNewWithHostCallbacksV2Function() -> CPSLSessionNewWithHostCallbacksV2Function? {
+#if canImport(Darwin)
+    let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
+#else
+    let lookupHandle: UnsafeMutableRawPointer? = nil
+#endif
+    let symbol = "cpsl_session_new_with_host_callbacks_v2".withCString { name in
+        dlsym(lookupHandle, name)
+    }
+    guard let symbol else {
+        return nil
+    }
+    return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksV2Function.self)
+}
+
 private nonisolated func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutablePointer<CChar>? {
     let object: [String: Any] = ["ok": false, "error": message]
     guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
@@ -276,6 +341,7 @@ actor CPSLDebugService {
 
     private let webBrowser: CPSLWebBrowserService
     private let location: CPSLLocationService
+    private let calendarActivityNotifier: CPSLCalendarActivityNotifier
     private let fileActivityNotifier: CPSLFileActivityNotifier
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
@@ -286,10 +352,12 @@ actor CPSLDebugService {
     init(
         webBrowser: CPSLWebBrowserService,
         location: CPSLLocationService,
+        calendarActivityNotifier: CPSLCalendarActivityNotifier,
         fileActivityNotifier: CPSLFileActivityNotifier
     ) {
         self.webBrowser = webBrowser
         self.location = location
+        self.calendarActivityNotifier = calendarActivityNotifier
         self.fileActivityNotifier = fileActivityNotifier
     }
 
@@ -756,11 +824,13 @@ actor CPSLDebugService {
 
         let callbackBox = CPSLWebBrowserCallbackBox(service: webBrowser)
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
+        let calendarActivityCallbackBox = CPSLCalendarActivityCallbackBox(notifier: calendarActivityNotifier)
         let locationCallbackBox = CPSLLocationCallbackBox(service: location)
         let result = await Self.performBlockingSessionInit(
             configJSON: configJSON,
             callbackBox: callbackBox,
             fileActivityCallbackBox: fileActivityCallbackBox,
+            calendarActivityCallbackBox: calendarActivityCallbackBox,
             locationCallbackBox: locationCallbackBox
         )
         guard let newSession = result.pointer else {
@@ -894,6 +964,7 @@ actor CPSLDebugService {
         configJSON: String,
         callbackBox: CPSLWebBrowserCallbackBox,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
+        calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
         locationCallbackBox: CPSLLocationCallbackBox
     ) async -> CPSLSessionInitResult {
         await withCheckedContinuation { continuation in
@@ -902,6 +973,7 @@ actor CPSLDebugService {
                     configJSON: configJSON,
                     callbackBox: callbackBox,
                     fileActivityCallbackBox: fileActivityCallbackBox,
+                    calendarActivityCallbackBox: calendarActivityCallbackBox,
                     locationCallbackBox: locationCallbackBox
                 ))
             }
@@ -912,6 +984,7 @@ actor CPSLDebugService {
         configJSON: String,
         callbackBox: CPSLWebBrowserCallbackBox,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
+        calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
         locationCallbackBox: CPSLLocationCallbackBox
     ) -> CPSLSessionInitResult {
         configureCPSLLibraryDirectory()
@@ -928,6 +1001,12 @@ actor CPSLDebugService {
             handle_activity: cpslFileActivityHandle,
             user_data_free: cpslFileActivityUserDataFree
         )
+        let calendarActivityUserData = Unmanaged.passRetained(calendarActivityCallbackBox).toOpaque()
+        var calendarActivityCallbacks = CPSLCalendarActivityCallbacks(
+            user_data: calendarActivityUserData,
+            handle_activity: cpslCalendarActivityHandle,
+            user_data_free: cpslCalendarActivityUserDataFree
+        )
         let locationUserData = Unmanaged.passRetained(locationCallbackBox).toOpaque()
         var locationCallbacks = CPSLLocationCallbacks(
             user_data: locationUserData,
@@ -937,7 +1016,25 @@ actor CPSLDebugService {
         )
         let pointer: OpaquePointer?
         let fallback: String
-        if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
+        if let sessionNewWithHostCallbacksV2 = cpslSessionNewWithHostCallbacksV2Function() {
+            pointer = configJSON.withCString { configPointer in
+                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                    withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+                        withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                            sessionNewWithHostCallbacksV2(
+                                configPointer,
+                                &callbacks,
+                                UnsafeRawPointer(fileActivityCallbacksPointer),
+                                UnsafeRawPointer(calendarActivityCallbacksPointer),
+                                UnsafeRawPointer(locationCallbacksPointer)
+                            )
+                        }
+                    }
+                }
+            }
+            fallback = "cpsl_session_new_with_host_callbacks_v2 returned NULL"
+        } else if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
+            cpslCalendarActivityUserDataFree(calendarActivityUserData)
             pointer = configJSON.withCString { configPointer in
                 withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
                     withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
@@ -952,6 +1049,7 @@ actor CPSLDebugService {
             }
             fallback = "cpsl_session_new_with_host_callbacks returned NULL"
         } else if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
+            cpslCalendarActivityUserDataFree(calendarActivityUserData)
             cpslLocationUserDataFree(locationUserData)
             pointer = configJSON.withCString { configPointer in
                 withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
@@ -965,6 +1063,7 @@ actor CPSLDebugService {
             fallback = "cpsl_session_new_with_callbacks returned NULL"
         } else {
             cpslFileActivityUserDataFree(fileActivityUserData)
+            cpslCalendarActivityUserDataFree(calendarActivityUserData)
             cpslLocationUserDataFree(locationUserData)
             pointer = configJSON.withCString { configPointer in
                 cpsl_session_new_with_webbrowser_callbacks(configPointer, &callbacks)

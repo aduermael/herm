@@ -28,7 +28,7 @@ struct CPSLToolStripView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: CPSLTheme.medium) {
-                CPSLToolStripButton(
+                CPSLToolStripLabeledButton(
                     title: "Files",
                     systemName: "folder.fill",
                     color: CPSLTheme.IconPalette.folder,
@@ -39,8 +39,8 @@ struct CPSLToolStripView: View {
                     model.toggleFileBrowser()
                 }
 
-                CPSLToolStripButton(
-                    title: "Browser",
+                CPSLToolStripIconButton(
+                    accessibilityLabel: "Browser",
                     systemName: "globe",
                     color: CPSLTheme.success,
                     tint: controlTint(isActive: model.isWebBrowserOpen),
@@ -50,21 +50,21 @@ struct CPSLToolStripView: View {
                     model.toggleWebBrowser()
                 }
 
-                CPSLToolStripButton(
-                    title: "Calendar",
+                CPSLToolStripIconButton(
+                    accessibilityLabel: "Calendar",
                     systemName: "calendar",
                     color: CPSLTheme.IconPalette.calendar,
-                    tint: controlTint(isActive: calendar.access.isGranted),
-                    strokeOpacity: controlStrokeOpacity(isActive: calendar.access.isGranted),
-                    isGlowing: calendar.isRequestingAccess
+                    tint: controlTint(isActive: model.isCalendarOpen),
+                    strokeOpacity: controlStrokeOpacity(isActive: model.isCalendarOpen),
+                    isGlowing: model.isCalendarActivityActive
                 ) {
-                    model.toggleCalendarAccess()
+                    model.toggleCalendar()
                 }
 
                 CPSLLocationToolStripButton(
                     access: location.access,
                     location: location.currentLocation,
-                    isUpdating: location.isUpdatingLocation || location.isRequestingAccess
+                    isGlowing: model.isLocationActivityActive
                 ) {
                     model.toggleLocationAccess()
                 }
@@ -81,7 +81,7 @@ struct CPSLToolStripView: View {
 private struct CPSLLocationToolStripButton: View {
     let access: CPSLFeatureAccessState
     let location: CLLocation?
-    let isUpdating: Bool
+    let isGlowing: Bool
     let action: () -> Void
 
     private var hasMapBackground: Bool {
@@ -91,22 +91,23 @@ private struct CPSLLocationToolStripButton: View {
     var body: some View {
         Button(action: action) {
             if hasMapBackground, let location {
-                CPSLLocationToolStripMapLabel(location: location, isGlowing: isUpdating)
+                CPSLLocationToolStripMapLabel(location: location, isGlowing: isGlowing)
             } else {
-                CPSLToolStripButtonLabel(
-                    title: "Location",
+                CPSLToolStripIconLabel(
                     systemName: "location.fill",
                     color: CPSLTheme.success,
                     tint: access.isGranted
                         ? CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.52)
                         : CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.40),
                     strokeOpacity: access.isGranted ? 0.10 : 0.045,
-                    isGlowing: isUpdating
+                    isGlowing: isGlowing
                 )
             }
         }
         .buttonStyle(.plain)
         .foregroundStyle(CPSLTheme.text)
+        .accessibilityLabel("Location")
+        .help("Location")
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
     }
 }
@@ -116,22 +117,22 @@ private struct CPSLLocationToolStripMapLabel: View {
     let isGlowing: Bool
 
     var body: some View {
-        HStack(spacing: CPSLTheme.small) {
-            Image(systemName: "location.fill")
-                .symbolRenderingMode(.hierarchical)
-                .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
-            Text("Location")
-                .font(CPSLTheme.controlFont)
-        }
-        .padding(.horizontal, CPSLTheme.medium)
-        .frame(height: CPSLTheme.controlSize)
+        CPSLLocationMapThumbnail(location: location)
+        .frame(width: CPSLTheme.controlSize * 1.45, height: CPSLTheme.controlSize)
         .background {
-            ZStack {
-                CPSLLocationMapThumbnail(location: location)
-                CPSLTheme.background.opacity(0.34)
-            }
+            CPSLTheme.background.opacity(0.18)
         }
         .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+        .overlay {
+            Circle()
+                .fill(.blue)
+                .frame(width: 9, height: 9)
+                .overlay(
+                    Circle()
+                        .stroke(.white, lineWidth: 2)
+                )
+                .shadow(color: .black.opacity(0.24), radius: 2, y: 1)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
                 .stroke(CPSLTheme.text.opacity(isGlowing ? 0.18 : 0.10), lineWidth: 1)
@@ -159,7 +160,7 @@ private struct CPSLLocationMapThumbnail: View {
     }
 }
 
-private struct CPSLToolStripButton: View {
+private struct CPSLToolStripLabeledButton: View {
     let title: LocalizedStringKey
     let systemName: String
     let color: Color
@@ -181,6 +182,33 @@ private struct CPSLToolStripButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(CPSLTheme.text)
+        .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+    }
+}
+
+private struct CPSLToolStripIconButton: View {
+    let accessibilityLabel: String
+    let systemName: String
+    let color: Color
+    let tint: Color
+    let strokeOpacity: Double
+    var isGlowing = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            CPSLToolStripIconLabel(
+                systemName: systemName,
+                color: color,
+                tint: tint,
+                strokeOpacity: strokeOpacity,
+                isGlowing: isGlowing
+            )
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.text)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
     }
 }
@@ -207,7 +235,7 @@ private struct CPSLLocationMapRepresentable: UIViewRepresentable {
         mapView.isRotateEnabled = false
         mapView.showsCompass = false
         mapView.showsScale = false
-        mapView.showsUserLocation = true
+        mapView.showsUserLocation = false
         update(mapView)
     }
 
@@ -240,7 +268,7 @@ private struct CPSLLocationMapRepresentable: NSViewRepresentable {
         mapView.isRotateEnabled = false
         mapView.showsCompass = false
         mapView.showsScale = false
-        mapView.showsUserLocation = true
+        mapView.showsUserLocation = false
         update(mapView)
     }
 
@@ -284,6 +312,33 @@ private struct CPSLToolStripButtonLabel: View {
             in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
         )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+    }
+}
+
+private struct CPSLToolStripIconLabel: View {
+    let systemName: String
+    let color: Color
+    let tint: Color
+    let strokeOpacity: Double
+    let isGlowing: Bool
+
+    var body: some View {
+        Image(systemName: systemName)
+            .symbolRenderingMode(.hierarchical)
+            .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconMedium, weight: .semibold))
+            .foregroundStyle(color)
+            .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+            .cpslGlassBackground(
+                in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                tint: tint,
+                strokeOpacity: isGlowing ? 0.18 : strokeOpacity
+            )
+            .cpslActivityGlow(
+                when: isGlowing,
+                color: color,
+                in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
     }
 }
 
