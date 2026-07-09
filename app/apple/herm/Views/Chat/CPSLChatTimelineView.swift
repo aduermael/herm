@@ -1152,7 +1152,7 @@ private enum CPSLDiscussionPathLinks {
     }
 
     private static func linkified(_ run: CPSLSelectableTextRun) -> [CPSLSelectableTextRun] {
-        guard !run.isCode, !run.isCodeBlock else {
+        guard !run.isCodeBlock else {
             return [run]
         }
 
@@ -1299,10 +1299,10 @@ private enum CPSLDiscussionPathLinks {
 
     private static func displayPath(for path: String) -> String {
         if path == CPSLVirtualPath.home {
-            return "~"
+            return "Home"
         }
         if path.hasPrefix("\(CPSLVirtualPath.home)/") {
-            return "~/" + String(path.dropFirst(CPSLVirtualPath.home.count + 1))
+            return String(path.dropFirst(CPSLVirtualPath.home.count + 1))
         }
         return path
     }
