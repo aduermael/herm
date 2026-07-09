@@ -19,9 +19,13 @@ struct CPSLChatTimelineView: View {
         model.selectedConversationID ?? "draft"
     }
 
+    private var hasTimelineContent: Bool {
+        !model.messages.isEmpty || model.isRunning
+    }
+
     var body: some View {
         ZStack {
-            if model.messages.isEmpty {
+            if !hasTimelineContent {
                 CPSLEmptyChatView()
             }
 
@@ -39,6 +43,11 @@ struct CPSLChatTimelineView: View {
                         )
                             .id(message.id)
                     }
+
+                    if model.isRunning {
+                        CPSLAgentWorkingIndicatorView()
+                            .id("agent-working-indicator")
+                    }
                 }
                 .padding(.horizontal, CPSLTheme.contentHorizontalInset)
                 .padding(.top, topInset)
@@ -49,12 +58,17 @@ struct CPSLChatTimelineView: View {
             .scrollDismissesKeyboard(.interactively)
             .contentMargins(.top, topInset, for: .scrollIndicators)
             .contentMargins(.bottom, bottomInset, for: .scrollIndicators)
-            .opacity(model.messages.isEmpty ? 0 : 1)
+            .opacity(hasTimelineContent ? 1 : 0)
             .onAppear {
                 scrollToBottom(animated: false)
             }
             .onChange(of: model.messages.count) { _, _ in
                 scrollToBottom(animated: true)
+            }
+            .onChange(of: model.isRunning) { _, isRunning in
+                if isRunning {
+                    scrollToBottom(animated: true)
+                }
             }
             .onChange(of: model.messages.last?.body) { _, _ in
                 followStreamingBottomIfPinned()
@@ -82,7 +96,7 @@ struct CPSLChatTimelineView: View {
     }
 
     private func scrollToBottom(animated: Bool) {
-        guard !model.messages.isEmpty else {
+        guard hasTimelineContent else {
             return
         }
 
@@ -170,6 +184,62 @@ struct CPSLChatTimelineView: View {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction, update)
+    }
+}
+
+private struct CPSLAgentWorkingIndicatorView: View {
+    var body: some View {
+        CPSLAgentWorkingDotsView()
+            .padding(.horizontal, CPSLTheme.medium)
+            .padding(.vertical, CPSLTheme.small)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Herm is working")
+    }
+}
+
+private struct CPSLAgentWorkingDotsView: View {
+    private let dotSize: CGFloat = 5
+    private let dotSpacing: CGFloat = 4
+    private let cycleDuration: TimeInterval = 0.84
+    private let dotStagger = 0.16
+    private let bounceWindow = 0.44
+    private let bounceHeight: CGFloat = 4
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            HStack(spacing: dotSpacing) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .fill(CPSLTheme.secondaryText.opacity(dotOpacity(index: index, at: timeline.date)))
+                        .frame(width: dotSize, height: dotSize)
+                        .offset(y: dotBounceOffset(index: index, at: timeline.date))
+                }
+            }
+            .frame(width: dotSize * 3 + dotSpacing * 2, height: CPSLTheme.large, alignment: .center)
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func dotOpacity(index: Int, at date: Date) -> Double {
+        0.34 + 0.46 * dotLift(index: index, at: date)
+    }
+
+    private func dotBounceOffset(index: Int, at date: Date) -> CGFloat {
+        -CGFloat(dotLift(index: index, at: date)) * bounceHeight
+    }
+
+    private func dotLift(index: Int, at date: Date) -> Double {
+        let phase = dotPhase(index: index, at: date)
+        guard phase < bounceWindow else {
+            return 0
+        }
+        return sin((phase / bounceWindow) * Double.pi)
+    }
+
+    private func dotPhase(index: Int, at date: Date) -> Double {
+        let rawPhase = date.timeIntervalSinceReferenceDate / cycleDuration - Double(index) * dotStagger
+        return rawPhase - floor(rawPhase)
     }
 }
 

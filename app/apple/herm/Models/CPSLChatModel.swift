@@ -549,7 +549,7 @@ final class CPSLChatModel: ObservableObject {
             return try await storeLoadTask.value
         }
 
-        let task = Task<CPSLConversationStore, Error> {
+        let task = Task.detached(priority: .utility) {
             try CPSLConversationStore()
         }
         storeLoadTask = task
@@ -663,12 +663,15 @@ final class CPSLChatModel: ObservableObject {
 #endif
 
     private func runAgent(userText: String) async {
+        defer {
+            isRunning = false
+        }
+
         let store: CPSLConversationStore
         do {
             store = try await loadStore()
         } catch {
             appendErrorMessage(title: "Storage", body: error.localizedDescription)
-            isRunning = false
             return
         }
 
@@ -769,7 +772,6 @@ final class CPSLChatModel: ObservableObject {
 
         await finishTypewriter()
         streamingAssistantMessageID = nil
-        isRunning = false
     }
 
 
@@ -778,10 +780,12 @@ final class CPSLChatModel: ObservableObject {
         messages.append(message)
         isRunning = true
 
-        Task {
+        Task { @MainActor in
+            defer {
+                isRunning = false
+            }
             let result = await service.evaluate(command)
             applyCommandResult(result, command: command, messageID: message.id)
-            isRunning = false
         }
     }
 

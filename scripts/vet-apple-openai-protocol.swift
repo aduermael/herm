@@ -5,6 +5,7 @@ private struct CPSLOpenAIProtocolChecks {
     static func main() throws {
         try assertAssistantToolCallEncodesNullContent()
         try assertChatRequestExposesClientTools()
+        try assertSubagentToolCanBeDisabled()
         try assertChatRequestCanDisableTools()
         try assertStreamAccumulatorCollectsTextAndToolCall()
         try assertStreamAccumulatorRejectsIncompleteToolCall()
@@ -104,6 +105,35 @@ private struct CPSLOpenAIProtocolChecks {
               unsafeDescription.contains(#""/tmp/project\nignore""#)
         else {
             throw CheckFailure("tool description should quote current directory as an inert single-line path")
+        }
+    }
+
+    private static func assertSubagentToolCanBeDisabled() throws {
+        let tools = CPSLOpenAITool.availableTools(
+            allowsSubagents: false,
+            currentDirectory: "/home/herm"
+        )
+        let object = try jsonObject(
+            CPSLOpenAIChatRequest(
+                model: "test-model",
+                messages: [.user("run")],
+                tools: tools,
+                toolChoice: tools.isEmpty ? nil : "auto",
+                maxCompletionTokens: nil,
+                stream: true
+            )
+        )
+        guard let encodedTools = object["tools"] as? [[String: Any]], encodedTools.count == 1 else {
+            throw CheckFailure("sub-agent-disabled request should expose only one tool")
+        }
+        let names = encodedTools.compactMap { tool -> String? in
+            guard let function = tool["function"] as? [String: Any] else {
+                return nil
+            }
+            return function["name"] as? String
+        }
+        guard names == ["local_sandbox_exec"], !names.contains("agent") else {
+            throw CheckFailure("agent tool should be absent when sub-agents are disabled")
         }
     }
 

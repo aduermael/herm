@@ -66,6 +66,7 @@ required_files=(
   scripts/generate-apple-env-constants.swift
   scripts/dev-apple-macos.sh
   scripts/vet-apple-agent-config.swift
+  scripts/vet-apple-agent-concurrency-ui.swift
   scripts/vet-apple-agent-tool-formatting.swift
   scripts/vet-apple-conversation-store.swift
   scripts/vet-apple-openai-protocol.swift
@@ -95,6 +96,8 @@ require_match 'rebuild the app' docs/apple-agent-config.md
 require_match 'OPENAI_BASE_URL' docs/apple-agent-config.md
 require_match 'OPENAI_API_KEY' docs/apple-agent-config.md
 require_match 'OPENAI_MODEL' docs/apple-agent-config.md
+require_match 'HERM_MAX_AGENT_DEPTH' docs/apple-agent-config.md
+require_match 'main agent may summon sub-agents' docs/apple-agent-config.md
 require_match 'invalidValue\("OPENAI_BASE_URL"\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'make\(' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'parseEnv' scripts/generate-apple-env-constants.swift
@@ -248,13 +251,13 @@ require_match 'Provider returned an empty response' app/apple/herm/Models/CPSLCh
 require_match 'Reached maximum tool rounds' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'synthesizeAfterToolLimit' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'role: \.toolStatus' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-require_match 'lastToolStatusState = toolResult\.isError \? \.failed : \.succeeded' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-require_match 'toolStatus\.state = lastToolStatusState' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'hasUnresolvedToolFailure' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'toolStatus\.state = hasUnresolvedToolFailure \? \.running : \.succeeded' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 reject_match 'toolStatusHasFailure' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'role: \.hidden' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'runSubAgent' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-require_match 'copyConversationJSONToPasteboard' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Copy conversation JSON' app/apple/herm/Views/Chat/CPSLChatScreen.swift
+require_match 'makeConversationJSONTraceShareFile' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Share debug JSON' app/apple/herm/Views/Chat/CPSLChatScreen.swift
 require_match 'struct CPSLProviderLoopContext' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
 require_match 'struct CPSLPendingConversationContext' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
 require_match 'let errorNode = try await context\.store\.appendNode' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
@@ -263,6 +266,22 @@ require_match 'appendAgentError' app/apple/herm/Models/CPSLChatModel+AgentRuntim
 require_match 'persistStreamingAssistantIfNeeded' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'onParentIDChange\(context\.parentID\)' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'model: nil' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Task\.detached\(priority: \.utility\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Task\.detached\(priority: \.userInitiated\)' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'CPSLAgentRequestPreparationBuilder' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'DispatchQueue\.global\(qos: \.userInitiated\)\.async' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'guard !Thread\.isMainThread else' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'CPSLAgentWorkingIndicatorView' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'CPSLAgentWorkingIndicatorView\(\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'Text\(payload\.summary\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'TimelineView\(\.animation\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'cycleDuration: TimeInterval = 0\.84' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'dotBounceOffset' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+reject_match 'return trimmed\.isEmpty \? "Thinking" : trimmed' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+reject_match 'agentActivitySummary|setAgentActivitySummary|clearAgentActivitySummary' \
+  app/apple/herm/Models/CPSLChatModel.swift \
+  app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift \
+  app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 
 require_match 'static let home = "/home/herm"' app/apple/herm/Models/CPSLTypes.swift
 require_match 'static let temporary = "/tmp"' app/apple/herm/Models/CPSLTypes.swift
@@ -385,6 +404,8 @@ if command -v swiftc >/dev/null 2>&1; then
     scripts/vet-apple-openai-protocol.swift \
     -o /tmp/herm-vet-openai-protocol
   /tmp/herm-vet-openai-protocol
+  swiftc scripts/vet-apple-agent-concurrency-ui.swift -o /tmp/herm-vet-agent-concurrency-ui
+  /tmp/herm-vet-agent-concurrency-ui
   if [[ "$(uname -s)" == "Darwin" ]]; then
     swiftc \
       app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
