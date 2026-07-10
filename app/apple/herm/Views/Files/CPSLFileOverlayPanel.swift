@@ -80,9 +80,9 @@ struct CPSLFileOverlayPanel<Header: View, Content: View>: View {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.paneRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.command, opacity: 0.82),
+            tint: CPSLTheme.command,
             strokeOpacity: 0.07
         )
         .cpslAnimatedPastelRainbowBorder(
@@ -107,9 +107,9 @@ struct CPSLFileOverlayIconButton: View {
         .foregroundStyle(CPSLTheme.text)
         .accessibilityLabel(accessibilityLabel)
         .help(accessibilityLabel)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.36),
+            tint: CPSLTheme.background.opacity(0.36),
             strokeOpacity: 0.06
         )
     }

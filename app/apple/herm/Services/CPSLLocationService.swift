@@ -13,6 +13,12 @@ final class CPSLLocationService: NSObject, ObservableObject {
     @Published private(set) var isLoadingCurrentLocation = false
     @Published private(set) var locationError: String?
     var activityOccurred: (@MainActor @Sendable () -> Void)?
+    private var isOverlayActive = false
+
+    private enum UpdateCadence {
+        static let active: TimeInterval = 15
+        static let inactive: TimeInterval = 5 * 60
+    }
 
 #if canImport(CoreLocation)
     private let manager = CLLocationManager()
@@ -24,7 +30,7 @@ final class CPSLLocationService: NSObject, ObservableObject {
         super.init()
 #if canImport(CoreLocation)
         manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        configureUpdatePolicy()
         refreshStatus()
         startUpdatingIfAllowed()
 #else
@@ -37,6 +43,17 @@ final class CPSLLocationService: NSObject, ObservableObject {
         access = Self.accessState(for: manager.authorizationStatus)
 #else
         access = .denied
+#endif
+    }
+
+    func setOverlayActive(_ isActive: Bool) {
+        guard isOverlayActive != isActive else {
+            return
+        }
+        isOverlayActive = isActive
+#if canImport(CoreLocation)
+        configureUpdatePolicy()
+        startUpdatingIfAllowed()
 #endif
     }
 
@@ -87,7 +104,9 @@ final class CPSLLocationService: NSObject, ObservableObject {
             return requestedAccess
         }
 
-        currentLocation = location
+        if currentLocation !== location {
+            currentLocation = location
+        }
 #else
         locationError = "CoreLocation is unavailable on this platform."
 #endif
@@ -166,6 +185,13 @@ final class CPSLLocationService: NSObject, ObservableObject {
     }
 
 #if canImport(CoreLocation)
+    private func configureUpdatePolicy() {
+        manager.desiredAccuracy = isOverlayActive
+            ? kCLLocationAccuracyHundredMeters
+            : kCLLocationAccuracyKilometer
+        manager.distanceFilter = isOverlayActive ? kCLDistanceFilterNone : 500
+    }
+
     private func startUpdatingIfAllowed() {
         guard access == .granted else {
             stopUpdatingIfNeeded()
@@ -201,8 +227,9 @@ final class CPSLLocationService: NSObject, ObservableObject {
     }
 
     private func freshestLocation() async -> CLLocation? {
+        let freshnessInterval = isOverlayActive ? UpdateCadence.active : 60
         if let currentLocation,
-           abs(currentLocation.timestamp.timeIntervalSinceNow) < 60 {
+           abs(currentLocation.timestamp.timeIntervalSinceNow) < freshnessInterval {
             return currentLocation
         }
 
@@ -258,6 +285,14 @@ final class CPSLLocationService: NSObject, ObservableObject {
         for continuation in continuations {
             continuation.resume(returning: location)
         }
+    }
+
+    private func shouldPublish(_ location: CLLocation) -> Bool {
+        guard let currentLocation else {
+            return true
+        }
+        let minimumInterval = isOverlayActive ? UpdateCadence.active : UpdateCadence.inactive
+        return location.timestamp.timeIntervalSince(currentLocation.timestamp) >= minimumInterval
     }
 
     private static func accessState(for status: CLAuthorizationStatus) -> CPSLFeatureAccessState {
@@ -317,7 +352,9 @@ extension CPSLLocationService: CLLocationManagerDelegate {
         guard let location = locations.last else {
             return
         }
-        currentLocation = location
+        if !locationContinuations.isEmpty || shouldPublish(location) {
+            currentLocation = location
+        }
         finishLocationWaits(with: location)
     }
 

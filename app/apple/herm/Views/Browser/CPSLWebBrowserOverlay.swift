@@ -16,8 +16,8 @@ private enum CPSLWebBrowserOverlayLayout {
 }
 
 struct CPSLWebBrowserOverlay: View {
-    @ObservedObject private var model: CPSLChatModel
-    @ObservedObject private var webBrowser: CPSLWebBrowserService
+    private let model: CPSLChatModel
+    private let webBrowser: CPSLWebBrowserService
     let topInset: CGFloat
     let bottomInset: CGFloat
 
@@ -26,8 +26,8 @@ struct CPSLWebBrowserOverlay: View {
         topInset: CGFloat,
         bottomInset: CGFloat
     ) {
-        _model = ObservedObject(wrappedValue: model)
-        _webBrowser = ObservedObject(wrappedValue: model.webBrowser)
+        self.model = model
+        webBrowser = model.webBrowser
         self.topInset = topInset
         self.bottomInset = bottomInset
     }
@@ -47,8 +47,8 @@ struct CPSLWebBrowserOverlay: View {
 }
 
 private struct CPSLWebBrowserPanel: View {
-    @ObservedObject var model: CPSLChatModel
-    @ObservedObject var webBrowser: CPSLWebBrowserService
+    let model: CPSLChatModel
+    let webBrowser: CPSLWebBrowserService
 
     var body: some View {
         CPSLFileOverlayPanel {
@@ -60,7 +60,7 @@ private struct CPSLWebBrowserPanel: View {
 }
 
 private struct CPSLWebBrowserToolbar: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @ObservedObject var webBrowser: CPSLWebBrowserService
     @State private var addressText = ""
 
@@ -154,9 +154,9 @@ private struct CPSLWebBrowserAddressField: View {
         }
         .padding(.horizontal, CPSLTheme.small)
         .frame(height: CPSLWebBrowserOverlayLayout.toolbarControlSize)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34),
+            tint: CPSLTheme.background.opacity(0.34),
             strokeOpacity: 0.05
         )
     }
@@ -184,9 +184,9 @@ private struct CPSLWebBrowserNavButton: View {
         .opacity(isEnabled ? 1 : 0.45)
         .accessibilityLabel(accessibilityLabel)
         .help(accessibilityLabel)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.32),
+            tint: CPSLTheme.background.opacity(0.32),
             strokeOpacity: 0.045
         )
     }
@@ -240,7 +240,7 @@ private struct CPSLWebBrowserContent: View {
 private struct CPSLWebBrowserTabStrip: View {
     let summaries: [CPSLWebBrowserSummary]
     let visibleBrowserID: String?
-    @ObservedObject var webBrowser: CPSLWebBrowserService
+    let webBrowser: CPSLWebBrowserService
 
     var body: some View {
         HStack(alignment: .top, spacing: CPSLTheme.small) {
@@ -322,10 +322,8 @@ private struct CPSLWebBrowserTab: View {
         .background {
             CPSLWebBrowserTabBackground(
                 shape: shape,
-                tint: CPSLGlassTuning.tint(
-                    isSelected ? CPSLTheme.card : CPSLTheme.background,
-                    opacity: isSelected ? 0.52 : 0.30
-                ),
+                tint: (isSelected ? CPSLTheme.card : CPSLTheme.background)
+                    .opacity(isSelected ? 0.52 : 0.30),
                 strokeOpacity: isSelected ? 0.10 : 0.045
             )
         }
@@ -360,7 +358,7 @@ private struct CPSLWebBrowserTabIconButton: View {
         .background {
             CPSLWebBrowserTabBackground(
                 shape: shape,
-                tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.32),
+                tint: CPSLTheme.background.opacity(0.32),
                 strokeOpacity: 0.045
             )
         }
@@ -375,7 +373,7 @@ private struct CPSLWebBrowserTabBackground: View {
     let strokeOpacity: Double
 
     var body: some View {
-        CPSLGlassSurface(shape: shape, tint: tint, strokeOpacity: 0)
+        shape.fill(tint)
             .overlay {
                 CPSLWebBrowserTabStrokeShape(radius: shape.radius)
                     .stroke(CPSLTheme.text.opacity(strokeOpacity), lineWidth: 1)
@@ -461,7 +459,7 @@ private struct CPSLScaledWebBrowserViewport: View {
 
 private struct CPSLWebBrowserPicker: View {
     let summaries: [CPSLWebBrowserSummary]
-    @ObservedObject var webBrowser: CPSLWebBrowserService
+    let webBrowser: CPSLWebBrowserService
 
     var body: some View {
         ScrollView {
@@ -476,6 +474,7 @@ private struct CPSLWebBrowserPicker: View {
             }
             .padding(CPSLTheme.medium)
         }
+        .scrollBounceBehavior(.basedOnSize)
     }
 }
 
@@ -521,9 +520,9 @@ private struct CPSLWebBrowserPickerRow: View {
             .padding(.horizontal, CPSLTheme.medium)
             .padding(.vertical, CPSLTheme.small)
             .frame(minHeight: CPSLTheme.controlSize + CPSLTheme.medium)
-            .cpslGlassBackground(
+            .cpslSurfaceBackground(
                 in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-                tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.28),
+                tint: CPSLTheme.background.opacity(0.28),
                 strokeOpacity: 0.045
             )
             .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))

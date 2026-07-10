@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct CPSLCalendarOverlay: View {
-    @ObservedObject private var model: CPSLChatModel
-    @ObservedObject private var calendar: CPSLCalendarService
+    private let model: CPSLChatModel
+    private let calendar: CPSLCalendarService
     let topInset: CGFloat
     let bottomInset: CGFloat
 
@@ -11,8 +11,8 @@ struct CPSLCalendarOverlay: View {
         topInset: CGFloat,
         bottomInset: CGFloat
     ) {
-        _model = ObservedObject(wrappedValue: model)
-        _calendar = ObservedObject(wrappedValue: model.calendar)
+        self.model = model
+        calendar = model.calendar
         self.topInset = topInset
         self.bottomInset = bottomInset
     }
@@ -31,8 +31,8 @@ struct CPSLCalendarOverlay: View {
 }
 
 private struct CPSLCalendarPanel: View {
-    @ObservedObject var model: CPSLChatModel
-    @ObservedObject var calendar: CPSLCalendarService
+    let model: CPSLChatModel
+    let calendar: CPSLCalendarService
 
     var body: some View {
         CPSLFileOverlayPanel {
@@ -44,7 +44,7 @@ private struct CPSLCalendarPanel: View {
 }
 
 private struct CPSLCalendarHeader: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @ObservedObject var calendar: CPSLCalendarService
 
     private var subtitle: LocalizedStringKey {
@@ -139,9 +139,9 @@ private struct CPSLCalendarStatusRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CPSLTheme.medium)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.30),
+            tint: CPSLTheme.background.opacity(0.30),
             strokeOpacity: 0.045
         )
     }
@@ -173,9 +173,9 @@ private struct CPSLCalendarEventRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CPSLTheme.medium)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.30),
+            tint: CPSLTheme.background.opacity(0.30),
             strokeOpacity: 0.045
         )
     }
@@ -202,9 +202,9 @@ private struct CPSLCalendarEventTimeBadge: View {
         .foregroundStyle(CPSLTheme.text)
         .frame(width: 66)
         .padding(.vertical, CPSLTheme.small)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.IconPalette.calendar, opacity: 0.24),
+            tint: CPSLTheme.IconPalette.calendar.opacity(0.24),
             strokeOpacity: 0.06
         )
     }

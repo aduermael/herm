@@ -678,7 +678,7 @@ private struct CPSLPrimaryContentView: View {
 }
 
 private struct CPSLFileBrowserOverlay: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let topInset: CGFloat
     let bottomInset: CGFloat
 

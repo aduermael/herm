@@ -4,8 +4,8 @@ import SwiftUI
 #endif
 
 struct CPSLLocationOverlay: View {
-    @ObservedObject private var model: CPSLChatModel
-    @ObservedObject private var location: CPSLLocationService
+    private let model: CPSLChatModel
+    private let location: CPSLLocationService
     let topInset: CGFloat
     let bottomInset: CGFloat
 
@@ -14,8 +14,8 @@ struct CPSLLocationOverlay: View {
         topInset: CGFloat,
         bottomInset: CGFloat
     ) {
-        _model = ObservedObject(wrappedValue: model)
-        _location = ObservedObject(wrappedValue: model.location)
+        self.model = model
+        location = model.location
         self.topInset = topInset
         self.bottomInset = bottomInset
     }
@@ -30,12 +30,18 @@ struct CPSLLocationOverlay: View {
         ) {
             CPSLLocationPanel(model: model, location: location)
         }
+        .onAppear {
+            location.setOverlayActive(true)
+        }
+        .onDisappear {
+            location.setOverlayActive(false)
+        }
     }
 }
 
 private struct CPSLLocationPanel: View {
-    @ObservedObject var model: CPSLChatModel
-    @ObservedObject var location: CPSLLocationService
+    let model: CPSLChatModel
+    let location: CPSLLocationService
 
     var body: some View {
         CPSLFileOverlayPanel {
@@ -47,7 +53,7 @@ private struct CPSLLocationPanel: View {
 }
 
 private struct CPSLLocationHeader: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @ObservedObject var location: CPSLLocationService
 
     private var subtitle: LocalizedStringKey {
@@ -84,14 +90,6 @@ private struct CPSLLocationHeader: View {
             }
 
             Spacer(minLength: CPSLTheme.medium)
-
-            CPSLFileOverlayIconButton(systemName: "arrow.clockwise", accessibilityLabel: "Refresh location") {
-                Task {
-                    await location.loadCurrentLocation()
-                }
-            }
-            .disabled(location.isLoadingCurrentLocation || location.isRequestingAccess)
-            .opacity(location.isLoadingCurrentLocation || location.isRequestingAccess ? 0.45 : 1)
 
             CPSLFileOverlayIconButton(systemName: "xmark", accessibilityLabel: "Close location") {
                 model.closeLocation()
@@ -230,9 +228,9 @@ private struct CPSLLocationStatusRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CPSLTheme.medium)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.30),
+            tint: CPSLTheme.background.opacity(0.30),
             strokeOpacity: 0.045
         )
     }
@@ -264,9 +262,9 @@ private struct CPSLLocationDetailRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CPSLTheme.medium)
-        .cpslGlassBackground(
+        .cpslSurfaceBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.30),
+            tint: CPSLTheme.background.opacity(0.30),
             strokeOpacity: 0.045
         )
     }

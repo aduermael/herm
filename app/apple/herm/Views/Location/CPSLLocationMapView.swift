@@ -38,10 +38,44 @@ struct CPSLLocationMapView: View {
     }
 }
 
+#if canImport(MapKit)
+private final class CPSLLocationMapCoordinator {
+    private var coordinate: CLLocationCoordinate2D?
+    private var span: CLLocationDegrees?
+
+    func update(
+        _ mapView: MKMapView,
+        coordinate: CLLocationCoordinate2D,
+        span: CLLocationDegrees
+    ) {
+        guard self.coordinate?.latitude != coordinate.latitude
+                || self.coordinate?.longitude != coordinate.longitude
+                || self.span != span
+        else {
+            return
+        }
+
+        self.coordinate = coordinate
+        self.span = span
+        mapView.setRegion(
+            MKCoordinateRegion(
+                center: coordinate,
+                span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
+            ),
+            animated: false
+        )
+    }
+}
+#endif
+
 #if canImport(MapKit) && canImport(UIKit)
 private struct CPSLLocationMapRepresentable: UIViewRepresentable {
     let coordinate: CLLocationCoordinate2D
     let span: CLLocationDegrees
+
+    func makeCoordinator() -> CPSLLocationMapCoordinator {
+        CPSLLocationMapCoordinator()
+    }
 
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView(frame: .zero)
@@ -50,7 +84,7 @@ private struct CPSLLocationMapRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ mapView: MKMapView, context: Context) {
-        update(mapView)
+        context.coordinator.update(mapView, coordinate: coordinate, span: span)
     }
 
     private func configure(_ mapView: MKMapView) {
@@ -62,21 +96,16 @@ private struct CPSLLocationMapRepresentable: UIViewRepresentable {
         mapView.showsCompass = false
         mapView.showsScale = false
         mapView.showsUserLocation = false
-        update(mapView)
-    }
-
-    private func update(_ mapView: MKMapView) {
-        let region = MKCoordinateRegion(
-            center: coordinate,
-            span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
-        )
-        mapView.setRegion(region, animated: false)
     }
 }
 #elseif canImport(MapKit) && os(macOS)
 private struct CPSLLocationMapRepresentable: NSViewRepresentable {
     let coordinate: CLLocationCoordinate2D
     let span: CLLocationDegrees
+
+    func makeCoordinator() -> CPSLLocationMapCoordinator {
+        CPSLLocationMapCoordinator()
+    }
 
     func makeNSView(context: Context) -> MKMapView {
         let mapView = MKMapView(frame: .zero)
@@ -85,7 +114,7 @@ private struct CPSLLocationMapRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ mapView: MKMapView, context: Context) {
-        update(mapView)
+        context.coordinator.update(mapView, coordinate: coordinate, span: span)
     }
 
     private func configure(_ mapView: MKMapView) {
@@ -96,15 +125,6 @@ private struct CPSLLocationMapRepresentable: NSViewRepresentable {
         mapView.showsCompass = false
         mapView.showsScale = false
         mapView.showsUserLocation = false
-        update(mapView)
-    }
-
-    private func update(_ mapView: MKMapView) {
-        let region = MKCoordinateRegion(
-            center: coordinate,
-            span: MKCoordinateSpan(latitudeDelta: span, longitudeDelta: span)
-        )
-        mapView.setRegion(region, animated: false)
     }
 }
 #endif
