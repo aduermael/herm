@@ -63,31 +63,6 @@ struct CPSLGlassBackgroundModifier<S: Shape>: ViewModifier {
     }
 }
 
-private struct CPSLActivityGlowModifier<S: InsettableShape>: ViewModifier {
-    let isActive: Bool
-    let color: Color
-    let shape: S
-
-    func body(content: Content) -> some View {
-        content.overlay {
-            if isActive {
-                TimelineView(.animation) { timeline in
-                    let opacity = glowOpacity(at: timeline.date)
-                    shape
-                        .strokeBorder(color.opacity(opacity), lineWidth: 1.6)
-                        .shadow(color: color.opacity(opacity * 0.9), radius: 8, x: 0, y: 0)
-                }
-                .allowsHitTesting(false)
-            }
-        }
-    }
-
-    private func glowOpacity(at date: Date) -> Double {
-        let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.9) / 0.9
-        return 0.35 + (sin(phase * .pi * 2) + 1) * 0.20
-    }
-}
-
 extension View {
     func cpslGlassBackground<S: Shape>(
         in shape: S,
@@ -99,20 +74,6 @@ extension View {
                 shape: shape,
                 tint: tint,
                 strokeOpacity: strokeOpacity
-            )
-        )
-    }
-
-    func cpslActivityGlow<S: InsettableShape>(
-        when isActive: Bool,
-        color: Color,
-        in shape: S
-    ) -> some View {
-        modifier(
-            CPSLActivityGlowModifier(
-                isActive: isActive,
-                color: color,
-                shape: shape
             )
         )
     }

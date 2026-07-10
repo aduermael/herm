@@ -72,11 +72,14 @@ private struct CPSLConversationDrawerContent: View {
 
 private struct CPSLDrawerAppHeader: View {
     var body: some View {
-        Text("Herm 🐚")
-            .font(CPSLTheme.headerFont)
-            .foregroundStyle(CPSLTheme.text)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: CPSLTheme.controlSize, alignment: .bottom)
+        HStack(spacing: CPSLTheme.small / 2) {
+            Text("Herm")
+                .cpslAnimatedPastelRainbowForeground()
+            Text(verbatim: "🐚")
+        }
+        .font(CPSLTheme.headerFont)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: CPSLTheme.controlSize, alignment: .bottom)
     }
 }
 

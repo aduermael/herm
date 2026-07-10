@@ -85,6 +85,9 @@ struct CPSLFileOverlayPanel<Header: View, Content: View>: View {
             tint: CPSLGlassTuning.tint(CPSLTheme.command, opacity: 0.82),
             strokeOpacity: 0.07
         )
+        .cpslAnimatedPastelRainbowBorder(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.paneRadius, style: .continuous)
+        )
     }
 }
 

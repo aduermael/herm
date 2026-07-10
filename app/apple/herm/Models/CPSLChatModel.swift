@@ -57,6 +57,13 @@ final class CPSLChatModel: ObservableObject {
     private var locationActivityClearTask: Task<Void, Never>?
     private let activityPulseDuration: TimeInterval = 1.6
 
+    var isToolOverlayOpen: Bool {
+        isFileBrowserOpen
+            || isWebBrowserOpen
+            || isCalendarOpen
+            || isLocationOpen
+    }
+
     private let systemPrompt = """
     You are Herm, an AI agent running inside an iOS/macOS app.
     You support OpenAI-compatible chat completions only. Server-side provider tools, including web search, are not available.

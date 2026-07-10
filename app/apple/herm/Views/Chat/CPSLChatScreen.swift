@@ -581,6 +581,10 @@ private struct CPSLMainContentStage: View {
                 contentBottomInset: contentBottomInset,
                 isTimelineScrollGeometryPaused: isTimelineScrollGeometryPaused
             )
+            .blur(radius: model.isToolOverlayOpen ? 3 : 0)
+            .opacity(model.isToolOverlayOpen ? 0.55 : 1)
+            .allowsHitTesting(!model.isToolOverlayOpen)
+            .animation(CPSLOverlayMotion.animation, value: model.isToolOverlayOpen)
 
             // TOP & BOTTOM GRADIENTS FOR NICE CONTENT FADE OUT
             CPSLScrollEdgeGlass(edge: .top, height: CPSLTheme.topBlendHeight)
@@ -696,10 +700,7 @@ private struct CPSLBottomChromeView: View {
     @Binding var promptDismissRequest: Int
 
     private var isPromptCompact: Bool {
-        model.isFileBrowserOpen
-            || model.isWebBrowserOpen
-            || model.isCalendarOpen
-            || model.isLocationOpen
+        model.isToolOverlayOpen
     }
 
     var body: some View {
