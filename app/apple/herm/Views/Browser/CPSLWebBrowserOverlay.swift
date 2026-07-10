@@ -6,6 +6,15 @@ import AppKit
 import UIKit
 #endif
 
+private enum CPSLWebBrowserOverlayLayout {
+    static let toolbarControlSize: CGFloat = 32
+    static let toolbarHeight = toolbarControlSize + CPSLTheme.medium
+    static let tabHeight: CGFloat = 26
+    static let tabBottomMargin: CGFloat = 4
+    static let tabStripHeight = tabHeight + tabBottomMargin
+    static let tabMaxWidth: CGFloat = 172
+}
+
 struct CPSLWebBrowserOverlay: View {
     @ObservedObject private var model: CPSLChatModel
     @ObservedObject private var webBrowser: CPSLWebBrowserService
@@ -43,71 +52,15 @@ private struct CPSLWebBrowserPanel: View {
 
     var body: some View {
         CPSLFileOverlayPanel {
-            VStack(spacing: 0) {
-                CPSLWebBrowserHeader(model: model, webBrowser: webBrowser)
-                CPSLWebBrowserNavigationBar(webBrowser: webBrowser)
-            }
+            CPSLWebBrowserToolbar(model: model, webBrowser: webBrowser)
         } content: {
             CPSLWebBrowserContent(webBrowser: webBrowser)
         }
     }
 }
 
-private struct CPSLWebBrowserHeader: View {
+private struct CPSLWebBrowserToolbar: View {
     @ObservedObject var model: CPSLChatModel
-    @ObservedObject var webBrowser: CPSLWebBrowserService
-
-    private var summary: CPSLWebBrowserSummary? {
-        webBrowser.visibleSummary
-    }
-
-    private var subtitle: String {
-        guard let summary else {
-            return "No active page"
-        }
-        if let url = summary.url, !url.isEmpty {
-            return url
-        }
-        return summary.id
-    }
-
-    var body: some View {
-        HStack(spacing: CPSLTheme.medium) {
-            Image(systemName: "globe")
-                .symbolRenderingMode(.hierarchical)
-                .font(CPSLTheme.iconMediumFont)
-                .foregroundStyle(CPSLTheme.success)
-                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-
-            VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
-                Text(summary?.title?.nilIfEmpty ?? "Browser")
-                    .font(CPSLTheme.supportingMediumFont)
-                    .foregroundStyle(CPSLTheme.text)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(CPSLTheme.captionFont)
-                    .foregroundStyle(CPSLTheme.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            Spacer(minLength: CPSLTheme.medium)
-
-            if let summary {
-                CPSLWebBrowserModeBadge(mode: summary.resourceMode)
-            }
-
-            CPSLFileOverlayIconButton(systemName: "xmark", accessibilityLabel: "Close browser") {
-                model.closeWebBrowser()
-            }
-        }
-        .padding(.horizontal, CPSLTheme.medium)
-        .padding(.vertical, CPSLTheme.small)
-        .frame(minHeight: CPSLTheme.controlSize + CPSLTheme.medium)
-    }
-}
-
-private struct CPSLWebBrowserNavigationBar: View {
     @ObservedObject var webBrowser: CPSLWebBrowserService
     @State private var addressText = ""
 
@@ -149,29 +102,19 @@ private struct CPSLWebBrowserNavigationBar: View {
                     await webBrowser.navigateVisibleBrowserFromUI(to: addressText)
                 }
             }
+            .layoutPriority(1)
 
             CPSLWebBrowserNavButton(
-                systemName: "plus",
-                accessibilityLabel: "New Tab",
+                systemName: "xmark",
+                accessibilityLabel: "Close browser",
                 isEnabled: true
             ) {
-                Task {
-                    await webBrowser.createBrowserFromUI()
-                }
-            }
-
-            CPSLWebBrowserNavButton(
-                systemName: "xmark.square",
-                accessibilityLabel: "Close Tab",
-                isEnabled: summary != nil
-            ) {
-                if let id = summary?.id {
-                    webBrowser.closeBrowserFromUI(id: id)
-                }
+                model.closeWebBrowser()
             }
         }
         .padding(.horizontal, CPSLTheme.medium)
-        .padding(.bottom, CPSLTheme.small)
+        .padding(.vertical, CPSLTheme.small / 2)
+        .frame(minHeight: CPSLWebBrowserOverlayLayout.toolbarHeight)
         .onAppear {
             addressText = summary?.url ?? ""
         }
@@ -209,8 +152,8 @@ private struct CPSLWebBrowserAddressField: View {
                 .submitLabel(.go)
                 .onSubmit(onSubmit)
         }
-        .padding(.horizontal, CPSLTheme.medium)
-        .frame(height: CPSLTheme.controlSize)
+        .padding(.horizontal, CPSLTheme.small)
+        .frame(height: CPSLWebBrowserOverlayLayout.toolbarControlSize)
         .cpslGlassBackground(
             in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
             tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34),
@@ -229,7 +172,10 @@ private struct CPSLWebBrowserNavButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(CPSLTheme.iconSmallFont)
-                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .frame(
+                    width: CPSLWebBrowserOverlayLayout.toolbarControlSize,
+                    height: CPSLWebBrowserOverlayLayout.toolbarControlSize
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -243,23 +189,6 @@ private struct CPSLWebBrowserNavButton: View {
             tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.32),
             strokeOpacity: 0.045
         )
-    }
-}
-
-private struct CPSLWebBrowserModeBadge: View {
-    let mode: CPSLWebBrowserResourceMode
-
-    var body: some View {
-        Text(mode.rawValue.uppercased())
-            .font(CPSLTheme.captionMediumFont)
-            .foregroundStyle(mode == .lean ? CPSLTheme.secondaryText : CPSLTheme.success)
-            .padding(.horizontal, CPSLTheme.small)
-            .frame(height: CPSLTheme.controlSize)
-            .cpslGlassBackground(
-                in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-                tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.32),
-                strokeOpacity: 0.05
-            )
     }
 }
 
@@ -282,15 +211,17 @@ private struct CPSLWebBrowserContent: View {
 
             if let webView = webBrowser.visibleWebView {
                 GeometryReader { proxy in
-                    CPSLPlatformWebView(webView: webView)
-                        .id(ObjectIdentifier(webView))
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                        .onAppear {
-                            webBrowser.updateVisibleBrowserViewport(proxy.size)
-                        }
-                        .onChange(of: proxy.size) { _, newSize in
-                            webBrowser.updateVisibleBrowserViewport(newSize)
-                        }
+                    CPSLScaledWebBrowserViewport(
+                        webView: webView,
+                        viewportSize: webBrowser.visibleBrowserWindowSize,
+                        availableSize: proxy.size
+                    )
+                    .onAppear {
+                        webBrowser.updateVisibleBrowserProjection(availableSize: proxy.size)
+                    }
+                    .onChange(of: proxy.size) { _, newSize in
+                        webBrowser.updateVisibleBrowserProjection(availableSize: newSize)
+                    }
                 }
                 .background(CPSLTheme.command)
             } else if webBrowser.summaries.isEmpty {
@@ -312,20 +243,37 @@ private struct CPSLWebBrowserTabStrip: View {
     @ObservedObject var webBrowser: CPSLWebBrowserService
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: CPSLTheme.small) {
-                ForEach(summaries) { summary in
-                    CPSLWebBrowserTab(summary: summary, isSelected: summary.id == visibleBrowserID) {
-                        Task {
-                            await webBrowser.showBrowserFromUI(id: summary.id)
+        HStack(alignment: .top, spacing: CPSLTheme.small) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: CPSLTheme.small / 2) {
+                    ForEach(summaries) { summary in
+                        CPSLWebBrowserTab(
+                            summary: summary,
+                            isSelected: summary.id == visibleBrowserID
+                        ) {
+                            Task {
+                                await webBrowser.showBrowserFromUI(id: summary.id)
+                            }
+                        } closeAction: {
+                            webBrowser.closeBrowserFromUI(id: summary.id)
                         }
                     }
                 }
+                .padding(.leading, CPSLTheme.medium)
             }
-            .padding(.horizontal, CPSLTheme.medium)
-            .padding(.vertical, CPSLTheme.small)
+
+            CPSLWebBrowserTabIconButton(
+                systemName: "plus",
+                accessibilityLabel: "New Tab"
+            ) {
+                Task {
+                    await webBrowser.createBrowserFromUI()
+                }
+            }
         }
-        .frame(height: CPSLTheme.controlSize + CPSLTheme.medium)
+        .padding(.trailing, CPSLTheme.medium)
+        .padding(.bottom, CPSLWebBrowserOverlayLayout.tabBottomMargin)
+        .frame(height: CPSLWebBrowserOverlayLayout.tabStripHeight, alignment: .top)
         .background(CPSLTheme.command.opacity(0.72))
     }
 }
@@ -334,37 +282,180 @@ private struct CPSLWebBrowserTab: View {
     let summary: CPSLWebBrowserSummary
     let isSelected: Bool
     let action: () -> Void
+    let closeAction: () -> Void
 
     private var title: String {
         summary.title?.nilIfEmpty ?? summary.url?.nilIfEmpty ?? summary.id
     }
 
+    private var shape: CPSLWebBrowserTabShape {
+        CPSLWebBrowserTabShape(radius: CPSLTheme.rowRadius)
+    }
+
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: CPSLTheme.small) {
-                Image(systemName: "globe")
-                    .symbolRenderingMode(.hierarchical)
-                    .font(CPSLTheme.iconSmallFont)
-                    .foregroundStyle(isSelected ? CPSLTheme.success : CPSLTheme.secondaryText)
+        HStack(spacing: 2) {
+            Button(action: action) {
                 Text(title)
                     .font(CPSLTheme.captionMediumFont)
+                    .foregroundStyle(CPSLTheme.text)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .foregroundStyle(CPSLTheme.text)
-            .padding(.horizontal, CPSLTheme.medium)
-            .frame(height: CPSLTheme.controlSize)
-            .frame(maxWidth: 220, alignment: .leading)
-            .cpslGlassBackground(
-                in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
+            .buttonStyle(.plain)
+
+            Button(action: closeAction) {
+                Image(systemName: "xmark")
+                    .font(CPSLTheme.iconFont(size: 10, weight: .semibold))
+                    .frame(width: CPSLWebBrowserOverlayLayout.tabHeight, height: CPSLWebBrowserOverlayLayout.tabHeight)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(CPSLTheme.secondaryText)
+            .accessibilityLabel("Close tab")
+            .help("Close tab")
+        }
+        .padding(.leading, CPSLTheme.small)
+        .frame(height: CPSLWebBrowserOverlayLayout.tabHeight)
+        .frame(minWidth: 96, maxWidth: CPSLWebBrowserOverlayLayout.tabMaxWidth, alignment: .leading)
+        .background {
+            CPSLWebBrowserTabBackground(
+                shape: shape,
                 tint: CPSLGlassTuning.tint(
                     isSelected ? CPSLTheme.card : CPSLTheme.background,
                     opacity: isSelected ? 0.52 : 0.30
                 ),
                 strokeOpacity: isSelected ? 0.10 : 0.045
             )
-            .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
+        }
+        .clipShape(shape)
+        .contentShape(shape)
+    }
+}
+
+private struct CPSLWebBrowserTabIconButton: View {
+    let systemName: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    private var shape: CPSLWebBrowserTabShape {
+        CPSLWebBrowserTabShape(radius: CPSLTheme.rowRadius)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(CPSLTheme.iconSmallFont)
+                .frame(
+                    width: CPSLWebBrowserOverlayLayout.tabHeight,
+                    height: CPSLWebBrowserOverlayLayout.tabHeight
+                )
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.text)
+        .accessibilityLabel(accessibilityLabel)
+        .help(accessibilityLabel)
+        .background {
+            CPSLWebBrowserTabBackground(
+                shape: shape,
+                tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.32),
+                strokeOpacity: 0.045
+            )
+        }
+        .clipShape(shape)
+        .contentShape(shape)
+    }
+}
+
+private struct CPSLWebBrowserTabBackground: View {
+    let shape: CPSLWebBrowserTabShape
+    let tint: Color
+    let strokeOpacity: Double
+
+    var body: some View {
+        CPSLGlassSurface(shape: shape, tint: tint, strokeOpacity: 0)
+            .overlay {
+                CPSLWebBrowserTabStrokeShape(radius: shape.radius)
+                    .stroke(CPSLTheme.text.opacity(strokeOpacity), lineWidth: 1)
+            }
+    }
+}
+
+private struct CPSLWebBrowserTabStrokeShape: Shape {
+    let radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(radius, rect.width / 2, rect.height / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + radius, y: rect.maxY),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        return path
+    }
+}
+
+private struct CPSLWebBrowserTabShape: Shape {
+    let radius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(radius, rect.width / 2, rect.height / 2)
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct CPSLScaledWebBrowserViewport: View {
+    let webView: WKWebView
+    let viewportSize: CGSize
+    let availableSize: CGSize
+
+    private var scale: CGFloat {
+        guard viewportSize.width > 0,
+              viewportSize.height > 0,
+              availableSize.width > 0,
+              availableSize.height > 0
+        else {
+            return 1
+        }
+        return availableSize.width / viewportSize.width
+    }
+
+    var body: some View {
+        CPSLPlatformWebView(webView: webView)
+            .id(ObjectIdentifier(webView))
+            .frame(width: viewportSize.width, height: viewportSize.height)
+            .scaleEffect(scale, anchor: .topLeading)
+            .frame(
+                width: viewportSize.width * scale,
+                height: viewportSize.height * scale,
+                alignment: .topLeading
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .clipped()
     }
 }
 

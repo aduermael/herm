@@ -695,13 +695,21 @@ private struct CPSLBottomChromeView: View {
     @ObservedObject var model: CPSLChatModel
     @Binding var promptDismissRequest: Int
 
+    private var isPromptCompact: Bool {
+        model.isFileBrowserOpen
+            || model.isWebBrowserOpen
+            || model.isCalendarOpen
+            || model.isLocationOpen
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             CPSLToolStripView(model: model)
 
             CPSLPromptComposerView(
                 model: model,
-                dismissKeyboardRequest: promptDismissRequest
+                dismissKeyboardRequest: promptDismissRequest,
+                isCompact: isPromptCompact
             ) {
                 promptDismissRequest += 1
             }

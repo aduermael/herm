@@ -14,6 +14,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
     @Binding var text: String
     let isCommandInput: Bool
     let isDisabled: Bool
+    let verticalInset: CGFloat
     let maxHeight: CGFloat
     let focusPromptRequest: Int
     let dismissKeyboardRequest: Int
@@ -26,12 +27,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         textView.textColor = UIColor(CPSLTheme.text)
         textView.tintColor = UIColor(CPSLTheme.text)
         textView.font = CPSLTheme.bodyUIFont
-        textView.textContainerInset = UIEdgeInsets(
-            top: CPSLTheme.promptVerticalInset,
-            left: CPSLTheme.medium,
-            bottom: CPSLTheme.promptVerticalInset,
-            right: CPSLTheme.medium
-        )
+        textView.textContainerInset = textContainerInset
         textView.textContainer.lineFragmentPadding = 0
         textView.returnKeyType = .default
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -49,6 +45,9 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         }
 
         let didChangeTraits = applyInputTraits(to: textView)
+        if !UIEdgeInsetsEqualToEdgeInsets(textView.textContainerInset, textContainerInset) {
+            textView.textContainerInset = textContainerInset
+        }
         textView.isEditable = !isDisabled
         textView.isSelectable = !isDisabled
         textView.isScrollEnabled = textView.contentSize.height > maxHeight
@@ -76,6 +75,15 @@ private struct CPSLPromptTextView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
+    }
+
+    private var textContainerInset: UIEdgeInsets {
+        UIEdgeInsets(
+            top: verticalInset,
+            left: CPSLTheme.medium,
+            bottom: verticalInset,
+            right: CPSLTheme.medium
+        )
     }
 
     @discardableResult
@@ -134,6 +142,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
 struct CPSLPromptComposerView: View {
     @ObservedObject var model: CPSLChatModel
     let dismissKeyboardRequest: Int
+    let isCompact: Bool
     let dismissKeyboard: () -> Void
     @State private var focusAfterDictation = false
 #if os(macOS)
@@ -164,125 +173,49 @@ struct CPSLPromptComposerView: View {
     }
 
     private var promptVerticalPadding: CGFloat {
-        CPSLTheme.promptVerticalInset * 2
+        promptVerticalInset * 2
+    }
+
+    private var promptVerticalInset: CGFloat {
+        if isCompact {
+            return max(CPSLTheme.promptVerticalInset / 2, (CPSLTheme.controlSize - promptLineHeight) / 2)
+        }
+        return CPSLTheme.promptVerticalInset
+    }
+
+    private var promptMaxLineCount: Int {
+        isCompact ? 3 : 6
+    }
+
+    private var promptMinTextHeight: CGFloat {
+        isCompact ? CPSLTheme.controlSize : promptLineHeight + promptVerticalPadding
+    }
+
+    private var promptMeasuredHeight: CGFloat {
+        hasPromptInput ? promptContentHeight : promptMinTextHeight
     }
 
     private var promptMaxTextHeight: CGFloat {
-        promptLineHeight * 6 + promptVerticalPadding
+        promptLineHeight * CGFloat(promptMaxLineCount) + promptVerticalPadding
     }
 
     private var promptTextHeight: CGFloat {
-        min(max(promptContentHeight, promptLineHeight + promptVerticalPadding), promptMaxTextHeight)
+        min(max(promptMeasuredHeight, promptMinTextHeight), promptMaxTextHeight)
     }
 
     private var composerContent: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.composerSpacing) {
-            ZStack(alignment: .topLeading) {
-                if model.promptText.isEmpty {
-                    Text("Ask Anything")
-                        .font(CPSLTheme.bodyFont)
-                        .foregroundStyle(CPSLTheme.mutedText)
-                        .padding(.horizontal, CPSLTheme.medium)
-                        .padding(.vertical, CPSLTheme.promptVerticalInset)
+        VStack(alignment: .leading, spacing: isCompact ? 0 : CPSLTheme.composerSpacing) {
+            if isCompact {
+                HStack(alignment: .bottom, spacing: CPSLTheme.small) {
+                    promptInputBox
+                    compactActionRow
                 }
-
-#if canImport(UIKit)
-                CPSLPromptTextView(
-                    text: $model.promptText,
-                    isCommandInput: isCommandInput,
-                    isDisabled: model.isRunning,
-                    maxHeight: promptMaxTextHeight,
-                    focusPromptRequest: focusPromptRequest,
-                    dismissKeyboardRequest: dismissKeyboardRequest
-                ) { height in
-                    promptContentHeight = height
-                }
-                .frame(height: promptTextHeight)
-#else
-                TextField("", text: $model.promptText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .submitLabel(.return)
-                    .lineLimit(1...6)
-                    .font(CPSLTheme.bodyFont)
-                    .foregroundStyle(CPSLTheme.text)
-                    .tint(CPSLTheme.text)
-                    .focused($isPromptFocused)
-                    .disabled(model.isRunning)
-                    .padding(.horizontal, CPSLTheme.medium)
-                    .padding(.vertical, CPSLTheme.promptVerticalInset)
-#endif
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                focusPrompt()
-            }
-            .background {
-                RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
-                    .fill(isCommandInput ? CPSLTheme.command.opacity(0.82) : Color.clear)
-            }
-            .animation(.easeOut(duration: 0.16), value: isCommandInput)
-
-            HStack(spacing: CPSLTheme.medium) {
-                Button {
-                    dismissKeyboard()
-                    model.showComingSoon("coming soon")
-                } label: {
-                    Image(systemName: "plus")
-                        .font(CPSLTheme.iconLargeFont)
-                        .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(CPSLTheme.text)
-                .cpslGlassBackground(
-                    in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                    tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.38),
-                    strokeOpacity: 0.045
-                )
-                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-
-                Spacer()
-
-                Button {
-                    toggleDictation()
-                } label: {
-                    Image(systemName: dictation.isActive ? "mic.fill" : "mic")
-                        .font(CPSLTheme.iconMediumFont)
-                        .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(dictation.isActive ? CPSLTheme.mauve : CPSLTheme.text)
-                .cpslGlassBackground(
-                    in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
-                    tint: CPSLGlassTuning.tint(
-                        dictation.isActive ? CPSLTheme.mauve : CPSLTheme.card,
-                        opacity: dictation.isActive ? 0.22 : 0.38
-                    ),
-                    strokeOpacity: 0.045
-                )
-                .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-                .disabled(model.isRunning)
-
-                if hasPromptInput {
-                    Button {
-                        dismissKeyboard()
-                        model.submitPrompt()
-                    } label: {
-                        Image(systemName: "arrow.up")
-                            .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconLarge, weight: .semibold))
-                            .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
-                            .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(CPSLTheme.background)
-                    .background(CPSLTheme.text)
-                    .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-                }
+            } else {
+                promptInputBox
+                fullActionRow
             }
         }
-        .padding(CPSLTheme.composerPadding)
+        .padding(isCompact ? CPSLTheme.small : CPSLTheme.composerPadding)
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
         .contextMenu {
             Button {
@@ -304,6 +237,136 @@ struct CPSLPromptComposerView: View {
             tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.54),
             strokeOpacity: 0.055
         )
+    }
+
+    private var promptInputBox: some View {
+        ZStack(alignment: .topLeading) {
+            if model.promptText.isEmpty {
+                Text("Ask Anything")
+                    .font(CPSLTheme.bodyFont)
+                    .foregroundStyle(CPSLTheme.mutedText)
+                    .padding(.horizontal, CPSLTheme.medium)
+                    .padding(.vertical, promptVerticalInset)
+            }
+
+#if canImport(UIKit)
+            CPSLPromptTextView(
+                text: $model.promptText,
+                isCommandInput: isCommandInput,
+                isDisabled: model.isRunning,
+                verticalInset: promptVerticalInset,
+                maxHeight: promptMaxTextHeight,
+                focusPromptRequest: focusPromptRequest,
+                dismissKeyboardRequest: dismissKeyboardRequest
+            ) { height in
+                promptContentHeight = height
+            }
+            .frame(height: promptTextHeight)
+#else
+            TextField("", text: $model.promptText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .submitLabel(.return)
+                .lineLimit(1...promptMaxLineCount)
+                .font(CPSLTheme.bodyFont)
+                .foregroundStyle(CPSLTheme.text)
+                .tint(CPSLTheme.text)
+                .focused($isPromptFocused)
+                .disabled(model.isRunning)
+                .padding(.horizontal, CPSLTheme.medium)
+                .padding(.vertical, promptVerticalInset)
+#endif
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            focusPrompt()
+        }
+        .background {
+            RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous)
+                .fill(isCommandInput ? CPSLTheme.command.opacity(0.82) : Color.clear)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.easeOut(duration: 0.16), value: isCommandInput)
+    }
+
+    private var fullActionRow: some View {
+        HStack(spacing: CPSLTheme.medium) {
+            addButton
+
+            Spacer()
+
+            dictationButton
+            sendButton
+        }
+    }
+
+    private var compactActionRow: some View {
+        HStack(spacing: CPSLTheme.small) {
+            dictationButton
+            sendButton
+        }
+    }
+
+    private var addButton: some View {
+        Button {
+            dismissKeyboard()
+            model.showComingSoon("coming soon")
+        } label: {
+            Image(systemName: "plus")
+                .font(CPSLTheme.iconLargeFont)
+                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.text)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+            tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.38),
+            strokeOpacity: 0.045
+        )
+        .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+    }
+
+    private var dictationButton: some View {
+        Button {
+            toggleDictation()
+        } label: {
+            Image(systemName: dictation.isActive ? "mic.fill" : "mic")
+                .font(CPSLTheme.iconMediumFont)
+                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(dictation.isActive ? CPSLTheme.mauve : CPSLTheme.text)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+            tint: CPSLGlassTuning.tint(
+                dictation.isActive ? CPSLTheme.mauve : CPSLTheme.card,
+                opacity: dictation.isActive ? 0.22 : 0.38
+            ),
+            strokeOpacity: 0.045
+        )
+        .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+        .disabled(model.isRunning)
+    }
+
+    @ViewBuilder
+    private var sendButton: some View {
+        if hasPromptInput {
+            Button {
+                dismissKeyboard()
+                model.submitPrompt()
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconLarge, weight: .semibold))
+                    .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                    .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(CPSLTheme.background)
+            .background(CPSLTheme.text)
+            .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+        }
     }
 
     var body: some View {

@@ -23,7 +23,7 @@ final class CPSLWebBrowserService: ObservableObject {
     private var activityClearTask: Task<Void, Never>?
     private let websiteDataStore = WKWebsiteDataStore.default()
 
-    private let defaultWindowSize = CGSize(width: 900, height: 700)
+    private let defaultWindowSize = CGSize(width: 1200, height: 900)
     private let maxInlineJSONBytes = 16_000
     private let activityDuration: TimeInterval = 1.6
 
@@ -39,6 +39,15 @@ final class CPSLWebBrowserService: ObservableObject {
             return nil
         }
         return summaries.first { $0.id == visibleBrowserID }
+    }
+
+    var visibleBrowserWindowSize: CGSize {
+        guard let visibleBrowserID,
+              let browser = browsers[visibleBrowserID]
+        else {
+            return defaultWindowSize
+        }
+        return browser.windowSize
     }
 
     func setSandboxRoot(_ url: URL) {
@@ -160,11 +169,11 @@ final class CPSLWebBrowserService: ObservableObject {
         refreshSummaries()
     }
 
-    func updateVisibleBrowserViewport(_ size: CGSize) {
+    func updateVisibleBrowserProjection(availableSize: CGSize) {
         guard let visibleBrowserID, let browser = browsers[visibleBrowserID] else {
             return
         }
-        updateBrowserViewport(browser, size: size)
+        updateBrowserProjection(browser, availableSize: availableSize)
     }
 
     func handleJSON(_ requestJSON: String) async -> String {
@@ -295,7 +304,7 @@ final class CPSLWebBrowserService: ObservableObject {
         case "eval":
             let browser = try await requireBrowser(request.browser)
             applyNetworkPolicy(from: request, to: browser)
-            let value = try await evaluateJavaScript(request.evalScript, in: browser)
+            let value = try await evaluateUserJavaScript(request, in: browser)
             return success(browser: browser).merging(["value": renderedJavaScriptValue(value)]) { _, new in new }
 
         case "screenshot":
@@ -378,6 +387,11 @@ final class CPSLWebBrowserService: ObservableObject {
         // Use the shared persistent WebKit store so cookies, local storage, and
         // logged-in browsing state survive across tabs and app launches.
         configuration.websiteDataStore = websiteDataStore
+        #if canImport(UIKit)
+        if #available(iOS 13.0, *) {
+            configuration.defaultWebpagePreferences.preferredContentMode = .desktop
+        }
+        #endif
         let contentController = WKUserContentController()
         if resourceMode == .lean, let ruleList = await leanContentRuleList() {
             contentController.add(ruleList)
@@ -605,21 +619,38 @@ final class CPSLWebBrowserService: ObservableObject {
         }
     }
 
-    private func updateBrowserViewport(_ browser: CPSLWebBrowserSession, size: CGSize) {
-        guard size.width > 1, size.height > 1 else {
-            return
-        }
-        browser.windowSize = size
-        browser.webView.frame = CGRect(origin: .zero, size: size)
-        refreshSummaries()
-    }
-
     private func refreshBrowserNavigation(id: String, webView: WKWebView) {
         guard let browser = browsers[id], browser.webView === webView else {
             return
         }
         browser.title = webView.title
         browser.url = webView.url?.absoluteString
+        refreshSummaries()
+    }
+
+    private func updateBrowserProjection(_ browser: CPSLWebBrowserSession, availableSize: CGSize) {
+        guard availableSize.width > 1,
+              availableSize.height > 1,
+              browser.windowSize.width > 1
+        else {
+            return
+        }
+
+        let projectedWidth = max(defaultWindowSize.width, browser.windowSize.width)
+        let scale = availableSize.width / projectedWidth
+        guard scale > 0 else {
+            return
+        }
+        let projectedHeight = max(defaultWindowSize.height, ceil(availableSize.height / scale))
+        let projectedSize = CGSize(width: projectedWidth, height: projectedHeight)
+        guard abs(projectedSize.width - browser.windowSize.width) > 1
+            || abs(projectedSize.height - browser.windowSize.height) > 1
+        else {
+            return
+        }
+
+        browser.windowSize = projectedSize
+        browser.webView.frame = CGRect(origin: .zero, size: projectedSize)
         refreshSummaries()
     }
 
@@ -924,6 +955,20 @@ final class CPSLWebBrowserService: ObservableObject {
         }
     }
 
+    private func evaluateUserJavaScript(
+        _ request: CPSLWebBrowserRequest,
+        in browser: CPSLWebBrowserSession
+    ) async throws -> Any? {
+        do {
+            return try await evaluateJavaScript(
+                Self.renderedEvalScript(script: request.script ?? "", functionBody: request.functionBody),
+                in: browser
+            )
+        } catch {
+            return try await evaluateJavaScript(request.evalScript, in: browser)
+        }
+    }
+
     private func renderedJavaScriptValue(_ value: Any?) -> String {
         guard let value else {
             return "null"
@@ -967,6 +1012,8 @@ final class CPSLWebBrowserService: ObservableObject {
             "browser": browser.id,
             "resourceMode": browser.resourceMode.rawValue,
             "url": browser.url ?? browser.webView.url?.absoluteString ?? "",
+            "windowWidth": Int(browser.windowSize.width.rounded()),
+            "windowHeight": Int(browser.windowSize.height.rounded()),
         ]
     }
 
@@ -1094,6 +1141,7 @@ final class CPSLWebBrowserService: ObservableObject {
                 "url": page["url"] ?? "",
                 "textPreview": String((page["text"] as? String ?? "").prefix(2000)),
                 "actions": page["actions"] ?? [],
+                "viewport": page["viewport"] ?? [:],
                 "resourceCount": page["resourceCount"] ?? 0,
             ]
         }
@@ -1138,17 +1186,9 @@ final class CPSLWebBrowserService: ObservableObject {
             + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
             + "Version/\(safariVersion) Safari/605.1.15"
         #elseif canImport(UIKit)
-        let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
-        let osComponents = version.patchVersion > 0
-            ? [version.majorVersion, version.minorVersion, version.patchVersion]
-            : [version.majorVersion, version.minorVersion]
-        let osVersion = osComponents
-            .map(String.init)
-            .joined(separator: "_")
-        let cpuToken = device == "iPad" ? "CPU OS" : "CPU iPhone OS"
-        return "Mozilla/5.0 (\(device); \(cpuToken) \(osVersion) like Mac OS X) "
+        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-            + "Version/\(safariVersion) Mobile/15E148 Safari/604.1"
+            + "Version/\(safariVersion) Safari/605.1.15"
         #else
         return "Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/\(safariVersion) Safari/605.1.15"
         #endif
@@ -1195,7 +1235,9 @@ private final class CPSLWebBrowserSession {
             isVisible: isVisible,
             canGoBack: webView.canGoBack,
             canGoForward: webView.canGoForward,
-            isLoading: webView.isLoading
+            isLoading: webView.isLoading,
+            windowWidth: Int(windowSize.width.rounded()),
+            windowHeight: Int(windowSize.height.rounded())
         )
     }
 }
@@ -1209,6 +1251,8 @@ struct CPSLWebBrowserSummary: Identifiable, Equatable, Sendable {
     let canGoBack: Bool
     let canGoForward: Bool
     let isLoading: Bool
+    let windowWidth: Int
+    let windowHeight: Int
 
     var jsonObject: [String: Any] {
         var object: [String: Any] = [
@@ -1218,6 +1262,8 @@ struct CPSLWebBrowserSummary: Identifiable, Equatable, Sendable {
             "canGoForward": canGoForward,
             "loading": isLoading,
             "visible": isVisible,
+            "windowWidth": windowWidth,
+            "windowHeight": windowHeight,
         ]
         if let title {
             object["title"] = title
@@ -1729,6 +1775,11 @@ private extension CPSLWebBrowserService {
         faviconURL: iconElement ? iconElement.href || "" : "",
         text,
         actions,
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+          devicePixelRatio: window.devicePixelRatio || 1
+        },
         resources,
         resourceCount: performance.getEntriesByType("resource").length,
         htmlBytes: html.length,
@@ -1760,15 +1811,43 @@ private extension CPSLWebBrowserService {
         (() => {
           const element = document.querySelector(\(selector));
           if (!element) return JSON.stringify({ok:false,error:"action not found"});
+          const textValue = \(value);
+          const inputType = textValue === "\\n" ? "insertLineBreak" : "insertText";
+          const isRichText = element.isContentEditable || element.getAttribute("contenteditable") === "true";
+          function fireInput(target, data, type) {
+            if (window.InputEvent) {
+              target.dispatchEvent(new InputEvent("input", {bubbles:true, data, inputType:type}));
+            } else {
+              target.dispatchEvent(new Event("input", {bubbles:true}));
+            }
+            target.dispatchEvent(new Event("change", {bubbles:true}));
+          }
           element.scrollIntoView({block:"center", inline:"center"});
           if (element.focus) element.focus({preventScroll:true});
-          if ("value" in element) {
-            element.value = \(value);
+          if ("value" in element && !isRichText) {
+            element.value = textValue;
+            fireInput(element, textValue, inputType);
+          } else if (isRichText) {
+            const selection = window.getSelection();
+            if (selection) {
+              const range = document.createRange();
+              range.selectNodeContents(element);
+              selection.removeAllRanges();
+              selection.addRange(range);
+            }
+            let inserted = false;
+            try {
+              document.execCommand("delete", false, null);
+              inserted = textValue.length === 0 || document.execCommand("insertText", false, textValue);
+            } catch (error) {}
+            if (!inserted) {
+              element.textContent = textValue;
+            }
+            fireInput(element, textValue, inputType);
           } else {
-            element.textContent = \(value);
+            element.textContent = textValue;
+            fireInput(element, textValue, inputType);
           }
-          element.dispatchEvent(new Event("input", {bubbles:true}));
-          element.dispatchEvent(new Event("change", {bubbles:true}));
           return JSON.stringify({ok:true});
         })()
         """
@@ -1787,28 +1866,75 @@ private extension CPSLWebBrowserService {
           if (!element) return JSON.stringify({ok:false,error:"action not found"});
           const textValue = \(value);
           const key = textValue === "\\n" ? "Enter" : textValue;
+          const inputType = key === "Enter" ? "insertLineBreak" : "insertText";
           const keyCode = key === "Enter" ? 13 : (key.length === 1 ? key.codePointAt(0) : 0);
           const keyboardOptions = {bubbles:true, cancelable:true, key, code:key.length === 1 ? "" : key, keyCode, which:keyCode};
+          const isRichText = element.isContentEditable || element.getAttribute("contenteditable") === "true";
+          function fireBeforeInput(target) {
+            if (!window.InputEvent) return true;
+            return target.dispatchEvent(new InputEvent("beforeinput", {
+              bubbles:true,
+              cancelable:true,
+              data:textValue,
+              inputType
+            }));
+          }
+          function fireInput(target) {
+            if (window.InputEvent) {
+              target.dispatchEvent(new InputEvent("input", {bubbles:true, data:textValue, inputType}));
+            } else {
+              target.dispatchEvent(new Event("input", {bubbles:true}));
+            }
+            target.dispatchEvent(new Event("change", {bubbles:true}));
+          }
+          function collapseSelectionToEnd(target) {
+            const selection = window.getSelection();
+            if (!selection) return;
+            if (selection.rangeCount && target.contains(selection.anchorNode)) return;
+            const range = document.createRange();
+            range.selectNodeContents(target);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+          }
           if (element.focus) element.focus({preventScroll:true});
-          if (!element.dispatchEvent(new KeyboardEvent("keydown", keyboardOptions))) {
-            element.dispatchEvent(new KeyboardEvent("keyup", keyboardOptions));
-            return JSON.stringify({ok:true});
-          }
+          element.dispatchEvent(new KeyboardEvent("keydown", keyboardOptions));
           element.dispatchEvent(new KeyboardEvent("keypress", keyboardOptions));
-          if (window.InputEvent) {
-            element.dispatchEvent(new InputEvent("beforeinput", {bubbles:true, cancelable:true, data:textValue, inputType:"insertText"}));
-          }
-          if ("value" in element) {
-            element.value = (element.value || "") + textValue;
+          fireBeforeInput(element);
+          if ("value" in element && !isRichText) {
+            const start = typeof element.selectionStart === "number" ? element.selectionStart : (element.value || "").length;
+            const end = typeof element.selectionEnd === "number" ? element.selectionEnd : start;
+            if (element.setRangeText) {
+              element.setRangeText(textValue, start, end, "end");
+            } else {
+              const current = element.value || "";
+              element.value = current.slice(0, start) + textValue + current.slice(end);
+            }
+            fireInput(element);
+          } else if (isRichText) {
+            collapseSelectionToEnd(element);
+            let inserted = false;
+            try {
+              inserted = document.execCommand("insertText", false, textValue);
+            } catch (error) {}
+            if (!inserted) {
+              const selection = window.getSelection();
+              if (selection && selection.rangeCount) {
+                const range = selection.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(document.createTextNode(textValue));
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+              } else {
+                element.textContent = (element.textContent || "") + textValue;
+              }
+            }
+            fireInput(element);
           } else {
             element.textContent = (element.textContent || "") + textValue;
+            fireInput(element);
           }
-          if (window.InputEvent) {
-            element.dispatchEvent(new InputEvent("input", {bubbles:true, data:textValue, inputType:"insertText"}));
-          } else {
-            element.dispatchEvent(new Event("input", {bubbles:true}));
-          }
-          element.dispatchEvent(new Event("change", {bubbles:true}));
           element.dispatchEvent(new KeyboardEvent("keyup", keyboardOptions));
           return JSON.stringify({ok:true});
         })()
@@ -1856,6 +1982,25 @@ private extension CPSLWebBrowserService {
           }
           window.scrollBy(\(deltaX), \(deltaY));
           return JSON.stringify({ok:true});
+        })()
+        """
+    }
+
+    static func renderedEvalScript(script: String, functionBody: Bool) -> String {
+        let valueExpression = functionBody ? "(function(){\(script)})()" : "(\(script))"
+        return """
+        (() => {
+          function render(value) {
+            if (value === undefined) return "undefined";
+            if (value === null) return "null";
+            if (typeof value === "string") return value;
+            try {
+              return JSON.stringify(value);
+            } catch (error) {
+              return String(value);
+            }
+          }
+          return render(\(valueExpression));
         })()
         """
     }

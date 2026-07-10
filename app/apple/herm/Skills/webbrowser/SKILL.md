@@ -34,12 +34,15 @@ Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in stat
 
 - `webbrowser.create()` and `webbrowser.open()` use lean resource mode by default in CPSL.
 - Lean mode avoids heavy resources such as images, media, and fonts for faster agent browsing.
+- Herm browser sessions default to a desktop-sized viewport, currently 1200px
+  wide by default. Do not resize a browser to phone dimensions unless the user
+  explicitly needs mobile rendering.
 - Use `{resource_mode="full"}` when visual resources are needed immediately.
 - Use full mode from the first navigation for heavy JavaScript apps, login flows,
   social sites such as X, or any page that may treat missing images/fonts/media
   as a broken or non-browser session.
 - `webbrowser.show(browser)` is only for explicit user handoff. The native host should show the browser UI and promote lean pages to full mode before displaying them.
-- `webbrowser.type()` uses the host's natural typing path by default. In Herm, visible macOS pages use AppKit key events; iOS and offscreen pages use natural-paced WebKit input events. Use `{speed=4.0}` if you need to be explicit.
+- `webbrowser.type()` uses the host's natural typing path by default. In Herm, visible macOS pages use AppKit key events; iOS and offscreen pages use natural-paced WebKit DOM insertion with input events for editors. Use `{speed=4.0}` if you need to be explicit. Do not switch to `{backend="js"}` unless the default path fails.
 
 ## Search And Browse
 
@@ -78,6 +81,10 @@ webbrowser.scroll(browser, 500, 700, 0, 600)
 ```lua
 local title = webbrowser.eval(browser, "return document.title", {function_body=true}).value
 ```
+
+Return strings, numbers, booleans, or JSON-serializable values from eval. For
+DOM nodes or framework objects, extract the fields you need and return a plain
+table/object or `JSON.stringify(...)`.
 
 ## Screenshots
 
