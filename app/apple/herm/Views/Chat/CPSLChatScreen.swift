@@ -707,15 +707,100 @@ private struct CPSLBottomChromeView: View {
         VStack(spacing: 0) {
             CPSLToolStripView(model: model)
 
-            CPSLPromptComposerView(
-                model: model,
-                dismissKeyboardRequest: promptDismissRequest,
-                isCompact: isPromptCompact
-            ) {
-                promptDismissRequest += 1
+            if let progress = model.iCloudImportProgress {
+                CPSLICloudImportStatusView(progress: progress) {
+                    model.cancelICloudImport()
+                }
+            } else {
+                CPSLPromptComposerView(
+                    model: model,
+                    dismissKeyboardRequest: promptDismissRequest,
+                    isCompact: isPromptCompact
+                ) {
+                    promptDismissRequest += 1
+                }
             }
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+private struct CPSLICloudImportStatusView: View {
+    let progress: CPSLICloudImportProgress
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small) {
+            HStack(spacing: CPSLTheme.medium) {
+                if progress.phase != .copying {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "icloud.and.arrow.down")
+                        .font(CPSLTheme.iconMediumFont)
+                        .foregroundStyle(CPSLTheme.IconPalette.cloud)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Connecting iCloud Folder")
+                        .font(CPSLTheme.supportingMediumFont)
+                        .foregroundStyle(CPSLTheme.text)
+                    Text(detailText)
+                        .font(CPSLTheme.captionFont)
+                        .foregroundStyle(CPSLTheme.secondaryText)
+                }
+
+                Spacer()
+
+                Button("Cancel", action: onCancel)
+                    .font(CPSLTheme.controlFont)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CPSLTheme.text)
+                    .padding(.horizontal, CPSLTheme.medium)
+                    .frame(height: CPSLTheme.controlSize)
+                    .cpslGlassBackground(
+                        in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                        tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.38),
+                        strokeOpacity: 0.045
+                    )
+                    .disabled(progress.phase == .cancelling)
+                    .opacity(progress.phase == .cancelling ? 0.45 : 1)
+            }
+
+            if let fraction = progress.fractionCompleted {
+                ProgressView(value: fraction)
+                    .tint(CPSLTheme.IconPalette.cloud)
+            }
+        }
+        .padding(CPSLTheme.composerPadding)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous),
+            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.54),
+            strokeOpacity: 0.055
+        )
+        .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
+        .padding(.bottom, CPSLTheme.medium)
+    }
+
+    private var detailText: String {
+        if progress.phase == .cancelling {
+            return "Stopping import…"
+        }
+        guard progress.phase == .copying else {
+            return "Preparing staged snapshot…"
+        }
+        if progress.totalBytes > 0 {
+            let completed = ByteCountFormatter.string(
+                fromByteCount: progress.completedBytes,
+                countStyle: .file
+            )
+            let total = ByteCountFormatter.string(
+                fromByteCount: progress.totalBytes,
+                countStyle: .file
+            )
+            return "\(completed) of \(total)"
+        }
+        return "\(progress.completedItems) of \(progress.totalItems) items"
     }
 }
 
@@ -741,8 +826,8 @@ private struct CPSLHeaderActionsView: View {
             CPSLChromeIconButton(systemName: "square.and.pencil", accessibilityLabel: "New conversation") {
                 model.startNewConversation()
             }
-            .disabled(model.isRunning)
-            .opacity(model.isRunning ? 0.45 : 1)
+            .disabled(model.isBusy)
+            .opacity(model.isBusy ? 0.45 : 1)
         }
         .padding(.horizontal, CPSLTheme.medium)
         .padding(.top, CPSLTheme.topChromeSafeAreaGap)

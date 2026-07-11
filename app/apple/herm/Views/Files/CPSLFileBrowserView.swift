@@ -395,6 +395,10 @@ private struct CPSLFileBrowserActions {
         model.iCloudMounts
     }
 
+    var isBusy: Bool {
+        model.isBusy
+    }
+
     func loadPath(_ path: String) {
         model.loadBrowserPath(path)
     }
@@ -732,6 +736,8 @@ private struct CPSLFileLocationsView: View {
             ) {
                 actions.connectICloud()
             }
+            .disabled(actions.isBusy)
+            .opacity(actions.isBusy ? 0.45 : 1)
 
             CPSLCloudConnectionRow(
                 title: "Cloud Drives",
@@ -945,7 +951,8 @@ private struct CPSLFileBrowserRowView: View {
     }
 
     private func isICloudMountEntry(_ entry: CPSLFileEntry) -> Bool {
-        actions.iCloudMounts.contains { $0.virtualPath == entry.path }
+        !actions.isBusy &&
+            actions.iCloudMounts.contains { $0.virtualPath == entry.path }
     }
 }
 

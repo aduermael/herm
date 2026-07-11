@@ -39,6 +39,7 @@ swift_files=(
   app/apple/herm/Services/Agent/CPSLConversationStore.swift
   app/apple/herm/Services/Agent/CPSLSkills.swift
   app/apple/herm/Services/CPSLDebugService.swift
+  app/apple/herm/Services/CPSLICloudStagingStorage.swift
   app/apple/herm/Models/CPSLTypes.swift
   app/apple/herm/Models/CPSLChatModel.swift
   app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
@@ -69,6 +70,7 @@ required_files=(
   scripts/vet-apple-agent-config.swift
   scripts/vet-apple-agent-concurrency-ui.swift
   scripts/vet-apple-agent-tool-formatting.swift
+  scripts/vet-apple-icloud-staging.swift
   scripts/vet-apple-conversation-store.swift
   scripts/vet-apple-openai-protocol.swift
   "${swift_files[@]}"
@@ -418,6 +420,11 @@ if command -v swiftc >/dev/null 2>&1; then
   /tmp/herm-vet-openai-protocol
   swiftc scripts/vet-apple-agent-concurrency-ui.swift -o /tmp/herm-vet-agent-concurrency-ui
   /tmp/herm-vet-agent-concurrency-ui
+  swiftc \
+    app/apple/herm/Services/CPSLICloudStagingStorage.swift \
+    scripts/vet-apple-icloud-staging.swift \
+    -o /tmp/herm-vet-icloud-staging
+  /tmp/herm-vet-icloud-staging
   if [[ "$(uname -s)" == "Darwin" ]]; then
     swiftc \
       app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \

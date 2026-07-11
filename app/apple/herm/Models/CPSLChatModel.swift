@@ -34,8 +34,9 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var isLocationActivityActive = false
     @Published private(set) var iCloudMounts: [CPSLICloudMount] = []
     @Published private(set) var isUpdatingICloudMounts = false
+    @Published private(set) var iCloudImportProgress: CPSLICloudImportProgress?
 
-    private var isBusy: Bool {
+    var isBusy: Bool {
         isRunning || isUpdatingICloudMounts
     }
 
@@ -55,6 +56,8 @@ final class CPSLChatModel: ObservableObject {
     var isSuppressingAssistantStream = false
     var typewriterBuffer = ""
     var typewriterTask: Task<Void, Never>?
+    private var iCloudImportTask: Task<Void, Never>?
+    private var activeICloudImportID: UUID?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
@@ -171,6 +174,9 @@ final class CPSLChatModel: ObservableObject {
         }
         webBrowser.webVisitOccurred = { [weak self] visit in
             self?.appendWebSearchVisit(visit)
+        }
+        Task {
+            await service.prepareICloudStaging()
         }
         Task {
             await bootstrap()
@@ -680,18 +686,65 @@ final class CPSLChatModel: ObservableObject {
 
         fileBrowserError = nil
         isUpdatingICloudMounts = true
-        Task {
+        iCloudImportProgress = .preparing
+        let importID = UUID()
+        activeICloudImportID = importID
+        iCloudImportTask = Task { [weak self, service] in
             defer {
-                isUpdatingICloudMounts = false
+                if let self, self.activeICloudImportID == importID {
+                    self.activeICloudImportID = nil
+                    self.iCloudImportTask = nil
+                    self.iCloudImportProgress = nil
+                    self.isUpdatingICloudMounts = false
+                }
             }
             do {
-                let mount = try await service.stageICloudDirectory(from: url)
-                iCloudMounts = await service.activeICloudMounts()
-                loadBrowserPath(mount.virtualPath)
+                let mount = try await service.stageICloudDirectory(from: url) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.applyICloudImportProgress(progress, importID: importID)
+                    }
+                }
+                let mounts = await service.activeICloudMounts()
+                self?.iCloudMounts = mounts
+                self?.loadBrowserPath(mount.virtualPath)
+            } catch is CancellationError {
+                return
             } catch {
-                fileBrowserError = "iCloud: \(error.localizedDescription)"
+                self?.fileBrowserError = "iCloud: \(error.localizedDescription)"
             }
         }
+    }
+
+    func cancelICloudImport() {
+        if let progress = iCloudImportProgress {
+            iCloudImportProgress = progress.cancelling
+        }
+        iCloudImportTask?.cancel()
+    }
+
+    deinit {
+        iCloudImportTask?.cancel()
+    }
+
+    private func applyICloudImportProgress(
+        _ progress: CPSLICloudImportProgress,
+        importID: UUID
+    ) {
+        guard activeICloudImportID == importID else {
+            return
+        }
+        guard iCloudImportProgress?.phase != .cancelling else {
+            return
+        }
+        if let current = iCloudImportProgress, current.phase == .copying {
+            guard progress.phase == .copying,
+                progress.completedBytes >= current.completedBytes,
+                progress.completedItems >= current.completedItems
+            else {
+                return
+            }
+        }
+        iCloudImportProgress = progress
     }
 
     func reportICloudImportError(_ error: Error) {
@@ -908,7 +961,8 @@ final class CPSLChatModel: ObservableObject {
         do {
             var conversationID: String
             var parentID: String
-            let promptForConversation = systemPrompt(with: await service.availableSkills())
+            let availableSkills = await service.availableSkills()
+            let promptForConversation = systemPrompt(with: availableSkills)
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -958,9 +1012,15 @@ final class CPSLChatModel: ObservableObject {
             activeModel = config.model
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            let replaySystemPrompt = addingICloudMountContext(
-                to: currentSystemPrompt ?? promptForConversation
-            )
+            // Stored prompts may advertise capabilities that are deliberately
+            // unavailable while personal mounts are connected. Use the live
+            // catalog for an isolated run instead of replaying stale skills.
+            let replayBasePrompt = iCloudMounts.isEmpty
+                ? currentSystemPrompt ?? promptForConversation
+                : systemPrompt(with: availableSkills.filter { skill in
+                    skill.name.caseInsensitiveCompare("webbrowser") != .orderedSame
+                })
+            let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,

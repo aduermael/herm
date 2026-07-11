@@ -176,6 +176,14 @@ private typealias CPSLSessionNewWithHostCallbacksV3Function = @convention(c) (
     UnsafeRawPointer?
 ) -> OpaquePointer?
 
+nonisolated private final class CPSLFileCoordinatorCancellationBox: @unchecked Sendable {
+    let coordinator = NSFileCoordinator(filePresenter: nil)
+
+    func cancel() {
+        coordinator.cancel()
+    }
+}
+
 private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
     private let lock = NSLock()
     private var value: String
@@ -555,6 +563,8 @@ actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
     private nonisolated static let textPreviewByteLimit = 1_000_000
     private nonisolated static let temporaryFileLifetime: TimeInterval = 24 * 60 * 60
+    private nonisolated static let iCloudStagingProcessRoot =
+        CPSLICloudStagingStorage.makeProcessRoot(in: FileManager.default.temporaryDirectory)
 
     private let webBrowser: CPSLWebBrowserService
     private let location: CPSLLocationService
@@ -563,12 +573,12 @@ actor CPSLDebugService {
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
     private var isInitializingSession = false
+    private var isStagingICloudDirectory = false
     private var evaluatingSessionID: Int?
     private var sandboxURLs: CPSLSandboxURLs?
     private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
     private var iCloudMounts: [CPSLICloudMount] = []
-    private let iCloudStagingRoot = FileManager.default.temporaryDirectory
-        .appendingPathComponent("herm-icloud-\(UUID().uuidString)", isDirectory: true)
+    private let iCloudStagingRoot: URL
 
     init(
         webBrowser: CPSLWebBrowserService,
@@ -580,6 +590,9 @@ actor CPSLDebugService {
         self.location = location
         self.calendarActivityNotifier = calendarActivityNotifier
         self.fileActivityNotifier = fileActivityNotifier
+        iCloudStagingRoot = CPSLICloudStagingStorage.makeServiceRoot(
+            in: Self.iCloudStagingProcessRoot
+        )
     }
 
     deinit {
@@ -987,10 +1000,26 @@ actor CPSLDebugService {
         iCloudMounts
     }
 
-    func stageICloudDirectory(from sourceURL: URL) throws -> CPSLICloudMount {
+    func prepareICloudStaging() async {
+        try? await CPSLICloudStagingCoordinator.shared.prepare(
+            serviceRoot: iCloudStagingRoot,
+            processRoot: Self.iCloudStagingProcessRoot,
+            temporaryRoot: FileManager.default.temporaryDirectory
+        )
+    }
+
+    func stageICloudDirectory(
+        from sourceURL: URL,
+        progress: @escaping @Sendable (CPSLICloudImportProgress) -> Void
+    ) async throws -> CPSLICloudMount {
         guard !isSessionBusy else {
             throw CPSLICloudMountError.sessionBusy
         }
+        isStagingICloudDirectory = true
+        defer {
+            isStagingICloudDirectory = false
+        }
+        try Task.checkCancellation()
         let sandboxURLs = try ensureSandboxURLs()
         self.sandboxURLs = sandboxURLs
 
@@ -1013,24 +1042,52 @@ actor CPSLDebugService {
         }
 
         let label = Self.sanitizedMountLabel(values.localizedName ?? sourceURL.lastPathComponent)
-        try ensureICloudStagingRoot()
         guard !Self.isHostURL(sourceURL, inside: iCloudStagingRoot) else {
             throw CPSLICloudMountError.invalidSource
         }
 
+        let permit = try await CPSLICloudStagingCoordinator.shared.beginImport(
+            serviceRoot: iCloudStagingRoot,
+            processRoot: Self.iCloudStagingProcessRoot,
+            temporaryRoot: FileManager.default.temporaryDirectory
+        )
         let slug = uniqueICloudMountSlug(for: label)
         let stagedURL = iCloudStagingRoot.appendingPathComponent(slug, isDirectory: true)
         do {
-            try copyICloudDirectory(from: sourceURL, to: stagedURL)
+            _ = try await copyICloudDirectory(
+                from: sourceURL,
+                to: stagedURL,
+                remainingUsage: permit.remainingUsage,
+                availableCapacity: permit.availableCapacityBytes,
+                progress: progress
+            )
+            try Task.checkCancellation()
         } catch {
-            try? FileManager.default.removeItem(at: stagedURL)
-            throw error
+            let originalError = error
+            var cleanupFailed = false
+            if FileManager.default.fileExists(atPath: stagedURL.path) {
+                do {
+                    try FileManager.default.removeItem(at: stagedURL)
+                } catch {
+                    cleanupFailed = true
+                }
+            }
+            await CPSLICloudStagingCoordinator.shared.finishImport()
+            if cleanupFailed {
+                throw CPSLICloudStagingError.cannotCleanUp
+            }
+            throw originalError
         }
 
-        let mount = CPSLICloudMount(label: label, slug: slug, hostURL: stagedURL)
+        let mount = CPSLICloudMount(
+            label: label,
+            slug: slug,
+            hostURL: stagedURL
+        )
         iCloudMounts.append(mount)
         iCloudMounts.sort { $0.virtualPath < $1.virtualPath }
         resetSessionForMountChange()
+        await CPSLICloudStagingCoordinator.shared.finishImport()
         return mount
     }
 
@@ -1077,6 +1134,9 @@ actor CPSLDebugService {
     }
 
     private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
+        guard !isStagingICloudDirectory else {
+            return Self.ffiFailure("An iCloud folder is still being staged")
+        }
         let sandboxURLs: CPSLSandboxURLs
         do {
             sandboxURLs = try ensureSandboxURLs()
@@ -1334,28 +1394,56 @@ actor CPSLDebugService {
         parent == "/" ? "/\(child)" : "\(parent)/\(child)"
     }
 
-    private func ensureICloudStagingRoot() throws {
-        try FileManager.default.createDirectory(at: iCloudStagingRoot, withIntermediateDirectories: true)
-    }
+    private func copyICloudDirectory(
+        from sourceURL: URL,
+        to stagedURL: URL,
+        remainingUsage: CPSLICloudStagingUsage,
+        availableCapacity: Int64,
+        progress: @escaping @Sendable (CPSLICloudImportProgress) -> Void
+    ) async throws -> CPSLICloudStagingUsage {
+        let cancellationBox = CPSLFileCoordinatorCancellationBox()
+        let coordinator = cancellationBox.coordinator
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            var coordinatorError: NSError?
+            var copyError: Error?
+            var stagingUsage: CPSLICloudStagingUsage?
 
-    private func copyICloudDirectory(from sourceURL: URL, to stagedURL: URL) throws {
-        let coordinator = NSFileCoordinator(filePresenter: nil)
-        var coordinatorError: NSError?
-        var copyError: Error?
-
-        coordinator.coordinate(readingItemAt: sourceURL, options: [], error: &coordinatorError) { coordinatedURL in
-            do {
-                try FileManager.default.copyItem(at: coordinatedURL, to: stagedURL)
-            } catch {
-                copyError = error
+            coordinator.coordinate(
+                readingItemAt: sourceURL,
+                options: [],
+                error: &coordinatorError
+            ) { coordinatedURL in
+                do {
+                    stagingUsage = try CPSLICloudStagingStorage.stageDirectory(
+                        from: coordinatedURL,
+                        to: stagedURL,
+                        remainingUsage: remainingUsage,
+                        availableCapacityBytes: availableCapacity,
+                        progress: progress
+                    )
+                } catch {
+                    copyError = error
+                }
             }
-        }
 
-        if let coordinatorError {
-            throw coordinatorError
-        }
-        if let copyError {
-            throw copyError
+            try Task.checkCancellation()
+            if let coordinatorError {
+                throw coordinatorError
+            }
+            if let copyError {
+                throw copyError
+            }
+            guard let stagingUsage else {
+                throw CPSLICloudStagingError.cannotEnumerateFolder
+            }
+            return stagingUsage
+        } onCancel: {
+            // NSFileCoordinator may wait for an active accessor to return.
+            // Never make the UI thread pay for that wait.
+            DispatchQueue.global(qos: .utility).async {
+                cancellationBox.cancel()
+            }
         }
     }
 
@@ -1382,7 +1470,7 @@ actor CPSLDebugService {
     }
 
     private var isSessionBusy: Bool {
-        isInitializingSession || evaluatingSessionID != nil
+        isInitializingSession || isStagingICloudDirectory || evaluatingSessionID != nil
     }
 
     private nonisolated static func sanitizedMountLabel(_ value: String) -> String {
@@ -1436,7 +1524,11 @@ actor CPSLDebugService {
             return "Could not encode session config JSON"
         }
 
-        let callbackBox = CPSLWebBrowserCallbackBox(service: webBrowser)
+        // A domain policy cannot constrain arbitrary JavaScript inside a WKWebView.
+        // Omit the browser capability entirely while personal mounts are active.
+        let callbackBox = iCloudMounts.isEmpty
+            ? CPSLWebBrowserCallbackBox(service: webBrowser)
+            : nil
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
         let calendarActivityCallbackBox = CPSLCalendarActivityCallbackBox(notifier: calendarActivityNotifier)
         let locationCallbackBox = CPSLLocationCallbackBox(service: location)
@@ -1593,7 +1685,7 @@ actor CPSLDebugService {
 
     private nonisolated static func performBlockingSessionInit(
         configJSON: String,
-        callbackBox: CPSLWebBrowserCallbackBox,
+        callbackBox: CPSLWebBrowserCallbackBox?,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
         locationCallbackBox: CPSLLocationCallbackBox,
@@ -1615,20 +1707,13 @@ actor CPSLDebugService {
 
     private nonisolated static func createSession(
         configJSON: String,
-        callbackBox: CPSLWebBrowserCallbackBox,
+        callbackBox: CPSLWebBrowserCallbackBox?,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
         locationCallbackBox: CPSLLocationCallbackBox,
         visionCallbackBox: CPSLVisionCallbackBox
     ) -> CPSLSessionInitResult {
         configureCPSLLibraryDirectory()
-        let userData = Unmanaged.passRetained(callbackBox).toOpaque()
-        var callbacks = cpsl_webbrowser_callbacks_t(
-            user_data: userData,
-            handle_json: cpslWebBrowserHandleJSON,
-            string_free: cpslWebBrowserStringFree,
-            user_data_free: cpslWebBrowserUserDataFree
-        )
         let fileActivityUserData = Unmanaged.passRetained(fileActivityCallbackBox).toOpaque()
         var fileActivityCallbacks = CPSLFileActivityCallbacks(
             user_data: fileActivityUserData,
@@ -1654,93 +1739,120 @@ actor CPSLDebugService {
             handle: cpslVisionHandle,
             user_data_free: cpslVisionUserDataFree
         )
-        let pointer: OpaquePointer?
-        let fallback: String
-        if let sessionNewWithHostCallbacksV3 = cpslSessionNewWithHostCallbacksV3Function(),
-           cpslVisionRespondFunction() != nil {
-            pointer = configJSON.withCString { configPointer in
-                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
-                    withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
-                        withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
-                            withUnsafePointer(to: &visionCallbacks) { visionCallbacksPointer in
-                                sessionNewWithHostCallbacksV3(
+
+        func createPointer(
+            webBrowserCallbacks: UnsafePointer<cpsl_webbrowser_callbacks_t>?
+        ) -> (pointer: OpaquePointer?, fallback: String) {
+            if let sessionNewWithHostCallbacksV3 = cpslSessionNewWithHostCallbacksV3Function(),
+               cpslVisionRespondFunction() != nil {
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                        withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+                            withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                                withUnsafePointer(to: &visionCallbacks) { visionCallbacksPointer in
+                                    sessionNewWithHostCallbacksV3(
+                                        configPointer,
+                                        webBrowserCallbacks,
+                                        UnsafeRawPointer(fileActivityCallbacksPointer),
+                                        UnsafeRawPointer(calendarActivityCallbacksPointer),
+                                        UnsafeRawPointer(locationCallbacksPointer),
+                                        UnsafeRawPointer(visionCallbacksPointer)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                return (pointer, "cpsl_session_new_with_host_callbacks_v3 returned NULL")
+            }
+
+            cpslVisionUserDataFree(visionUserData)
+            if let sessionNewWithHostCallbacksV2 = cpslSessionNewWithHostCallbacksV2Function() {
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                        withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+                            withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                                sessionNewWithHostCallbacksV2(
                                     configPointer,
-                                    &callbacks,
+                                    webBrowserCallbacks,
                                     UnsafeRawPointer(fileActivityCallbacksPointer),
                                     UnsafeRawPointer(calendarActivityCallbacksPointer),
-                                    UnsafeRawPointer(locationCallbacksPointer),
-                                    UnsafeRawPointer(visionCallbacksPointer)
+                                    UnsafeRawPointer(locationCallbacksPointer)
                                 )
                             }
                         }
                     }
                 }
+                return (pointer, "cpsl_session_new_with_host_callbacks_v2 returned NULL")
             }
-            fallback = "cpsl_session_new_with_host_callbacks_v3 returned NULL"
-        } else if let sessionNewWithHostCallbacksV2 = cpslSessionNewWithHostCallbacksV2Function() {
-            cpslVisionUserDataFree(visionUserData)
-            pointer = configJSON.withCString { configPointer in
-                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
-                    withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+
+            if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
+                cpslCalendarActivityUserDataFree(calendarActivityUserData)
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
                         withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
-                            sessionNewWithHostCallbacksV2(
+                            sessionNewWithHostCallbacks(
                                 configPointer,
-                                &callbacks,
+                                webBrowserCallbacks,
                                 UnsafeRawPointer(fileActivityCallbacksPointer),
-                                UnsafeRawPointer(calendarActivityCallbacksPointer),
                                 UnsafeRawPointer(locationCallbacksPointer)
                             )
                         }
                     }
                 }
+                return (pointer, "cpsl_session_new_with_host_callbacks returned NULL")
             }
-            fallback = "cpsl_session_new_with_host_callbacks_v2 returned NULL"
-        } else if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
-            cpslVisionUserDataFree(visionUserData)
-            cpslCalendarActivityUserDataFree(calendarActivityUserData)
-            pointer = configJSON.withCString { configPointer in
-                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
-                    withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
-                        sessionNewWithHostCallbacks(
+
+            if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
+                cpslCalendarActivityUserDataFree(calendarActivityUserData)
+                cpslLocationUserDataFree(locationUserData)
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                        sessionNewWithCallbacks(
                             configPointer,
-                            &callbacks,
-                            UnsafeRawPointer(fileActivityCallbacksPointer),
-                            UnsafeRawPointer(locationCallbacksPointer)
+                            webBrowserCallbacks,
+                            UnsafeRawPointer(fileActivityCallbacksPointer)
                         )
                     }
                 }
+                return (pointer, "cpsl_session_new_with_callbacks returned NULL")
             }
-            fallback = "cpsl_session_new_with_host_callbacks returned NULL"
-        } else if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
-            cpslVisionUserDataFree(visionUserData)
-            cpslCalendarActivityUserDataFree(calendarActivityUserData)
-            cpslLocationUserDataFree(locationUserData)
-            pointer = configJSON.withCString { configPointer in
-                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
-                    sessionNewWithCallbacks(
-                        configPointer,
-                        &callbacks,
-                        UnsafeRawPointer(fileActivityCallbacksPointer)
-                    )
-                }
-            }
-            fallback = "cpsl_session_new_with_callbacks returned NULL"
-        } else {
-            cpslVisionUserDataFree(visionUserData)
+
             cpslFileActivityUserDataFree(fileActivityUserData)
             cpslCalendarActivityUserDataFree(calendarActivityUserData)
             cpslLocationUserDataFree(locationUserData)
-            pointer = configJSON.withCString { configPointer in
-                cpsl_session_new_with_webbrowser_callbacks(configPointer, &callbacks)
+            if let webBrowserCallbacks {
+                let pointer = configJSON.withCString { configPointer in
+                    cpsl_session_new_with_webbrowser_callbacks(configPointer, webBrowserCallbacks)
+                }
+                return (pointer, "cpsl_session_new_with_webbrowser_callbacks returned NULL")
             }
-            fallback = "cpsl_session_new_with_webbrowser_callbacks returned NULL"
+            let pointer = configJSON.withCString { configPointer in
+                cpsl_session_new(configPointer)
+            }
+            return (pointer, "cpsl_session_new returned NULL")
         }
-        guard let pointer else {
+
+        let creationResult: (pointer: OpaquePointer?, fallback: String)
+        if let callbackBox {
+            let userData = Unmanaged.passRetained(callbackBox).toOpaque()
+            var callbacks = cpsl_webbrowser_callbacks_t(
+                user_data: userData,
+                handle_json: cpslWebBrowserHandleJSON,
+                string_free: cpslWebBrowserStringFree,
+                user_data_free: cpslWebBrowserUserDataFree
+            )
+            creationResult = withUnsafePointer(to: &callbacks) { callbacksPointer in
+                createPointer(webBrowserCallbacks: callbacksPointer)
+            }
+        } else {
+            creationResult = createPointer(webBrowserCallbacks: nil)
+        }
+
+        guard let pointer = creationResult.pointer else {
             return CPSLSessionInitResult(
                 pointer: nil,
-                errorMessage: lastErrorMessage(
-                    fallback: fallback
-                )
+                errorMessage: lastErrorMessage(fallback: creationResult.fallback)
             )
         }
         return CPSLSessionInitResult(pointer: pointer, errorMessage: nil)

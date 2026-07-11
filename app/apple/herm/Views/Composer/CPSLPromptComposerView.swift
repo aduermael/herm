@@ -279,7 +279,7 @@ struct CPSLPromptComposerView: View {
             CPSLPromptTextView(
                 text: $model.promptText,
                 isCommandInput: isCommandInput,
-                isDisabled: model.isRunning,
+                isDisabled: model.isBusy,
                 verticalInset: promptVerticalInset,
                 maxHeight: promptMaxTextHeight,
                 focusPromptRequest: focusPromptRequest,
@@ -297,7 +297,7 @@ struct CPSLPromptComposerView: View {
                 .foregroundStyle(CPSLTheme.text)
                 .tint(CPSLTheme.text)
                 .focused($isPromptFocused)
-                .disabled(model.isRunning)
+                .disabled(model.isBusy)
                 .padding(.horizontal, CPSLTheme.medium)
                 .padding(.vertical, promptVerticalInset)
 #endif
@@ -373,7 +373,7 @@ struct CPSLPromptComposerView: View {
             strokeOpacity: 0.045
         )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-        .disabled(model.isRunning || isAddingAttachment)
+        .disabled(model.isBusy || isAddingAttachment)
         .accessibilityLabel("Add Attachment")
     }
 
@@ -397,7 +397,7 @@ struct CPSLPromptComposerView: View {
             strokeOpacity: 0.045
         )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-        .disabled(model.isRunning)
+        .disabled(model.isBusy)
     }
 
     @ViewBuilder
@@ -454,8 +454,8 @@ struct CPSLPromptComposerView: View {
         .onChange(of: dismissKeyboardRequest) { _, _ in
             isPromptFocused = false
         }
-        .onChange(of: model.isRunning) { _, isRunning in
-            if isRunning {
+        .onChange(of: model.isBusy) { _, isBusy in
+            if isBusy {
                 isPromptFocused = false
             }
         }
@@ -552,7 +552,7 @@ struct CPSLPromptComposerView: View {
     }
 
     private func focusPrompt() {
-        guard !model.isRunning else {
+        guard !model.isBusy else {
             return
         }
 
@@ -561,7 +561,7 @@ struct CPSLPromptComposerView: View {
     }
 
     private func pastePromptText() {
-        guard !model.isRunning else {
+        guard !model.isBusy else {
             return
         }
         guard let text = Self.pasteboardString(), !text.isEmpty else {
