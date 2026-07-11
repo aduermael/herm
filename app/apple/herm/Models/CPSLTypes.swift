@@ -85,6 +85,7 @@ nonisolated enum CPSLVirtualPath {
     static let root = "/"
     static let attachments = "/attachments"
     static let home = "/home/herm"
+    static let iCloudRoot = "/icloud"
     static let temporary = "/tmp"
     static let initialDirectory = home
 }
@@ -108,6 +109,24 @@ enum CPSLFeatureAccessState: String, Equatable, Sendable {
 
     var isGranted: Bool {
         self == .granted
+    }
+}
+
+nonisolated struct CPSLICloudMount: Identifiable, Equatable, Sendable {
+    let id: String
+    let label: String
+    let slug: String
+    let virtualPath: String
+    let hostURL: URL
+    let mode: String
+
+    init(label: String, slug: String, hostURL: URL) {
+        self.id = slug
+        self.label = label
+        self.slug = slug
+        self.virtualPath = "\(CPSLVirtualPath.iCloudRoot)/\(slug)"
+        self.hostURL = hostURL
+        self.mode = "ro"
     }
 }
 
