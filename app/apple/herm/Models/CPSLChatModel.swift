@@ -33,6 +33,11 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var isLocationOpen = false
     @Published private(set) var isLocationActivityActive = false
     @Published private(set) var iCloudMounts: [CPSLICloudMount] = []
+    @Published private(set) var isUpdatingICloudMounts = false
+
+    private var isBusy: Bool {
+        isRunning || isUpdatingICloudMounts
+    }
 
     let service: CPSLDebugService
     let webBrowser: CPSLWebBrowserService
@@ -45,6 +50,7 @@ final class CPSLChatModel: ObservableObject {
     private var storeLoadTask: Task<CPSLConversationStore, Error>?
     private var activeRunTask: Task<Void, Never>?
     var currentNodeID: String?
+    private var currentSystemPrompt: String?
     var streamingAssistantMessageID: UUID?
     var isSuppressingAssistantStream = false
     var typewriterBuffer = ""
@@ -94,32 +100,14 @@ final class CPSLChatModel: ObservableObject {
     Do not ask the provider to browse the web, do not imply host shell access, and do not share local files unless the user explicitly requests file content.
     """
 
-    private func systemPrompt(with skills: [CPSLAgentSkill], iCloudMounts: [CPSLICloudMount]) -> String {
-        var prompt = systemPrompt
-        if !iCloudMounts.isEmpty {
-            let mountLines = iCloudMounts.map { mount in
-                let label = promptSafeMountLabel(mount.label)
-                return "- `\(mount.virtualPath)`: read-only staged iCloud Drive snapshot, label \"\(label)\""
-            }.joined(separator: "\n")
-            prompt += """
-
-
-            ## iCloud Mounts
-
-            The user selected staged iCloud Drive folders. They are available in CPSL:
-
-            \(mountLines)
-
-            Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Write outputs to `/home/herm` or `/tmp`; iCloud mounts are staged snapshots and do not sync changes back to iCloud.
-            """
-        }
+    private func systemPrompt(with skills: [CPSLAgentSkill]) -> String {
         guard !skills.isEmpty else {
-            return prompt
+            return systemPrompt
         }
         let skillLines = skills.map {
             "- **\($0.name)**: \($0.description) Read: `\($0.path)`"
         }.joined(separator: "\n")
-        return prompt + """
+        return systemPrompt + """
 
 
         ## Skills
@@ -130,11 +118,24 @@ final class CPSLChatModel: ObservableObject {
         """
     }
 
-    private func promptSafeMountLabel(_ label: String) -> String {
-        label
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\"", with: "'")
+    func addingICloudMountContext(to basePrompt: String) -> String {
+        guard !iCloudMounts.isEmpty else {
+            return basePrompt
+        }
+        let mountLines = iCloudMounts.map { mount in
+            "- `\(mount.virtualPath)`: read-only staged iCloud Drive snapshot"
+        }.joined(separator: "\n")
+        return basePrompt + """
+
+
+        ## iCloud Mounts
+
+        The user selected staged iCloud Drive folders. They are available in CPSL:
+
+        \(mountLines)
+
+        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Write outputs to `/home/herm` or `/tmp`; iCloud mounts are staged snapshots and do not sync changes back to iCloud. Network access is disabled while these mounts are active.
+        """
     }
 
     init() {
@@ -181,7 +182,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func startNewConversation() {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -193,6 +194,7 @@ final class CPSLChatModel: ObservableObject {
         messages = []
         selectedConversationID = nil
         currentNodeID = nil
+        currentSystemPrompt = nil
         isFileBrowserOpen = false
         isCalendarOpen = false
         isLocationOpen = false
@@ -224,7 +226,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func selectConversation(id: String) {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -243,7 +245,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func deleteConversation(id: String) {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -267,7 +269,7 @@ final class CPSLChatModel: ObservableObject {
 
     func submitPrompt() {
         let input = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!input.isEmpty || !composerAttachments.isEmpty), !isRunning else {
+        guard (!input.isEmpty || !composerAttachments.isEmpty), !isBusy else {
             return
         }
 
@@ -671,13 +673,17 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func importICloudDirectory(_ url: URL) {
-        guard !isRunning else {
-            fileBrowserError = "Wait for the current run to finish before adding an iCloud folder."
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before adding an iCloud folder."
             return
         }
 
         fileBrowserError = nil
+        isUpdatingICloudMounts = true
         Task {
+            defer {
+                isUpdatingICloudMounts = false
+            }
             do {
                 let mount = try await service.stageICloudDirectory(from: url)
                 iCloudMounts = await service.activeICloudMounts()
@@ -698,13 +704,17 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func removeICloudMount(_ entry: CPSLFileEntry) {
-        guard !isRunning else {
-            fileBrowserError = "Wait for the current run to finish before removing an iCloud folder."
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before removing an iCloud folder."
             return
         }
 
         fileBrowserError = nil
+        isUpdatingICloudMounts = true
         Task {
+            defer {
+                isUpdatingICloudMounts = false
+            }
             do {
                 try await service.removeICloudMount(at: entry.path)
                 iCloudMounts = await service.activeICloudMounts()
@@ -728,7 +738,6 @@ final class CPSLChatModel: ObservableObject {
     }
 
     private func bootstrap() async {
-        iCloudMounts = await service.activeICloudMounts()
         do {
             try await service.prepareSandbox()
         } catch {
@@ -788,6 +797,7 @@ final class CPSLChatModel: ObservableObject {
             }
             selectedConversationID = conversation.summary.id
             currentNodeID = conversation.summary.currentNodeID
+            currentSystemPrompt = conversation.systemPrompt.isEmpty ? systemPrompt : conversation.systemPrompt
             messages = conversation.nodes.compactMap(\.chatMessage)
             conversations = try await store.loadSummaries()
             isDrawerOpen = false
@@ -818,6 +828,7 @@ final class CPSLChatModel: ObservableObject {
                 composerAttachments = []
                 draftConversationID = UUID().uuidString
                 currentNodeID = nil
+                currentSystemPrompt = nil
                 messages = []
                 isCalendarOpen = false
                 isLocationOpen = false
@@ -897,10 +908,7 @@ final class CPSLChatModel: ObservableObject {
         do {
             var conversationID: String
             var parentID: String
-            let promptForConversation = systemPrompt(
-                with: await service.availableSkills(),
-                iCloudMounts: iCloudMounts
-            )
+            let promptForConversation = systemPrompt(with: await service.availableSkills())
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -935,6 +943,7 @@ final class CPSLChatModel: ObservableObject {
                 selectedConversationID = conversationID
                 draftConversationID = UUID().uuidString
                 currentNodeID = parentID
+                currentSystemPrompt = promptForConversation
                 if let message = created.userNode.chatMessage {
                     messages.append(message)
                 }
@@ -949,13 +958,16 @@ final class CPSLChatModel: ObservableObject {
             activeModel = config.model
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
+            let replaySystemPrompt = addingICloudMountContext(
+                to: currentSystemPrompt ?? promptForConversation
+            )
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,
                 conversationID: conversationID,
                 parentID: parentID,
                 config: config,
-                systemPrompt: promptForConversation,
+                systemPrompt: replaySystemPrompt,
                 providerMessages: providerMessages
             ) { nodeID in
                 activeParentID = nodeID

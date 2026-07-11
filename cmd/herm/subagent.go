@@ -97,7 +97,6 @@ type SubAgentConfig struct {
 	Personality      string
 	ContainerImage   string
 	Backend          backendKind
-	Mounts           []cpslPromptMount
 }
 
 // SubAgentTool spawns a sub-agent to handle complex subtasks autonomously.
@@ -117,7 +116,6 @@ type SubAgentTool struct {
 	personality      string
 	containerImage   string
 	backend          backendKind
-	mounts           []cpslPromptMount
 	doneTimeout      time.Duration     // max time to wait for goroutine after stream ends
 	streamTimeout    time.Duration     // stream chunk inactivity timeout for inner agents; 0 = default
 	parentEvents     chan<- AgentEvent // set after construction; forwards live events to TUI
@@ -159,7 +157,6 @@ func NewSubAgentTool(cfg SubAgentConfig) *SubAgentTool {
 		personality:      cfg.Personality,
 		containerImage:   cfg.ContainerImage,
 		backend:          cfg.Backend,
-		mounts:           append([]cpslPromptMount(nil), cfg.Mounts...),
 		doneTimeout:      subAgentDoneTimeout,
 		agentNodes:       make(map[string]agentNodeState),
 		bgAgents:         make(map[string]*bgAgentState),
@@ -560,7 +557,6 @@ func (t *SubAgentTool) buildSubAgentTools(mode string) []Tool {
 			Personality:      t.personality,
 			ContainerImage:   t.containerImage,
 			Backend:          t.backend,
-			Mounts:           t.mounts,
 		})
 		child.parentEvents = t.parentEvents
 		tools = append(tools, child)
@@ -641,7 +637,6 @@ func (t *SubAgentTool) Execute(ctx context.Context, input json.RawMessage) (stri
 		containerImage: t.containerImage,
 		backend:        t.backend,
 		snap:           &snap,
-		mounts:         t.mounts,
 	})
 
 	agentOpts := []AgentOption{
@@ -749,7 +744,6 @@ func (t *SubAgentTool) executeBackground(_ context.Context, in subAgentInput) (s
 		containerImage: t.containerImage,
 		backend:        t.backend,
 		snap:           &snap,
-		mounts:         t.mounts,
 	})
 
 	agentOpts := []AgentOption{

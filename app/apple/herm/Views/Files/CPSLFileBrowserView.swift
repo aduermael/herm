@@ -1,6 +1,8 @@
 import Foundation
 import SwiftUI
+#if os(iOS)
 import UniformTypeIdentifiers
+#endif
 
 private enum CPSLFileBrowserPagePlacement: Equatable {
     case entering
@@ -170,33 +172,49 @@ private struct CPSLFileBrowserDisplayPage: Identifiable, Equatable {
 
 struct CPSLFileBrowserView: View {
     @ObservedObject var model: CPSLChatModel
+#if os(iOS)
     @State private var isICloudImporterPresented = false
+#endif
 
     var body: some View {
+#if os(iOS)
+        browserPanel
+            .fileImporter(
+                isPresented: $isICloudImporterPresented,
+                allowedContentTypes: [.folder],
+                allowsMultipleSelection: false
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    if let url = urls.first {
+                        model.importICloudDirectory(url)
+                    }
+                case .failure(let error):
+                    model.reportICloudImportError(error)
+                }
+            }
+#else
+        browserPanel
+#endif
+    }
+
+    private var browserPanel: some View {
         CPSLFileOverlayPanel {
             CPSLFileBrowserHeader(model: model)
         } content: {
             CPSLFileBrowserRouteStack(
                 model: model,
-                connectICloud: {
-                    isICloudImporterPresented = true
-                }
+                connectICloud: connectICloud
             )
         }
-        .fileImporter(
-            isPresented: $isICloudImporterPresented,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                if let url = urls.first {
-                    model.importICloudDirectory(url)
-                }
-            case .failure(let error):
-                model.reportICloudImportError(error)
-            }
-        }
+    }
+
+    private func connectICloud() {
+#if os(iOS)
+        isICloudImporterPresented = true
+#else
+        model.showComingSoon()
+#endif
     }
 }
 
@@ -598,7 +616,7 @@ private struct CPSLFileBrowserHeaderTitle: View {
     }
 
     private var displaySubtitle: String {
-        return isRoot ? "Home, attachments, temporary storage, and iCloud" : path
+        return isRoot ? "Home, attachments, and temporary storage" : path
     }
 
     private var iconName: String {
@@ -910,43 +928,34 @@ private struct CPSLFileBrowserRowView: View {
                     onToggleExpansion: {
                         actions.toggleExpansion(entry)
                     },
-                    trailingAction: iCloudMountRowAction(for: entry)
+                    onRemove: iCloudMountRemoval(for: entry)
                 )
             case .loading(_, let depth):
                 CPSLInlineFileLoadingView(depth: depth)
             }
         }
     }
-    private func iCloudMountRowAction(for entry: CPSLFileEntry) -> CPSLFileRowAction? {
+    private func iCloudMountRemoval(for entry: CPSLFileEntry) -> (() -> Void)? {
         guard isICloudMountEntry(entry) else {
             return nil
         }
-        return CPSLFileRowAction(
-            systemName: "trash",
-            accessibilityLabel: "Remove iCloud Folder",
-            foregroundStyle: CPSLTheme.danger,
-            action: {
-                actions.removeICloudMount(entry)
-            }
-        )
+        return {
+            actions.removeICloudMount(entry)
+        }
     }
+
     private func isICloudMountEntry(_ entry: CPSLFileEntry) -> Bool {
         actions.iCloudMounts.contains { $0.virtualPath == entry.path }
     }
 }
-private struct CPSLFileRowAction {
-    let systemName: String
-    let accessibilityLabel: String
-    let foregroundStyle: Color
-    let action: () -> Void
-}
+
 private struct CPSLFileRowView: View {
     let entry: CPSLFileEntry
     let depth: Int
     let isExpanded: Bool
     let onOpen: () -> Void
     let onToggleExpansion: () -> Void
-    let trailingAction: CPSLFileRowAction?
+    let onRemove: (() -> Void)?
 
     var body: some View {
         HStack(spacing: CPSLTheme.small) {
@@ -974,16 +983,16 @@ private struct CPSLFileRowView: View {
             .buttonStyle(.plain)
             .contentShape(Rectangle())
 
-            if let trailingAction {
-                Button(action: trailingAction.action) {
-                    Image(systemName: trailingAction.systemName)
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "trash")
                         .font(CPSLTheme.iconSmallFont)
                         .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(trailingAction.foregroundStyle)
-                .accessibilityLabel(Text(trailingAction.accessibilityLabel))
+                .foregroundStyle(CPSLTheme.danger)
+                .accessibilityLabel(Text("Remove iCloud Folder"))
             }
         }
         .padding(.leading, leadingPadding)
@@ -991,6 +1000,7 @@ private struct CPSLFileRowView: View {
         .frame(height: CPSLFileRowMetrics.height)
         .contentShape(Rectangle())
     }
+
     private var leadingPadding: CGFloat {
         CPSLFileRowMetrics.leadingPadding(depth: depth, isDirectory: entry.isDirectory)
     }
@@ -1009,6 +1019,7 @@ private struct CPSLFileRowView: View {
         return entry.previewCategory.iconColor
     }
 }
+
 private struct CPSLFileDisclosureControl: View {
     let isExpanded: Bool
     let onToggle: () -> Void

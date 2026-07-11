@@ -30,10 +30,9 @@ func TestCPSLBackendStartsWorkerAndDoesNotBootContainer(t *testing.T) {
 	app := &App{
 		backend: backendCPSL,
 		cpsl: cpslConfig{
-			LibraryPath:       "/tmp/libcpsl.so",
-			SessionConfigPath: "/tmp/session.json",
-			AllowDomains:      []string{"example.com", "api.example.com"},
-			DenyDomains:       []string{"blocked.example.com"},
+			LibraryPath:  "/tmp/libcpsl.so",
+			AllowDomains: []string{"example.com", "api.example.com"},
+			DenyDomains:  []string{"blocked.example.com"},
 		},
 		sessionID: "session",
 		resultCh:  make(chan any, 1),
@@ -52,9 +51,6 @@ func TestCPSLBackendStartsWorkerAndDoesNotBootContainer(t *testing.T) {
 		}
 		if opts.config.LibraryPath != "/tmp/libcpsl.so" {
 			t.Fatalf("LibraryPath = %q", opts.config.LibraryPath)
-		}
-		if opts.config.SessionConfigPath != "/tmp/session.json" {
-			t.Fatalf("SessionConfigPath = %q", opts.config.SessionConfigPath)
 		}
 		if !slices.Equal(opts.config.AllowDomains, []string{"example.com", "api.example.com"}) {
 			t.Fatalf("AllowDomains = %#v", opts.config.AllowDomains)

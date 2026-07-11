@@ -22,15 +22,9 @@ const (
 )
 
 type cpslConfig struct {
-	LibraryPath       string
-	SessionConfigPath string
-	AllowDomains      []string
-	DenyDomains       []string
-	Mounts            []cpslPromptMount
-}
-
-func (c cpslConfig) hasICloudMounts() bool {
-	return hasCPSLICloudMounts(c.Mounts)
+	LibraryPath  string
+	AllowDomains []string
+	DenyDomains  []string
 }
 
 func validateCPSLLibraryPath(path string) (string, error) {

@@ -80,9 +80,6 @@ func serverToolsForRuntime(opts serverToolsForRuntimeOptions) []types.ToolDefini
 }
 
 func cpslAllowsProviderServerTools(config cpslConfig) bool {
-	if config.hasICloudMounts() {
-		return false
-	}
 	if len(config.DenyDomains) > 0 {
 		return false
 	}
@@ -222,7 +219,6 @@ func (a *App) startAgent(userMessage string) {
 		Personality:      a.config.Personality,
 		ContainerImage:   containerImage,
 		Backend:          a.backend,
-		Mounts:           a.cpsl.Mounts,
 	})
 	tools = append(tools, subAgentTool)
 
@@ -240,7 +236,6 @@ func (a *App) startAgent(userMessage string) {
 		worktreeBranch: wtBranch,
 		backend:        a.backend,
 		snap:           a.projectSnap,
-		mounts:         a.cpsl.Mounts,
 	})
 
 	// Feed system prompt, tool definitions, and user message to trace collector.

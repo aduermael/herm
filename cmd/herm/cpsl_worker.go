@@ -25,12 +25,11 @@ type cpslSessionEvalOptions struct {
 }
 
 type cpslWorkerOptions struct {
-	libraryPath       string
-	workspace         string
-	skillsPath        string
-	sessionConfigPath string
-	allowDomains      []string
-	denyDomains       []string
+	libraryPath  string
+	workspace    string
+	skillsPath   string
+	allowDomains []string
+	denyDomains  []string
 }
 
 const cpslLibraryDirEnv = "CPSL_LIBRARY_DIR"
@@ -48,9 +47,9 @@ func runCPSLWorker(opts runCPSLWorkerOptions) int {
 		return 2
 	}
 
-	resolved, err := resolveCPSLWorkerSession(workerOpts)
+	workspace, err := canonicalWorkspace(workerOpts.workspace)
 	if err != nil {
-		fmt.Fprintf(opts.stderr, "cpsl worker: session config: %v\n", err)
+		fmt.Fprintf(opts.stderr, "cpsl worker: workspace: %v\n", err)
 		return 2
 	}
 	skillsPath := ""
@@ -71,9 +70,8 @@ func runCPSLWorker(opts runCPSLWorkerOptions) int {
 	defer func() { _ = lib.close() }()
 
 	configJSON, err := cpslSessionConfigJSON(cpslSessionConfigJSONOptions{
-		workspace:    resolved.workspace,
+		workspace:    workspace,
 		skillsPath:   skillsPath,
-		mounts:       resolved.mounts,
 		allowDomains: workerOpts.allowDomains,
 		denyDomains:  workerOpts.denyDomains,
 	})
@@ -126,7 +124,6 @@ func parseCPSLWorkerOptions(opts parseCPSLWorkerArgsOptions) (cpslWorkerOptions,
 	fs.StringVar(&workerOpts.libraryPath, "library", "", "path to CPSL dynamic library")
 	fs.StringVar(&workerOpts.workspace, "workspace", "", "host workspace mounted at /workdir")
 	fs.StringVar(&workerOpts.skillsPath, "skills", "", "host skill runtime directory mounted read-only at /skills")
-	fs.StringVar(&workerOpts.sessionConfigPath, "session-config", "", "CPSL session mount descriptor config")
 	fs.Var(&allowDomains, "allow-domain", "allowed domain")
 	fs.Var(&denyDomains, "deny-domain", "denied domain")
 	if err := fs.Parse(opts.args); err != nil {
@@ -137,42 +134,10 @@ func parseCPSLWorkerOptions(opts parseCPSLWorkerArgsOptions) (cpslWorkerOptions,
 	if workerOpts.libraryPath == "" {
 		return cpslWorkerOptions{}, fmt.Errorf("missing CPSL library path")
 	}
-	if workerOpts.workspace == "" && workerOpts.sessionConfigPath == "" {
+	if workerOpts.workspace == "" {
 		return cpslWorkerOptions{}, fmt.Errorf("missing CPSL workspace")
 	}
 	return workerOpts, nil
-}
-
-type resolvedCPSLWorkerSession struct {
-	workspace string
-	mounts    []validatedCPSLMount
-}
-
-func resolveCPSLWorkerSession(opts cpslWorkerOptions) (resolvedCPSLWorkerSession, error) {
-	workspace := opts.workspace
-	var descriptors []cpslMountDescriptor
-	if opts.sessionConfigPath != "" {
-		config, err := loadCPSLWorkerSessionConfig(opts.sessionConfigPath)
-		if err != nil {
-			return resolvedCPSLWorkerSession{}, err
-		}
-		if workspace == "" {
-			workspace = config.Workspace
-		}
-		descriptors = append([]cpslMountDescriptor(nil), config.Mounts...)
-	}
-	if workspace == "" {
-		return resolvedCPSLWorkerSession{}, fmt.Errorf("missing CPSL workspace")
-	}
-	canonical, err := canonicalWorkspace(workspace)
-	if err != nil {
-		return resolvedCPSLWorkerSession{}, fmt.Errorf("workspace: %w", err)
-	}
-	mounts, err := validateCPSLMountDescriptors(canonical, descriptors)
-	if err != nil {
-		return resolvedCPSLWorkerSession{}, err
-	}
-	return resolvedCPSLWorkerSession{workspace: canonical, mounts: mounts}, nil
 }
 
 func setCPSLLibraryDirEnv(libraryPath string) {

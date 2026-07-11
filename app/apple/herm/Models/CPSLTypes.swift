@@ -113,21 +113,12 @@ enum CPSLFeatureAccessState: String, Equatable, Sendable {
 }
 
 nonisolated struct CPSLICloudMount: Identifiable, Equatable, Sendable {
-    let id: String
     let label: String
     let slug: String
-    let virtualPath: String
     let hostURL: URL
-    let mode: String
 
-    init(label: String, slug: String, hostURL: URL) {
-        self.id = slug
-        self.label = label
-        self.slug = slug
-        self.virtualPath = "\(CPSLVirtualPath.iCloudRoot)/\(slug)"
-        self.hostURL = hostURL
-        self.mode = "ro"
-    }
+    var id: String { slug }
+    var virtualPath: String { "\(CPSLVirtualPath.iCloudRoot)/\(slug)" }
 }
 
 nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {

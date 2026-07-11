@@ -61,26 +61,3 @@ func TestServerToolsForRuntimeCPSLDenyDisablesWildcardAllowDomain(t *testing.T) 
 		t.Fatalf("CPSL wildcard with deny server tools = %#v, want none", got)
 	}
 }
-
-func TestServerToolsForRuntimeCPSLICloudMountDisablesWildcardAllowDomain(t *testing.T) {
-	models := []ModelDef{{ID: "model-with-search", ServerTools: []string{types.ServerToolWebSearch}}}
-
-	got := serverToolsForRuntime(serverToolsForRuntimeOptions{
-		backend: backendCPSL,
-		cpsl: cpslConfig{
-			AllowDomains: []string{"*"},
-			Mounts: []cpslPromptMount{{
-				VirtualPath:    "/icloud/project",
-				Mode:           cpslMountModeReadOnly,
-				Label:          "Project",
-				SourcePlatform: "iPadOS",
-			}},
-		},
-		modelID: "model-with-search",
-		models:  models,
-	})
-
-	if len(got) != 0 {
-		t.Fatalf("CPSL iCloud server tools = %#v, want none", got)
-	}
-}

@@ -112,23 +112,6 @@ func TestCPSLWorkerProcessArgsPreserveRepeatedDomains(t *testing.T) {
 	}
 }
 
-func TestCPSLWorkerProcessArgsIncludeSessionConfig(t *testing.T) {
-	args := cpslWorkerProcessArgs(cpslWorkerProcessOptions{
-		LibraryPath:       "/tmp/libcpsl.so",
-		Workspace:         "/tmp/work",
-		SessionConfigPath: "/tmp/session.json",
-	})
-	want := []string{
-		"__cpsl-worker",
-		"--library", "/tmp/libcpsl.so",
-		"--workspace", "/tmp/work",
-		"--session-config", "/tmp/session.json",
-	}
-	if !slices.Equal(args, want) {
-		t.Fatalf("args = %#v, want %#v", args, want)
-	}
-}
-
 func TestCPSLWorkerClientPassesDomainsToProcess(t *testing.T) {
 	var got cpslWorkerProcessOptions
 	_, proc := newFakeCPSLProcess(t, func(request cpslWorkerRequest, encoder *json.Encoder) {
@@ -149,12 +132,11 @@ func TestCPSLWorkerClientPassesDomainsToProcess(t *testing.T) {
 	})
 
 	client, err := NewCPSLWorkerClient(newCPSLWorkerClientOptions{
-		LibraryPath:       "/tmp/libcpsl.so",
-		Workspace:         "/tmp/work",
-		SkillsPath:        "/tmp/skills",
-		SessionConfigPath: "/tmp/session.json",
-		AllowDomains:      []string{"example.com", "api.example.com"},
-		DenyDomains:       []string{"blocked.example.com", "blocked-api.example.com"},
+		LibraryPath:  "/tmp/libcpsl.so",
+		Workspace:    "/tmp/work",
+		SkillsPath:   "/tmp/skills",
+		AllowDomains: []string{"example.com", "api.example.com"},
+		DenyDomains:  []string{"blocked.example.com", "blocked-api.example.com"},
 	})
 	if err != nil {
 		t.Fatalf("NewCPSLWorkerClient: %v", err)
@@ -169,9 +151,6 @@ func TestCPSLWorkerClientPassesDomainsToProcess(t *testing.T) {
 	}
 	if got.SkillsPath != "/tmp/skills" {
 		t.Fatalf("SkillsPath = %q, want /tmp/skills", got.SkillsPath)
-	}
-	if got.SessionConfigPath != "/tmp/session.json" {
-		t.Fatalf("SessionConfigPath = %q", got.SessionConfigPath)
 	}
 }
 

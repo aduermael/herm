@@ -799,7 +799,7 @@ extension CPSLChatModel {
         maxTurns: Int,
         context: CPSLToolExecutionContext
     ) -> String {
-        """
+        let basePrompt = """
         You are a Herm sub-agent running inside the same iOS/macOS app.
         Complete the assigned task, then return a concise result. Do not ask questions.
         Mode: \(mode.rawValue). Turn budget: \(maxTurns). Agent depth: \(context.agentDepth)/\(context.config.maxAgentDepth).
@@ -808,6 +808,7 @@ extension CPSLChatModel {
         You may use local_sandbox_exec for CPSL work, including the sandbox webbrowser module when it is available. You have no host shell, package manager, or provider-hosted capabilities.
         Calendar and location are available only through CPSL when compiled into the app sandbox and authorized by the user. Use them only when the assigned task materially needs schedule, event, availability, or current-place context. EventKit does not expose native calendar file attachments. Use calendar.attach to associate durable file copies with an event in Herm, and do not describe them as native Calendar.app attachments. Access states are granted, denied, or undefined; undefined access may prompt, and denied access must be fixed in iOS Settings or macOS System Settings.
         """
+        return addingICloudMountContext(to: basePrompt)
     }
 
     private func subAgentOutput(_ draft: CPSLSubAgentOutputDraft) -> String {
