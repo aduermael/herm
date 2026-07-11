@@ -12,6 +12,8 @@ import (
 	"github.com/ebitengine/purego"
 )
 
+type cpslSession unsafe.Pointer
+
 type cpslNativeLibrary struct {
 	handle uintptr
 
@@ -95,24 +97,24 @@ func (l *cpslNativeLibrary) backendMetadataJSON() (string, error) {
 
 func (l *cpslNativeLibrary) sessionNew(configJSON string) (cpslSession, error) {
 	if err := validateFFIString(configJSON); err != nil {
-		return 0, err
+		return nil, err
 	}
 	session := l.sessionNewFn(configJSON)
 	if session == nil {
-		return 0, fmt.Errorf("CPSL session creation failed: %s", l.lastError())
+		return nil, fmt.Errorf("CPSL session creation failed: %s", l.lastError())
 	}
-	return cpslSession(uintptr(session)), nil
+	return cpslSession(session), nil
 }
 
 func (l *cpslNativeLibrary) sessionFree(session cpslSession) {
-	l.sessionFreeFn(unsafe.Pointer(uintptr(session)))
+	l.sessionFreeFn(unsafe.Pointer(session))
 }
 
 func (l *cpslNativeLibrary) eval(opts cpslSessionEvalOptions) (string, error) {
 	if err := validateFFIString(opts.requestJSON); err != nil {
 		return "", err
 	}
-	value := l.evalFn(unsafe.Pointer(uintptr(opts.session)), opts.requestJSON)
+	value := l.evalFn(unsafe.Pointer(opts.session), opts.requestJSON)
 	if value == nil {
 		return "", fmt.Errorf("CPSL eval failed: %s", l.lastError())
 	}

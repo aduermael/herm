@@ -6,6 +6,8 @@ package main
 
 import "fmt"
 
+type cpslSession uintptr
+
 type cpslNativeLibrary struct{}
 
 func openCPSLNativeLibrary(path string) (*cpslNativeLibrary, error) {

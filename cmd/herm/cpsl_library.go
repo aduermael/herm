@@ -9,8 +9,6 @@ import (
 	"unsafe"
 )
 
-type cpslSession uintptr
-
 type cpslBackendMetadata struct {
 	Name         string   `json:"name"`
 	ABIVersion   uint32   `json:"abi_version"`
@@ -85,8 +83,8 @@ func stringFromC(value unsafe.Pointer) string {
 		return ""
 	}
 	var bytes []byte
-	for ptr := uintptr(value); ; ptr++ {
-		b := *(*byte)(unsafe.Pointer(ptr))
+	for offset := uintptr(0); ; offset++ {
+		b := *(*byte)(unsafe.Add(value, offset))
 		if b == 0 {
 			return string(bytes)
 		}

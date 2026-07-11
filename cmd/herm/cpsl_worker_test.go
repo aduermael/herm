@@ -39,10 +39,9 @@ func TestServeCPSLWorkerEvalPreservesID(t *testing.T) {
 			}
 			return `{"ok":true,"stdout":"ok\n","stderr":"","exit_code":0,"error":null,"warnings":[],"cwd":"/workdir"}`, nil
 		}},
-		session: 1,
-		stdin:   strings.NewReader(request),
-		stdout:  &stdout,
-		stderr:  ioDiscard{},
+		stdin:  strings.NewReader(request),
+		stdout: &stdout,
+		stderr: ioDiscard{},
 	})
 	if err != nil {
 		t.Fatalf("serveCPSLWorker: %v", err)

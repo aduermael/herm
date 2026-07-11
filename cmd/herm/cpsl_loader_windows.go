@@ -11,6 +11,8 @@ import (
 	"unsafe"
 )
 
+type cpslSession uintptr
+
 type cpslNativeLibrary struct {
 	dll              *syscall.DLL
 	abiVersionProc   *syscall.Proc
