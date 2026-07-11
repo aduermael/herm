@@ -91,6 +91,12 @@ nonisolated struct CPSLICloudStagingImportPermit: Sendable {
     let availableCapacityBytes: Int64
 }
 
+nonisolated struct CPSLICloudStagingRequest: Sendable {
+    let sourceRoot: URL
+    let destinationRoot: URL
+    let permit: CPSLICloudStagingImportPermit
+}
+
 /// Owns the process root's advisory lock for the lifetime of the process.
 /// A later process removes only roots whose owner lock is no longer held.
 nonisolated final class CPSLICloudStagingProcessLease: @unchecked Sendable {
@@ -420,15 +426,17 @@ nonisolated enum CPSLICloudStagingStorage {
     }
 
     static func stageDirectory(
-        from sourceRoot: URL,
-        to destinationRoot: URL,
-        remainingUsage: CPSLICloudStagingUsage,
-        availableCapacityBytes: Int64,
+        _ request: CPSLICloudStagingRequest,
         fileManager: FileManager = .default,
         progress: @Sendable (CPSLICloudImportProgress) -> Void = { _ in }
     ) throws -> CPSLICloudStagingUsage {
         progress(.preparing)
         try Task.checkCancellation()
+
+        let sourceRoot = request.sourceRoot
+        let destinationRoot = request.destinationRoot
+        let remainingUsage = request.permit.remainingUsage
+        let availableCapacityBytes = request.permit.availableCapacityBytes
 
         let manifest = try makeManifest(
             sourceRoot: sourceRoot,
@@ -496,11 +504,13 @@ nonisolated enum CPSLICloudStagingStorage {
                     )
                 case .file:
                     let nextCompletedBytes = try copyFile(
-                        from: item.sourceURL,
-                        to: destination,
-                        byteLimit: actualByteLimit,
-                        byteLimitError: actualByteLimitError,
-                        startingBytes: completedBytes,
+                        FileCopyRequest(
+                            source: item.sourceURL,
+                            destination: destination,
+                            byteLimit: actualByteLimit,
+                            byteLimitError: actualByteLimitError,
+                            startingBytes: completedBytes
+                        ),
                         fileManager: fileManager,
                         onChunk: { bytes in
                             reportProgress(bytes: bytes)
@@ -562,6 +572,14 @@ nonisolated enum CPSLICloudStagingStorage {
         let items: [ManifestItem]
         let usage: CPSLICloudStagingUsage
         let rootMetadata: [FileAttributeKey: Any]
+    }
+
+    private struct FileCopyRequest {
+        let source: URL
+        let destination: URL
+        let byteLimit: Int64
+        let byteLimitError: CPSLICloudStagingError
+        let startingBytes: Int64
     }
 
     private static func makeManifest(
@@ -699,23 +717,25 @@ nonisolated enum CPSLICloudStagingStorage {
     }
 
     private static func copyFile(
-        from source: URL,
-        to destination: URL,
-        byteLimit: Int64,
-        byteLimitError: CPSLICloudStagingError,
-        startingBytes: Int64,
+        _ request: FileCopyRequest,
         fileManager: FileManager,
         onChunk: (Int64) -> Void
     ) throws -> Int64 {
-        guard fileManager.createFile(atPath: destination.path, contents: nil) else {
+        guard fileManager.createFile(atPath: request.destination.path, contents: nil) else {
             throw CPSLICloudStagingError.cannotCreateFile
         }
 
         let descriptor: Int32
 #if canImport(Darwin)
-        descriptor = Darwin.open(source.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        descriptor = Darwin.open(
+            request.source.path,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
 #elseif canImport(Glibc)
-        descriptor = Glibc.open(source.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        descriptor = Glibc.open(
+            request.source.path,
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
 #else
         descriptor = -1
 #endif
@@ -734,21 +754,21 @@ nonisolated enum CPSLICloudStagingStorage {
         }
 
         let input = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
-        let output = try FileHandle(forWritingTo: destination)
+        let output = try FileHandle(forWritingTo: request.destination)
         defer {
             try? input.close()
             try? output.close()
         }
 
-        var completedBytes = startingBytes
+        var completedBytes = request.startingBytes
         while true {
             try Task.checkCancellation()
             guard let data = try input.read(upToCount: copyChunkBytes), !data.isEmpty else {
                 break
             }
             let (nextBytes, overflow) = completedBytes.addingReportingOverflow(Int64(data.count))
-            guard !overflow, nextBytes <= byteLimit else {
-                throw byteLimitError
+            guard !overflow, nextBytes <= request.byteLimit else {
+                throw request.byteLimitError
             }
             try output.write(contentsOf: data)
             completedBytes = nextBytes

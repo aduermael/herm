@@ -61,6 +61,7 @@ final class CPSLChatModel: ObservableObject {
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
+    private static let iCloudRestrictedSkillNames = Set(["beautiful-pdfs", "webbrowser"])
     var activeToolStatusNodeID: String?
     var activeToolStatusPayload: CPSLToolStatusPayload?
     var activeToolStatusStore: CPSLConversationStore?
@@ -1018,7 +1019,7 @@ final class CPSLChatModel: ObservableObject {
             let replayBasePrompt = iCloudMounts.isEmpty
                 ? currentSystemPrompt ?? promptForConversation
                 : systemPrompt(with: availableSkills.filter { skill in
-                    skill.name.caseInsensitiveCompare("webbrowser") != .orderedSame
+                    !Self.iCloudRestrictedSkillNames.contains(skill.name.lowercased())
                 })
             let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
             var providerLoopContext = CPSLProviderLoopContext(

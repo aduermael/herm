@@ -82,10 +82,14 @@ private struct CPSLICloudStagingChecks {
         let exactDestination = testRoot.appendingPathComponent("exact", isDirectory: true)
         let progress = ProgressRecorder()
         let usage = try CPSLICloudStagingStorage.stageDirectory(
-            from: source,
-            to: exactDestination,
-            remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 4),
-            availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7,
+            CPSLICloudStagingRequest(
+                sourceRoot: source,
+                destinationRoot: exactDestination,
+                permit: CPSLICloudStagingImportPermit(
+                    remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 4),
+                    availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7
+                )
+            ),
             progress: { value in
                 progress.append(value)
             }
@@ -136,10 +140,14 @@ private struct CPSLICloudStagingChecks {
             destination: testRoot.appendingPathComponent("too-large", isDirectory: true)
         ) { destination in
             _ = try CPSLICloudStagingStorage.stageDirectory(
-                from: source,
-                to: destination,
-                remainingUsage: CPSLICloudStagingUsage(bytes: 6, items: 4),
-                availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7
+                CPSLICloudStagingRequest(
+                    sourceRoot: source,
+                    destinationRoot: destination,
+                    permit: CPSLICloudStagingImportPermit(
+                        remainingUsage: CPSLICloudStagingUsage(bytes: 6, items: 4),
+                        availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7
+                    )
+                )
             )
         }
         try expect(
@@ -147,10 +155,14 @@ private struct CPSLICloudStagingChecks {
             destination: testRoot.appendingPathComponent("too-many", isDirectory: true)
         ) { destination in
             _ = try CPSLICloudStagingStorage.stageDirectory(
-                from: source,
-                to: destination,
-                remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 3),
-                availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7
+                CPSLICloudStagingRequest(
+                    sourceRoot: source,
+                    destinationRoot: destination,
+                    permit: CPSLICloudStagingImportPermit(
+                        remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 3),
+                        availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7
+                    )
+                )
             )
         }
         try expect(
@@ -158,10 +170,14 @@ private struct CPSLICloudStagingChecks {
             destination: testRoot.appendingPathComponent("low-space", isDirectory: true)
         ) { destination in
             _ = try CPSLICloudStagingStorage.stageDirectory(
-                from: source,
-                to: destination,
-                remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 4),
-                availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 6
+                CPSLICloudStagingRequest(
+                    sourceRoot: source,
+                    destinationRoot: destination,
+                    permit: CPSLICloudStagingImportPermit(
+                        remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 4),
+                        availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 6
+                    )
+                )
             )
         }
 
@@ -186,10 +202,18 @@ private struct CPSLICloudStagingChecks {
             }
             do {
                 _ = try CPSLICloudStagingStorage.stageDirectory(
-                    from: source,
-                    to: destination,
-                    remainingUsage: CPSLICloudStagingUsage(bytes: 3 * 1_024 * 1_024, items: 2),
-                    availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 3 * 1_024 * 1_024
+                    CPSLICloudStagingRequest(
+                        sourceRoot: source,
+                        destinationRoot: destination,
+                        permit: CPSLICloudStagingImportPermit(
+                            remainingUsage: CPSLICloudStagingUsage(
+                                bytes: 3 * 1_024 * 1_024,
+                                items: 2
+                            ),
+                            availableCapacityBytes:
+                                CPSLICloudStagingStorage.freeSpaceReserveBytes + 3 * 1_024 * 1_024
+                        )
+                    )
                 )
                 return false
             } catch is CancellationError {
@@ -216,10 +240,14 @@ private struct CPSLICloudStagingChecks {
         try require(result == 0, "could not create special-file fixture")
         try expect(.unsupportedItem, destination: destination) { destination in
             _ = try CPSLICloudStagingStorage.stageDirectory(
-                from: source,
-                to: destination,
-                remainingUsage: CPSLICloudStagingUsage(bytes: 1, items: 2),
-                availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 1
+                CPSLICloudStagingRequest(
+                    sourceRoot: source,
+                    destinationRoot: destination,
+                    permit: CPSLICloudStagingImportPermit(
+                        remainingUsage: CPSLICloudStagingUsage(bytes: 1, items: 2),
+                        availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 1
+                    )
+                )
             )
         }
     }

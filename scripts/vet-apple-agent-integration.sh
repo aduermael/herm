@@ -39,7 +39,10 @@ swift_files=(
   app/apple/herm/Services/Agent/CPSLConversationStore.swift
   app/apple/herm/Services/Agent/CPSLSkills.swift
   app/apple/herm/Services/CPSLDebugService.swift
+  app/apple/herm/Services/CPSLDictationService.swift
+  app/apple/herm/Services/CPSLICloudMountManager.swift
   app/apple/herm/Services/CPSLICloudStagingStorage.swift
+  app/apple/herm/Models/CPSLEvalTypes.swift
   app/apple/herm/Models/CPSLTypes.swift
   app/apple/herm/Models/CPSLChatModel.swift
   app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
@@ -67,8 +70,10 @@ required_files=(
   scripts/generate-apple-env-constants.sh
   scripts/generate-apple-env-constants.swift
   scripts/dev-apple-macos.sh
+  scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
   scripts/vet-apple-agent-config.swift
   scripts/vet-apple-agent-concurrency-ui.swift
+  scripts/vet-apple-eval-race.swift
   scripts/vet-apple-agent-tool-formatting.swift
   scripts/vet-apple-icloud-staging.swift
   scripts/vet-apple-conversation-store.swift
@@ -130,6 +135,9 @@ require_match 'CPSLEnvConstants\.swift in Sources' app/apple/herm.xcodeproj/proj
 require_match 'source_entitlements_path=.*herm-macOS.entitlements' scripts/dev-apple-macos.sh
 require_match 'sign_entitlements_path=.source_entitlements_path' scripts/dev-apple-macos.sh
 require_match 'cd "\$root"' scripts/dev-apple-macos.sh
+require_match 'allow_html_to_pdf\(html_to_pdf_allowed\(config\)\)' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
+require_match 'restricted_network_policy_disables_html_to_pdf' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
+require_match 'html_to_pdf_requires_unrestricted_webbrowser_policy' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
 require_match 'iCloud file-container prototype' docs/apple-agent-storage.md
 require_match 'not Apple.s standard robust' docs/apple-agent-storage.md
 require_match 'CloudKit-backed persistence' docs/apple-agent-storage.md
@@ -200,6 +208,11 @@ require_match 'cpsl_session_new_with_host_callbacks_v3' app/apple/herm/Services/
 require_match 'cpsl_vision_respond' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'evaluateLuau' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'currentVirtualDirectory' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'timedOutEvaluations: \[CPSLEvalRaceBox\]' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'race\.finishTimedOutEvaluation\(\)' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'cpsl_session_free\(request\.session\)' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'guard iCloudMountManager\.beginStaging\(\)' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'iCloudMountManager\.finishStaging\(\)' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'func currentDirectory\(\) -> String' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'func availableSkills\(\) -> \[CPSLAgentSkill\]' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'restoreCurrentDirectory' app/apple/herm/Services/CPSLDebugService.swift
@@ -218,6 +231,7 @@ require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodep
 require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'The following skills are available' app/apple/herm/Models/CPSLChatModel.swift
 require_match '\$0\.path' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'iCloudRestrictedSkillNames = Set\(\["beautiful-pdfs", "webbrowser"\]\)' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift
@@ -328,6 +342,12 @@ require_match 'title: "iCloud"' app/apple/herm/Views/Files/CPSLFileBrowserView.s
 require_match 'systemName: "icloud\.fill"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'title: "Cloud Drives"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'Button\("Connect"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'model\.dictation\.finish\(\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'guard isICloudImporterPending, !model\.dictation\.isActive else' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'try Task\.checkCancellation\(\)' app/apple/herm/Services/CPSLDictationService.swift
+require_match 'await pendingStartTask\?\.value' app/apple/herm/Services/CPSLDictationService.swift
+require_match 'await captureStopTask\.value' app/apple/herm/Services/CPSLDictationService.swift
+require_match 'self\.state = \.idle' app/apple/herm/Services/CPSLDictationService.swift
 require_match 'case googleDrive' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'case dropbox' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'case oneDrive' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
@@ -425,6 +445,11 @@ if command -v swiftc >/dev/null 2>&1; then
     scripts/vet-apple-icloud-staging.swift \
     -o /tmp/herm-vet-icloud-staging
   /tmp/herm-vet-icloud-staging
+  swiftc \
+    app/apple/herm/Models/CPSLEvalTypes.swift \
+    scripts/vet-apple-eval-race.swift \
+    -o /tmp/herm-vet-eval-race
+  /tmp/herm-vet-eval-race
   if [[ "$(uname -s)" == "Darwin" ]]; then
     swiftc \
       app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \

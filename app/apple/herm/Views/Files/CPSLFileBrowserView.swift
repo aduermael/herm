@@ -174,6 +174,7 @@ struct CPSLFileBrowserView: View {
     @ObservedObject var model: CPSLChatModel
 #if os(iOS)
     @State private var isICloudImporterPresented = false
+    @State private var isICloudImporterPending = false
 #endif
 
     var body: some View {
@@ -191,6 +192,11 @@ struct CPSLFileBrowserView: View {
                     }
                 case .failure(let error):
                     model.reportICloudImportError(error)
+                }
+            }
+            .onChange(of: model.dictation.isActive) { _, isActive in
+                if !isActive {
+                    presentICloudImporterIfReady()
                 }
             }
 #else
@@ -211,11 +217,23 @@ struct CPSLFileBrowserView: View {
 
     private func connectICloud() {
 #if os(iOS)
-        isICloudImporterPresented = true
+        isICloudImporterPending = true
+        model.dictation.finish()
+        presentICloudImporterIfReady()
 #else
         model.showComingSoon()
 #endif
     }
+
+#if os(iOS)
+    private func presentICloudImporterIfReady() {
+        guard isICloudImporterPending, !model.dictation.isActive else {
+            return
+        }
+        isICloudImporterPending = false
+        isICloudImporterPresented = true
+    }
+#endif
 }
 
 private struct CPSLFileBrowserRouteStack: View {

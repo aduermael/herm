@@ -175,15 +175,6 @@ private typealias CPSLSessionNewWithHostCallbacksV3Function = @convention(c) (
     UnsafeRawPointer?,
     UnsafeRawPointer?
 ) -> OpaquePointer?
-
-nonisolated private final class CPSLFileCoordinatorCancellationBox: @unchecked Sendable {
-    let coordinator = NSFileCoordinator(filePresenter: nil)
-
-    func cancel() {
-        coordinator.cancel()
-    }
-}
-
 private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
     private let lock = NSLock()
     private var value: String
@@ -563,22 +554,19 @@ actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
     private nonisolated static let textPreviewByteLimit = 1_000_000
     private nonisolated static let temporaryFileLifetime: TimeInterval = 24 * 60 * 60
-    private nonisolated static let iCloudStagingProcessRoot =
-        CPSLICloudStagingStorage.makeProcessRoot(in: FileManager.default.temporaryDirectory)
 
     private let webBrowser: CPSLWebBrowserService
     private let location: CPSLLocationService
     private let calendarActivityNotifier: CPSLCalendarActivityNotifier
     private let fileActivityNotifier: CPSLFileActivityNotifier
+    private let iCloudMountManager = CPSLICloudMountManager()
     private var session: CPSLSessionHandle?
     private var nextSessionID = 0
     private var isInitializingSession = false
-    private var isStagingICloudDirectory = false
     private var evaluatingSessionID: Int?
+    private var timedOutEvaluations: [CPSLEvalRaceBox] = []
     private var sandboxURLs: CPSLSandboxURLs?
     private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
-    private var iCloudMounts: [CPSLICloudMount] = []
-    private let iCloudStagingRoot: URL
 
     init(
         webBrowser: CPSLWebBrowserService,
@@ -590,18 +578,11 @@ actor CPSLDebugService {
         self.location = location
         self.calendarActivityNotifier = calendarActivityNotifier
         self.fileActivityNotifier = fileActivityNotifier
-        iCloudStagingRoot = CPSLICloudStagingStorage.makeServiceRoot(
-            in: Self.iCloudStagingProcessRoot
-        )
     }
 
     deinit {
         if let session {
             cpsl_session_free(session.pointer)
-        }
-        let stagingRoot = iCloudStagingRoot
-        DispatchQueue.global(qos: .utility).async {
-            try? FileManager.default.removeItem(at: stagingRoot)
         }
     }
 
@@ -698,7 +679,7 @@ actor CPSLDebugService {
             self.sandboxURLs = sandboxURLs
             let normalizedPath = Self.normalizedVirtualPath(virtualPath)
             if normalizedPath == CPSLVirtualPath.iCloudRoot {
-                let entries = iCloudMounts.map {
+                let entries = iCloudMountManager.mounts.map {
                     CPSLFileEntry(name: $0.label, path: $0.virtualPath, isDirectory: true)
                 }
                 return CPSLDirectoryListing(entries: entries, error: nil)
@@ -997,15 +978,11 @@ actor CPSLDebugService {
     }
 
     func activeICloudMounts() -> [CPSLICloudMount] {
-        iCloudMounts
+        iCloudMountManager.mounts
     }
 
     func prepareICloudStaging() async {
-        try? await CPSLICloudStagingCoordinator.shared.prepare(
-            serviceRoot: iCloudStagingRoot,
-            processRoot: Self.iCloudStagingProcessRoot,
-            temporaryRoot: FileManager.default.temporaryDirectory
-        )
+        await iCloudMountManager.prepare()
     }
 
     func stageICloudDirectory(
@@ -1015,79 +992,16 @@ actor CPSLDebugService {
         guard !isSessionBusy else {
             throw CPSLICloudMountError.sessionBusy
         }
-        isStagingICloudDirectory = true
-        defer {
-            isStagingICloudDirectory = false
+        guard iCloudMountManager.beginStaging() else {
+            throw CPSLICloudMountError.sessionBusy
         }
-        try Task.checkCancellation()
-        let sandboxURLs = try ensureSandboxURLs()
-        self.sandboxURLs = sandboxURLs
-
-        let didAccess = sourceURL.startAccessingSecurityScopedResource()
-        guard didAccess else {
-            throw CPSLICloudMountError.accessDenied
-        }
-        defer {
-            sourceURL.stopAccessingSecurityScopedResource()
-        }
-
-        let values = try sourceURL.resourceValues(
-            forKeys: [.isDirectoryKey, .isUbiquitousItemKey, .localizedNameKey]
+        defer { iCloudMountManager.finishStaging() }
+        self.sandboxURLs = try ensureSandboxURLs()
+        let mount = try await iCloudMountManager.stageReservedDirectory(
+            from: sourceURL,
+            progress: progress
         )
-        guard values.isDirectory == true else {
-            throw CPSLICloudMountError.notDirectory
-        }
-        guard values.isUbiquitousItem == true else {
-            throw CPSLICloudMountError.unsupportedProvider
-        }
-
-        let label = Self.sanitizedMountLabel(values.localizedName ?? sourceURL.lastPathComponent)
-        guard !Self.isHostURL(sourceURL, inside: iCloudStagingRoot) else {
-            throw CPSLICloudMountError.invalidSource
-        }
-
-        let permit = try await CPSLICloudStagingCoordinator.shared.beginImport(
-            serviceRoot: iCloudStagingRoot,
-            processRoot: Self.iCloudStagingProcessRoot,
-            temporaryRoot: FileManager.default.temporaryDirectory
-        )
-        let slug = uniqueICloudMountSlug(for: label)
-        let stagedURL = iCloudStagingRoot.appendingPathComponent(slug, isDirectory: true)
-        do {
-            _ = try await copyICloudDirectory(
-                from: sourceURL,
-                to: stagedURL,
-                remainingUsage: permit.remainingUsage,
-                availableCapacity: permit.availableCapacityBytes,
-                progress: progress
-            )
-            try Task.checkCancellation()
-        } catch {
-            let originalError = error
-            var cleanupFailed = false
-            if FileManager.default.fileExists(atPath: stagedURL.path) {
-                do {
-                    try FileManager.default.removeItem(at: stagedURL)
-                } catch {
-                    cleanupFailed = true
-                }
-            }
-            await CPSLICloudStagingCoordinator.shared.finishImport()
-            if cleanupFailed {
-                throw CPSLICloudStagingError.cannotCleanUp
-            }
-            throw originalError
-        }
-
-        let mount = CPSLICloudMount(
-            label: label,
-            slug: slug,
-            hostURL: stagedURL
-        )
-        iCloudMounts.append(mount)
-        iCloudMounts.sort { $0.virtualPath < $1.virtualPath }
         resetSessionForMountChange()
-        await CPSLICloudStagingCoordinator.shared.finishImport()
         return mount
     }
 
@@ -1096,15 +1010,7 @@ actor CPSLDebugService {
             throw CPSLICloudMountError.sessionBusy
         }
         let normalizedPath = Self.normalizedVirtualPath(virtualPath)
-        guard let index = iCloudMounts.firstIndex(where: { $0.virtualPath == normalizedPath }) else {
-            throw CPSLICloudMountError.mountNotFound
-        }
-
-        let mount = iCloudMounts[index]
-        if FileManager.default.fileExists(atPath: mount.hostURL.path) {
-            try FileManager.default.removeItem(at: mount.hostURL)
-        }
-        iCloudMounts.remove(at: index)
+        try iCloudMountManager.removeMount(at: normalizedPath)
         resetSessionForMountChange()
     }
 
@@ -1134,7 +1040,7 @@ actor CPSLDebugService {
     }
 
     private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
-        guard !isStagingICloudDirectory else {
+        guard !iCloudMountManager.isStaging else {
             return Self.ffiFailure("An iCloud folder is still being staged")
         }
         let sandboxURLs: CPSLSandboxURLs
@@ -1168,7 +1074,12 @@ actor CPSLDebugService {
             requestJSON: requestJSON
         )
 
-        switch await Self.performBlockingEvalWithTimeout(request) {
+        let evaluation = await Self.performBlockingEvalWithTimeout(request) {
+            Task {
+                await self.pruneFinishedTimedOutEvaluations()
+            }
+        }
+        switch evaluation.result {
         case .completed(let result):
             if evaluatingSessionID == activeSession.id {
                 evaluatingSessionID = nil
@@ -1178,8 +1089,12 @@ actor CPSLDebugService {
             }
             return result
         case .timedOut:
+            if evaluation.race.isTimedOutEvaluationRunning {
+                timedOutEvaluations.append(evaluation.race)
+            }
             if session?.id == activeSession.id {
-                // cpsl_eval may still be blocked; abandon and intentionally leak this session.
+                // cpsl_eval may still be blocked. The worker owns this session
+                // until the native call returns and it is safe to release.
                 session = nil
                 currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
@@ -1203,7 +1118,7 @@ actor CPSLDebugService {
 
     private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) throws -> URL {
         let normalized = Self.normalizedVirtualPath(virtualPath)
-        if let resolved = resolvedICloudHostURL(for: normalized) {
+        if let resolved = iCloudMountManager.hostURL(for: normalized) {
             return resolved
         }
         if normalized == CPSLVirtualPath.iCloudRoot ||
@@ -1371,93 +1286,11 @@ actor CPSLDebugService {
         if Self.isHostURL(url, inside: sandboxURLs.root) {
             return true
         }
-        return iCloudMounts.contains { mount in
-            Self.isHostURL(url, inside: mount.hostURL)
-        }
-    }
-
-    private func resolvedICloudHostURL(for normalizedPath: String) -> URL? {
-        for mount in iCloudMounts {
-            if normalizedPath == mount.virtualPath {
-                return mount.hostURL
-            }
-            let prefix = "\(mount.virtualPath)/"
-            if normalizedPath.hasPrefix(prefix) {
-                let relativePath = normalizedPath.dropFirst(prefix.count)
-                return Self.appendingVirtualPath(relativePath, to: mount.hostURL)
-            }
-        }
-        return nil
+        return iCloudMountManager.containsHostURL(url)
     }
 
     private nonisolated static func virtualChildPath(parent: String, child: String) -> String {
         parent == "/" ? "/\(child)" : "\(parent)/\(child)"
-    }
-
-    private func copyICloudDirectory(
-        from sourceURL: URL,
-        to stagedURL: URL,
-        remainingUsage: CPSLICloudStagingUsage,
-        availableCapacity: Int64,
-        progress: @escaping @Sendable (CPSLICloudImportProgress) -> Void
-    ) async throws -> CPSLICloudStagingUsage {
-        let cancellationBox = CPSLFileCoordinatorCancellationBox()
-        let coordinator = cancellationBox.coordinator
-        return try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            var coordinatorError: NSError?
-            var copyError: Error?
-            var stagingUsage: CPSLICloudStagingUsage?
-
-            coordinator.coordinate(
-                readingItemAt: sourceURL,
-                options: [],
-                error: &coordinatorError
-            ) { coordinatedURL in
-                do {
-                    stagingUsage = try CPSLICloudStagingStorage.stageDirectory(
-                        from: coordinatedURL,
-                        to: stagedURL,
-                        remainingUsage: remainingUsage,
-                        availableCapacityBytes: availableCapacity,
-                        progress: progress
-                    )
-                } catch {
-                    copyError = error
-                }
-            }
-
-            try Task.checkCancellation()
-            if let coordinatorError {
-                throw coordinatorError
-            }
-            if let copyError {
-                throw copyError
-            }
-            guard let stagingUsage else {
-                throw CPSLICloudStagingError.cannotEnumerateFolder
-            }
-            return stagingUsage
-        } onCancel: {
-            // NSFileCoordinator may wait for an active accessor to return.
-            // Never make the UI thread pay for that wait.
-            DispatchQueue.global(qos: .utility).async {
-                cancellationBox.cancel()
-            }
-        }
-    }
-
-    private func uniqueICloudMountSlug(for label: String) -> String {
-        let baseSlug = Self.mountSlug(from: label)
-        var slug = baseSlug
-        var suffix = 2
-        let usedSlugs = Set(iCloudMounts.map(\.slug))
-        while usedSlugs.contains(slug) ||
-            FileManager.default.fileExists(atPath: iCloudStagingRoot.appendingPathComponent(slug).path) {
-            slug = "\(baseSlug)-\(suffix)"
-            suffix += 1
-        }
-        return slug
     }
 
     private func resetSessionForMountChange() {
@@ -1470,40 +1303,15 @@ actor CPSLDebugService {
     }
 
     private var isSessionBusy: Bool {
-        isInitializingSession || isStagingICloudDirectory || evaluatingSessionID != nil
+        pruneFinishedTimedOutEvaluations()
+        return isInitializingSession ||
+            iCloudMountManager.isStaging ||
+            evaluatingSessionID != nil ||
+            !timedOutEvaluations.isEmpty
     }
 
-    private nonisolated static func sanitizedMountLabel(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return "iCloud Folder"
-        }
-        return String(trimmed.prefix(120))
-    }
-
-    private nonisolated static func mountSlug(from label: String) -> String {
-        let lowercased = label.lowercased()
-        var slug = ""
-        var lastWasSeparator = false
-
-        for scalar in lowercased.unicodeScalars {
-            let value = scalar.value
-            let isLetter = value >= 97 && value <= 122
-            let isDigit = value >= 48 && value <= 57
-            if isLetter || isDigit {
-                slug.unicodeScalars.append(scalar)
-                lastWasSeparator = false
-            } else if !lastWasSeparator {
-                slug.append("-")
-                lastWasSeparator = true
-            }
-            if slug.count >= 64 {
-                break
-            }
-        }
-
-        slug = slug.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return slug.isEmpty ? "icloud-folder" : slug
+    private func pruneFinishedTimedOutEvaluations() {
+        timedOutEvaluations.removeAll { !$0.isTimedOutEvaluationRunning }
     }
 
     private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) async -> String? {
@@ -1526,7 +1334,7 @@ actor CPSLDebugService {
 
         // A domain policy cannot constrain arbitrary JavaScript inside a WKWebView.
         // Omit the browser capability entirely while personal mounts are active.
-        let callbackBox = iCloudMounts.isEmpty
+        let callbackBox = iCloudMountManager.mounts.isEmpty
             ? CPSLWebBrowserCallbackBox(service: webBrowser)
             : nil
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
@@ -1636,7 +1444,7 @@ actor CPSLDebugService {
                 "mode": "ro"
             ])
         }
-        for mount in iCloudMounts {
+        for mount in iCloudMountManager.mounts {
             mounts.append([
                 "host": mount.hostURL.resolvingSymlinksInPath().path,
                 "virtual": mount.virtualPath,
@@ -1644,7 +1452,7 @@ actor CPSLDebugService {
             ])
         }
 
-        let allowedDomains: [String] = iCloudMounts.isEmpty ? ["*"] : []
+        let allowedDomains: [String] = iCloudMountManager.mounts.isEmpty ? ["*"] : []
         let config: [String: Any] = [
             "mounts": mounts,
             "initial_cwd": CPSLVirtualPath.initialDirectory,
@@ -1867,10 +1675,11 @@ actor CPSLDebugService {
     }
 
     private nonisolated static func performBlockingEvalWithTimeout(
-        _ request: CPSLBlockingEvalRequest
-    ) async -> CPSLEvalRaceResult {
+        _ request: CPSLBlockingEvalRequest,
+        onTimedOutEvaluationFinished: @escaping @Sendable () -> Void
+    ) async -> (result: CPSLEvalRaceResult, race: CPSLEvalRaceBox) {
         let race = CPSLEvalRaceBox()
-        return await withTaskCancellationHandler {
+        let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation)
                 guard !Task.isCancelled else {
@@ -1880,7 +1689,11 @@ actor CPSLDebugService {
 
                 DispatchQueue.global(qos: .userInitiated).async {
                     let result = performBlockingEval(request)
-                    race.resume(.completed(result))
+                    if !race.resume(.completed(result)) {
+                        cpsl_session_free(request.session)
+                        race.finishTimedOutEvaluation()
+                        onTimedOutEvaluationFinished()
+                    }
                 }
 
                 DispatchQueue.global().asyncAfter(
@@ -1892,6 +1705,7 @@ actor CPSLDebugService {
         } onCancel: {
             race.resume(.cancelled)
         }
+        return (result, race)
     }
 
     private nonisolated static func performBlockingEval(
@@ -2027,42 +1841,5 @@ actor CPSLDebugService {
             return values.map { String(describing: $0) }
         }
         return []
-    }
-}
-
-private enum CPSLFileAccessError: LocalizedError {
-    case outsideFilesystem
-
-    var errorDescription: String? {
-        switch self {
-        case .outsideFilesystem:
-            return "Location is outside the CPSL filesystem."
-        }
-    }
-}
-
-private enum CPSLICloudMountError: LocalizedError {
-    case accessDenied
-    case invalidSource
-    case mountNotFound
-    case notDirectory
-    case sessionBusy
-    case unsupportedProvider
-
-    var errorDescription: String? {
-        switch self {
-        case .accessDenied:
-            return "Herm could not access the selected iCloud folder."
-        case .invalidSource:
-            return "Choose a folder outside Herm's staged iCloud storage."
-        case .mountNotFound:
-            return "iCloud mount is not available."
-        case .notDirectory:
-            return "Choose a folder from iCloud Drive."
-        case .sessionBusy:
-            return "Wait for the current operation to finish."
-        case .unsupportedProvider:
-            return "Choose a folder from iCloud Drive, not another Files location."
-        }
     }
 }

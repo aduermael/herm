@@ -1,0 +1,221 @@
+diff --git a/core/src/doc.rs b/core/src/doc.rs
+index b2dd058..4ae2be9 100644
+--- a/core/src/doc.rs
++++ b/core/src/doc.rs
+@@ -927,6 +927,7 @@ fn parse_doc_read_args(
+ pub(crate) fn register_doc_globals(
+     lua: &Lua,
+     mounts: Arc<MountTable>,
++    allow_html_to_pdf: bool,
+     vision_callback: Option<VisionCallback>,
+     cache_dir: Option<PathBuf>,
+     #[cfg(feature = "pdfium-render")] pdfium_engine: Option<Arc<PdfiumEngine>>,
+@@ -948,7 +949,7 @@ pub(crate) fn register_doc_globals(
+     #[cfg(feature = "pdfium-render")]
+     register_doc_pdf(lua, &doc, mounts.clone(), pdfium_engine.clone())?;
+ 
+-    register_doc_rendering(lua, &doc, mounts.clone())?;
++    register_doc_rendering(lua, &doc, mounts.clone(), allow_html_to_pdf)?;
+ 
+     // Select documentation based on compiled features and vision callback.
+     // PDF functions stay visible when PDFium is compiled in but not available;
+@@ -1810,12 +1811,13 @@ fn register_doc_rendering(
+     lua: &Lua,
+     doc: &mlua::Table,
+     mounts: Arc<MountTable>,
++    allow_html_to_pdf: bool,
+ ) -> Result<(), mlua::Error> {
+     // doc.render(text, from, to, opts?) -> string (or binary string for PDF)
+     // Also accepts: doc.render({text=..., from=..., to=..., ...pageOpts})
+     doc.set(
+         "render",
+-        lua.create_function(|lua, args: MultiValue| {
++        lua.create_function(move |lua, args: MultiValue| {
+             if args.is_empty() {
+                 return Err(arg_error("doc.render", DOC_RENDER_PARAMS));
+             }
+@@ -1872,6 +1874,9 @@ fn register_doc_rendering(
+             };
+ 
+             if is_binary_conversion(&to) {
++                if !allow_html_to_pdf {
++                    return Err(html_to_pdf_policy_error());
++                }
+                 let page = parse_page_options(opts.as_ref());
+                 let bytes = render_document_bytes(&text, &from, &to, &page)
+                     .map_err(mlua::Error::external)?;
+@@ -1977,6 +1982,10 @@ fn register_doc_rendering(
+                     )));
+                 }
+ 
++                if to_ext.eq_ignore_ascii_case("pdf") && !allow_html_to_pdf {
++                    return Err(html_to_pdf_policy_error());
++                }
++
+                 // Resolve paths through mount table
+                 let host_input = m.resolve_read(&input).map_err(mlua::Error::external)?;
+                 let host_output = m.resolve_write(&output).map_err(mlua::Error::external)?;
+@@ -1998,3 +2007,7 @@ fn register_doc_rendering(
+ 
+     Ok(())
+ }
++
++fn html_to_pdf_policy_error() -> mlua::Error {
++    mlua::Error::external("HTML-to-PDF rendering is disabled by network policy")
++}
+diff --git a/core/src/sandbox.rs b/core/src/sandbox.rs
+index 24e2ce3..500111b 100644
+--- a/core/src/sandbox.rs
++++ b/core/src/sandbox.rs
+@@ -389,6 +389,7 @@ pub type PendingReads = Arc<Mutex<Vec<PendingRead>>>;
+ pub struct SandboxBuilder {
+     mounts: Option<MountTable>,
+     auto_tmp: bool,
++    allow_html_to_pdf: bool,
+     #[cfg(feature = "mod-http")]
+     http_gateway: Option<Arc<HttpGateway>>,
+     #[cfg(feature = "mod-apple-calendar")]
+@@ -413,6 +414,7 @@ impl Default for SandboxBuilder {
+         Self {
+             mounts: None,
+             auto_tmp: true,
++            allow_html_to_pdf: true,
+             #[cfg(feature = "mod-http")]
+             http_gateway: None,
+             #[cfg(feature = "mod-apple-calendar")]
+@@ -445,6 +447,12 @@ impl SandboxBuilder {
+         self
+     }
+ 
++    /// Allow HTML/Markdown-to-PDF conversion through the platform web view.
++    pub fn allow_html_to_pdf(mut self, allowed: bool) -> Self {
++        self.allow_html_to_pdf = allowed;
++        self
++    }
++
+     #[cfg(feature = "mod-http")]
+     pub fn http_gateway(mut self, gateway: Arc<HttpGateway>) -> Self {
+         self.http_gateway = Some(gateway);
+@@ -598,6 +606,7 @@ impl SandboxBuilder {
+         crate::doc::register_doc_globals(
+             &lua,
+             mounts.clone(),
++            self.allow_html_to_pdf,
+             self.vision_callback,
+             self.doc_cache_dir,
+             #[cfg(feature = "pdfium-render")]
+diff --git a/ffi/src/lib.rs b/ffi/src/lib.rs
+index 204dcce..2589641 100644
+--- a/ffi/src/lib.rs
++++ b/ffi/src/lib.rs
+@@ -487,6 +487,7 @@ fn create_runtime_sandbox(
+     let builder = Sandbox::builder()
+         .mounts(mounts)
+         .http_gateway(Arc::new(create_http_gateway(config)))
++        .allow_html_to_pdf(html_to_pdf_allowed(config))
+         .auto_tmp(false);
+     #[cfg(feature = "webbrowser")]
+     let builder = if let Some(gateway) = webbrowser_gateway {
+@@ -539,6 +540,23 @@ fn create_http_gateway(config: &ValidatedSessionConfig) -> HttpGateway {
+     builder.build()
+ }
+ 
++fn html_to_pdf_allowed(config: &ValidatedSessionConfig) -> bool {
++    let http_unrestricted =
++        network_policy_is_unrestricted(&config.allow_domains, &config.deny_domains);
++    #[cfg(feature = "webbrowser")]
++    let webbrowser_unrestricted = network_policy_is_unrestricted(
++        &config.webbrowser_policy.allow_domains,
++        &config.webbrowser_policy.deny_domains,
++    );
++    #[cfg(not(feature = "webbrowser"))]
++    let webbrowser_unrestricted = true;
++    http_unrestricted && webbrowser_unrestricted
++}
++
++fn network_policy_is_unrestricted(allow_domains: &[String], deny_domains: &[String]) -> bool {
++    deny_domains.is_empty() && allow_domains.iter().any(|domain| domain == "*")
++}
++
+ #[cfg(feature = "webbrowser")]
+ fn validate_webbrowser_policy(
+     config: Option<WebBrowserConfig>,
+@@ -1122,6 +1140,78 @@ mod tests {
+         );
+     }
+ 
++    #[cfg(feature = "pdfium-render")]
++    #[test]
++    fn restricted_network_policy_disables_html_to_pdf() {
++        let dir = TempDir::new().unwrap();
++        fs::write(dir.path().join("input.html"), "<h1>Private</h1>").unwrap();
++        let config = session_config(dir.path().canonicalize().unwrap().to_str().unwrap());
++        let validated = validate_session_config(&config.to_string()).unwrap();
++        let sandbox = create_runtime_sandbox(
++            &validated,
++            #[cfg(feature = "webbrowser")]
++            None,
++        )
++        .unwrap();
++
++        let render_error = sandbox
++            .exec(r#"doc.render({text="<h1>Private</h1>", from="html", to="pdf"})"#)
++            .unwrap_err()
++            .to_string();
++        assert!(
++            render_error.contains("HTML-to-PDF rendering is disabled by network policy"),
++            "unexpected render error: {render_error}"
++        );
++
++        let render_file_error = sandbox
++            .exec(r#"doc.renderFile({source="/workdir/input.html", target="/workdir/output.pdf"})"#)
++            .unwrap_err()
++            .to_string();
++        assert!(
++            render_file_error.contains("HTML-to-PDF rendering is disabled by network policy"),
++            "unexpected renderFile error: {render_file_error}"
++        );
++        assert!(!dir.path().join("output.pdf").exists());
++
++        let html = sandbox
++            .exec(r##"return doc.render({text="# Safe", from="markdown", to="html"})"##)
++            .unwrap();
++        assert!(html.contains("<h1>Safe</h1>"));
++    }
++
++    #[test]
++    fn html_to_pdf_requires_unrestricted_network_policy() {
++        let dir = TempDir::new().unwrap();
++        let mut config = session_config(dir.path().canonicalize().unwrap().to_str().unwrap());
++
++        let restricted = validate_session_config(&config.to_string()).unwrap();
++        assert!(!html_to_pdf_allowed(&restricted));
++
++        config["http"]["allow_domains"] = json!(["*"]);
++        let unrestricted = validate_session_config(&config.to_string()).unwrap();
++        assert!(html_to_pdf_allowed(&unrestricted));
++
++        config["http"]["deny_domains"] = json!(["private.example"]);
++        let partially_restricted = validate_session_config(&config.to_string()).unwrap();
++        assert!(!html_to_pdf_allowed(&partially_restricted));
++    }
++
++    #[cfg(feature = "webbrowser")]
++    #[test]
++    fn html_to_pdf_requires_unrestricted_webbrowser_policy() {
++        let dir = TempDir::new().unwrap();
++        let mut config = session_config(dir.path().canonicalize().unwrap().to_str().unwrap());
++        config["http"]["allow_domains"] = json!(["*"]);
++        config["webbrowser"] = json!({
++            "mode": "policy",
++            "allow_domains": [],
++            "deny_domains": []
++        });
++
++        let restricted = validate_session_config(&config.to_string()).unwrap();
++        assert!(!html_to_pdf_allowed(&restricted));
++    }
++
+     #[test]
+     fn validates_network_policy_domains() {
+         let dir = TempDir::new().unwrap();
