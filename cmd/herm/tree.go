@@ -228,6 +228,121 @@ func (a *App) handleSessionCommand(input string) {
 	}
 }
 
+// rewindCheckpoint represents a single user message the user can rewind to.
+type rewindCheckpoint struct {
+	nodeID string
+	label  string
+}
+
+// collectRewindCheckpoints extracts user messages from a node chain as rewind
+// checkpoints, skipping tool-result user nodes.
+func collectRewindCheckpoints(nodes []*types.Node) []rewindCheckpoint {
+	var checkpoints []rewindCheckpoint
+	for _, n := range nodes {
+		if n.NodeType == types.NodeTypeUser && !isToolResultContent(n.Content) {
+			label := truncate(truncateOptions{s: firstLine(userDisplayContent(n.Content)), max: 60})
+			if label == "" {
+				label = "(empty message)"
+			}
+			checkpoints = append(checkpoints, rewindCheckpoint{nodeID: n.ID, label: label})
+		}
+	}
+	return checkpoints
+}
+
+// handleRewindCommand shows user message checkpoints and lets the user
+// rewind the conversation to before a selected message. Subsequent messages
+// fork the conversation tree from that point.
+func (a *App) handleRewindCommand() {
+	if a.langdagClient == nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No API client available."})
+		a.render()
+		return
+	}
+	if a.agentNodeID == "" {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No active conversation to rewind."})
+		a.render()
+		return
+	}
+
+	ctx := context.Background()
+	ancestors, err := a.langdagClient.GetAncestors(ctx, a.agentNodeID)
+	if err != nil {
+		a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Rewind error: %v", err)})
+		a.render()
+		return
+	}
+
+	checkpoints := collectRewindCheckpoints(ancestors)
+	if len(checkpoints) == 0 {
+		a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "No user messages to rewind to."})
+		a.render()
+		return
+	}
+
+	// Show as a menu (newest first so the most recent checkpoint is at the top).
+	var lines []string
+	for i := len(checkpoints) - 1; i >= 0; i-- {
+		lines = append(lines, checkpoints[i].label)
+	}
+	a.menuLines = lines
+	a.menuCursor = 0
+	a.menuScrollOffset = 0
+	a.menuActive = true
+	a.menuHeader = "Rewind to before:"
+	a.menuAction = func(idx int) {
+		a.menuLines = nil
+		a.menuHeader = ""
+		a.menuActive = false
+		a.menuAction = nil
+		a.menuScrollOffset = 0
+
+		if idx < 0 || idx >= len(checkpoints) {
+			a.renderInput()
+			return
+		}
+		// Reverse: menu item 0 = most recent checkpoint (last in slice).
+		cp := checkpoints[len(checkpoints)-1-idx]
+
+		// Cancel any in-flight agent work.
+		if a.hasCancelableAgentWork() {
+			a.requestAgentCancel()
+		}
+
+		// Rewind to the parent of the selected user message so the next
+		// user message creates a fork as a sibling of the discarded one.
+		node, err := a.langdagClient.GetNode(ctx, cp.nodeID)
+		if err != nil {
+			a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Rewind error: %v", err)})
+			a.render()
+			return
+		}
+		targetID := node.ParentID
+		if targetID == "" {
+			targetID = node.ID
+		}
+
+		a.agentNodeID = targetID
+		a.streamingText = ""
+		a.pendingToolCall = ""
+		a.messages = nil
+
+		rewound, err := a.langdagClient.GetAncestors(ctx, targetID)
+		if err != nil {
+			a.messages = append(a.messages, chatMessage{kind: msgError, content: fmt.Sprintf("Rewind error: %v", err)})
+			a.render()
+			return
+		}
+		a.messages = a.rebuildChatMessages(rewound)
+		if len(a.messages) == 0 {
+			a.messages = append(a.messages, chatMessage{kind: msgInfo, content: "(start of conversation)"})
+		}
+		a.messages = append(a.messages, chatMessage{kind: msgSuccess, content: "Rewound. Next message will fork from here."})
+		a.renderFull()
+	}
+	a.renderInput()
+}
+
 // showConversationList opens a scrollable menu of all conversations.
 func (a *App) showConversationList() {
 	if a.langdagClient == nil {

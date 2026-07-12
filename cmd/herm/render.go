@@ -668,9 +668,8 @@ func (a *App) buildInputRows() []string {
 				rows = append(rows, truncateWithEllipsis(truncateWithEllipsisOptions{s: line, maxLen: w}))
 			}
 		}
-		first := a.menuScrollOffset + 1
-		last := end
-		indicator := fmt.Sprintf("(%d->%d / %d)", first, last, total)
+		cursorPos := a.menuCursor + 1
+		indicator := fmt.Sprintf("(%d->%d / %d)", cursorPos, total, total)
 		rows = append(rows, fmt.Sprintf("\033[2m%s\033[0m", truncateWithEllipsis(truncateWithEllipsisOptions{s: indicator, maxLen: w})))
 		if a.menuModels != nil {
 			rows = append(rows, layoutDimInlineBlocks(w, "←/→ sort column", "Tab flip order", "Enter select", "Esc close")...)

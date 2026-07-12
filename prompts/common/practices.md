@@ -9,4 +9,5 @@
 - For large files, read only the relevant section.
 - API errors (rate limits, timeouts, server errors) are retried automatically with backoff. Do not manually retry or wait when you see a transient error — the system handles it.
 - Trust the documented environment capabilities.
+- If you are stuck on the wrong approach or the user wants to backtrack, suggest using `/rewind` — it lists previous user messages and lets the user pick one to rewind to and fork the conversation from there.
 {{- end}}
