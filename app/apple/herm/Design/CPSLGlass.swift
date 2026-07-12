@@ -2,7 +2,7 @@ import SwiftUI
 
 enum CPSLGlassTuning {
     static let tintOpacityScale: Double = 1.12
-    static let nativeGlassTintOpacity: Double = 0.30
+    static let nativeGlassTintOpacity: Double = 0.66
 
     static func tint(_ color: Color, opacity: Double) -> Color {
         color.opacity(min(opacity * tintOpacityScale, 1))
@@ -63,6 +63,24 @@ struct CPSLGlassBackgroundModifier<S: Shape>: ViewModifier {
     }
 }
 
+struct CPSLSurfaceBackgroundModifier<S: Shape>: ViewModifier {
+    let shape: S
+    let tint: Color
+    let strokeOpacity: Double
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                shape.fill(tint)
+            }
+            .overlay {
+                shape.stroke(CPSLTheme.text.opacity(strokeOpacity), lineWidth: 1)
+                    .allowsHitTesting(false)
+            }
+            .clipShape(shape)
+    }
+}
+
 extension View {
     func cpslGlassBackground<S: Shape>(
         in shape: S,
@@ -71,6 +89,20 @@ extension View {
     ) -> some View {
         modifier(
             CPSLGlassBackgroundModifier(
+                shape: shape,
+                tint: tint,
+                strokeOpacity: strokeOpacity
+            )
+        )
+    }
+
+    func cpslSurfaceBackground<S: Shape>(
+        in shape: S,
+        tint: Color,
+        strokeOpacity: Double = 0.045
+    ) -> some View {
+        modifier(
+            CPSLSurfaceBackgroundModifier(
                 shape: shape,
                 tint: tint,
                 strokeOpacity: strokeOpacity

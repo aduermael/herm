@@ -7,10 +7,21 @@ it with a local `.env` file:
 OPENAI_BASE_URL=https://api.x.ai/v1
 OPENAI_API_KEY=replace-with-token
 OPENAI_MODEL=replace-with-model
+HERM_MAX_TOOL_ROUNDS=200
+HERM_MAX_OUTPUT_TOKENS=16384
+HERM_EXPLORE_SUBAGENT_TURNS=15
+HERM_GENERAL_SUBAGENT_TURNS=20
+HERM_MAX_AGENT_DEPTH=1
 ```
 
 `OPENAI_BASE_URL` must be an absolute HTTP or HTTPS base URL without embedded
 credentials, query, or fragment. The client appends `/chat/completions`.
+
+`HERM_MAX_AGENT_DEPTH` controls whether the main agent may summon sub-agents
+through the `agent` tool. The default template value is `1`, which allows the
+main agent to spawn one helper level. Set it to `0` to remove the `agent` tool
+from provider requests. `HERM_EXPLORE_SUBAGENT_TURNS` and
+`HERM_GENERAL_SUBAGENT_TURNS` control the turn budget for helper agents.
 
 Local credential files are ignored by git and excluded from the Xcode target:
 

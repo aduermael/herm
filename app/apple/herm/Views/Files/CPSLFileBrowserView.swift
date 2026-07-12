@@ -30,32 +30,83 @@ private enum CPSLFileBrowserMotion {
 private struct CPSLFileBrowserFolderSnapshot: Equatable {
     let path: String
     let isRoot: Bool
-    let entries: [CPSLFileEntry]
-    let childEntriesByPath: [String: [CPSLFileEntry]]
-    let expandedFilePaths: Set<String>
-    let loadingFilePaths: Set<String>
+    let rows: [CPSLFileBrowserRow]
+    let isLoading: Bool
     let error: String?
 
     init(model: CPSLChatModel) {
         path = model.browserPath
         isRoot = model.browserPath == CPSLVirtualPath.root
-        entries = model.browserEntries
-        childEntriesByPath = model.childEntriesByPath
-        expandedFilePaths = model.expandedFilePaths
-        loadingFilePaths = model.loadingFilePaths
+        rows = Self.makeRows(
+            from: model.browserEntries,
+            childEntriesByPath: model.childEntriesByPath,
+            expandedFilePaths: model.expandedFilePaths,
+            loadingFilePaths: model.loadingFilePaths
+        )
+        isLoading = model.loadingFilePaths.contains(model.browserPath)
         error = model.fileBrowserError
     }
 
-    func children(for path: String) -> [CPSLFileEntry] {
-        childEntriesByPath[path] ?? []
+    private static func makeRows(
+        from entries: [CPSLFileEntry],
+        childEntriesByPath: [String: [CPSLFileEntry]],
+        expandedFilePaths: Set<String>,
+        loadingFilePaths: Set<String>,
+        depth: Int = 0
+    ) -> [CPSLFileBrowserRow] {
+        var rows: [CPSLFileBrowserRow] = []
+        appendRows(
+            to: &rows,
+            from: entries,
+            childEntriesByPath: childEntriesByPath,
+            expandedFilePaths: expandedFilePaths,
+            loadingFilePaths: loadingFilePaths,
+            depth: depth
+        )
+        return rows
     }
 
-    func isExpanded(_ entry: CPSLFileEntry) -> Bool {
-        expandedFilePaths.contains(entry.path)
+    private static func appendRows(
+        to rows: inout [CPSLFileBrowserRow],
+        from entries: [CPSLFileEntry],
+        childEntriesByPath: [String: [CPSLFileEntry]],
+        expandedFilePaths: Set<String>,
+        loadingFilePaths: Set<String>,
+        depth: Int
+    ) {
+        for entry in entries {
+            let isExpanded = expandedFilePaths.contains(entry.path)
+            rows.append(.entry(entry, depth: depth, isExpanded: isExpanded))
+            guard entry.isDirectory, isExpanded else {
+                continue
+            }
+            if loadingFilePaths.contains(entry.path) {
+                rows.append(.loading(path: entry.path, depth: depth + 1))
+            } else {
+                appendRows(
+                    to: &rows,
+                    from: childEntriesByPath[entry.path] ?? [],
+                    childEntriesByPath: childEntriesByPath,
+                    expandedFilePaths: expandedFilePaths,
+                    loadingFilePaths: loadingFilePaths,
+                    depth: depth + 1
+                )
+            }
+        }
     }
+}
 
-    func isLoading(_ path: String) -> Bool {
-        loadingFilePaths.contains(path)
+private enum CPSLFileBrowserRow: Identifiable, Equatable {
+    case entry(CPSLFileEntry, depth: Int, isExpanded: Bool)
+    case loading(path: String, depth: Int)
+
+    var id: String {
+        switch self {
+        case .entry(let entry, _, _):
+            return "entry:\(entry.path)"
+        case .loading(let path, _):
+            return "loading:\(path)"
+        }
     }
 }
 
@@ -117,7 +168,7 @@ private struct CPSLFileBrowserDisplayPage: Identifiable, Equatable {
 }
 
 struct CPSLFileBrowserView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
 
     var body: some View {
         CPSLFileOverlayPanel {
@@ -297,24 +348,22 @@ private struct CPSLFileBrowserRouteContent: View {
 
 @MainActor
 private struct CPSLFileBrowserActions {
-    let loadPath: (String) -> Void
-    let openEntry: (CPSLFileEntry) -> Void
-    let toggleExpansion: (CPSLFileEntry) -> Void
-    let showComingSoon: (String) -> Void
+    let model: CPSLChatModel
 
-    init(model: CPSLChatModel) {
-        loadPath = { path in
-            model.loadBrowserPath(path)
-        }
-        openEntry = { entry in
-            model.openFileEntry(entry)
-        }
-        toggleExpansion = { entry in
-            model.toggleExpansion(for: entry)
-        }
-        showComingSoon = { message in
-            model.showComingSoon(message)
-        }
+    func loadPath(_ path: String) {
+        model.loadBrowserPath(path)
+    }
+
+    func openEntry(_ entry: CPSLFileEntry) {
+        model.openFileEntry(entry)
+    }
+
+    func toggleExpansion(_ entry: CPSLFileEntry) {
+        model.toggleExpansion(for: entry)
+    }
+
+    func showComingSoon(_ message: String) {
+        model.showComingSoon(message)
     }
 }
 
@@ -503,11 +552,14 @@ private struct CPSLFileBrowserHeaderTitle: View {
         if path == CPSLVirtualPath.temporary {
             return "Temporary"
         }
+        if path == CPSLVirtualPath.attachments {
+            return "Attachments"
+        }
         return isRoot ? "Locations" : path
     }
 
     private var displaySubtitle: String {
-        return isRoot ? "Home and temporary storage" : path
+        return isRoot ? "Home, attachments, and temporary storage" : path
     }
 
     private var iconName: String {
@@ -516,6 +568,9 @@ private struct CPSLFileBrowserHeaderTitle: View {
         }
         if path == CPSLVirtualPath.temporary {
             return "clock.fill"
+        }
+        if path == CPSLVirtualPath.attachments {
+            return "paperclip"
         }
         return "folder.fill"
     }
@@ -544,16 +599,14 @@ private struct CPSLFileBrowserPane: View {
 
                 if snapshot.isRoot {
                     CPSLFileLocationsView(actions: actions)
-                } else if snapshot.isLoading(snapshot.path) && snapshot.entries.isEmpty {
+                } else if snapshot.isLoading && snapshot.rows.isEmpty {
                     CPSLFileBrowserLoadingView()
-                } else if snapshot.entries.isEmpty && snapshot.error == nil {
+                } else if snapshot.rows.isEmpty && snapshot.error == nil {
                     CPSLFileBrowserEmptyView()
                 } else {
-                    CPSLFileRowsView(
-                        snapshot: snapshot,
-                        entries: snapshot.entries,
-                        actions: actions
-                    )
+                    ForEach(snapshot.rows) { row in
+                        CPSLFileBrowserRowView(row: row, actions: actions)
+                    }
                 }
             }
             .padding(.vertical, CPSLTheme.small)
@@ -577,6 +630,15 @@ private struct CPSLFileLocationsView: View {
                 color: CPSLTheme.IconPalette.home
             ) {
                 actions.loadPath(CPSLVirtualPath.home)
+            }
+
+            CPSLFileLocationRow(
+                title: "Attachments",
+                detail: CPSLVirtualPath.attachments,
+                systemName: "paperclip",
+                color: CPSLTheme.IconPalette.folder
+            ) {
+                actions.loadPath(CPSLVirtualPath.attachments)
             }
 
             CPSLFileLocationRow(
@@ -677,9 +739,9 @@ private struct CPSLCloudConnectionRow: View {
                 .foregroundStyle(CPSLTheme.text)
                 .padding(.horizontal, CPSLTheme.medium)
                 .frame(height: CPSLTheme.controlSize)
-                .cpslGlassBackground(
+                .cpslSurfaceBackground(
                     in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
-                    tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.34),
+                    tint: CPSLTheme.background.opacity(0.34),
                     strokeOpacity: 0.045
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
@@ -774,31 +836,18 @@ private enum CPSLFileRowMetrics {
     }
 }
 
-private struct CPSLFileRowsView: View {
-    let snapshot: CPSLFileBrowserFolderSnapshot
-    let entries: [CPSLFileEntry]
+private struct CPSLFileBrowserRowView: View {
+    let row: CPSLFileBrowserRow
     let actions: CPSLFileBrowserActions
-    let depth: Int
-
-    init(
-        snapshot: CPSLFileBrowserFolderSnapshot,
-        entries: [CPSLFileEntry],
-        actions: CPSLFileBrowserActions,
-        depth: Int = 0
-    ) {
-        self.snapshot = snapshot
-        self.entries = entries
-        self.actions = actions
-        self.depth = depth
-    }
 
     var body: some View {
-        ForEach(entries) { entry in
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            switch row {
+            case .entry(let entry, let depth, let isExpanded):
                 CPSLFileRowView(
                     entry: entry,
                     depth: depth,
-                    isExpanded: snapshot.isExpanded(entry),
+                    isExpanded: isExpanded,
                     onOpen: {
                         actions.openEntry(entry)
                     },
@@ -806,19 +855,8 @@ private struct CPSLFileRowsView: View {
                         actions.toggleExpansion(entry)
                     }
                 )
-
-                if entry.isDirectory && snapshot.isExpanded(entry) {
-                    if snapshot.isLoading(entry.path) {
-                        CPSLInlineFileLoadingView(depth: depth + 1)
-                    } else {
-                        CPSLFileRowsView(
-                            snapshot: snapshot,
-                            entries: snapshot.children(for: entry.path),
-                            actions: actions,
-                            depth: depth + 1
-                        )
-                    }
-                }
+            case .loading(_, let depth):
+                CPSLInlineFileLoadingView(depth: depth)
             }
         }
     }

@@ -110,7 +110,7 @@ cpsl_ensure_rebuild_reason() {
 		printf '%s\n' "$pdfium_path does not contain requested PDFium target(s): $CPSL_REQUEST_DESCRIPTION"
 		return 0
 	}
-	cpsl_xcframework_inputs_newer_than "$xcframework_info" "$herm_root" && {
+	cpsl_xcframework_inputs_newer_than "$xcframework_info" "$herm_root" "$cpsl_input_root" && {
 		printf '%s\n' "CPSL build inputs changed"
 		return 0
 	}
@@ -167,6 +167,8 @@ work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 default_cpsl_root="$herm_root/external/cpsl"
+cpsl_input_root=${CPSL_ROOT:-"$default_cpsl_root"}
+[ "$require_submodule_source_stamp" -eq 0 ] || cpsl_input_root=$default_cpsl_root
 xcframework_path="$out_dir/cpsl.xcframework"
 pdfium_path="$out_dir/libs/pdfium"
 source_stamp_path=$(cpsl_xcframework_source_stamp_path "$out_dir")

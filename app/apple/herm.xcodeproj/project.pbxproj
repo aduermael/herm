@@ -56,9 +56,9 @@
 				Generated/CPSLEnvConstants.swift,
 				Resources/.env,
 				Resources/.env.local,
-				Skills,
-				Skills/beautiful-pdfs/SKILL.md,
-				Skills/beautiful-pdfs/print.css,
+				"Skills/apple-context/SKILL.md",
+				"Skills/beautiful-pdfs/print.css",
+				"Skills/beautiful-pdfs/SKILL.md",
 				Skills/webbrowser/SKILL.md,
 			);
 			target = 85D75D322FE62B6F0095BAB2 /* herm */;
@@ -231,13 +231,14 @@
 /* Begin PBXShellScriptBuildPhase section */
 		85A100032FEA000000000003 /* Generate Env Constants */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../../scripts/generate-apple-env-constants.sh",
+				"$(SRCROOT)/../../scripts/generate-apple-env-constants.swift",
 			);
 			name = "Generate Env Constants";
 			outputFileListPaths = (
@@ -251,13 +252,14 @@
 		};
 		85A100062FEA000000000006 /* Copy CPSL PDFium */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../../scripts/copy-cpsl-pdfium-for-xcode.sh",
+				"$(SRCROOT)/../../scripts/lib/cpsl-xcframework.sh",
 			);
 			name = "Copy CPSL PDFium";
 			outputFileListPaths = (
@@ -291,7 +293,6 @@
 		};
 		85B000012FF9000000000001 /* Copy Bundled Skills */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -503,6 +504,11 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Herm uses the camera when you choose to take a photo for a conversation.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Herm uses the microphone to let you dictate your message.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Herm uses speech recognition to turn your dictation into text.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -555,6 +561,11 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
+				INFOPLIST_KEY_NSCalendarsUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Herm uses the camera when you choose to take a photo for a conversation.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Herm uses the microphone to let you dictate your message.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Herm uses speech recognition to turn your dictation into text.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;

@@ -5,15 +5,18 @@ extension CPSLChatModel {
     func runProviderLoop(_ context: inout CPSLProviderLoopContext) async throws {
         var toolStatusNodeID: String?
         var toolStatus = CPSLToolStatusPayload.running()
-        var lastToolStatusState: CPSLToolStatusState = .succeeded
+        var hasUnresolvedToolFailure = false
         clearActiveToolStatus()
         defer {
-            clearActiveToolStatus()
+            if !Task.isCancelled {
+                clearActiveToolStatus()
+            }
         }
 
         for iteration in 0..<context.config.maxToolRounds {
+            try Task.checkCancellation()
             let sandboxDirectory = await service.currentDirectory()
-            let requestMessages = preparedRequestMessages(
+            let requestMessages = await preparedRequestMessages(
                 CPSLRequestPreparation(
                     systemPrompt: context.systemPrompt,
                     providerMessages: context.providerMessages,
@@ -23,6 +26,7 @@ extension CPSLChatModel {
                     maxIterations: context.config.maxToolRounds
                 )
             )
+            try Task.checkCancellation()
             isSuppressingAssistantStream = false
             let completion = try await context.client.streamChat(
                 CPSLOpenAIStreamRequest(
@@ -36,6 +40,7 @@ extension CPSLChatModel {
             ) { event in
                 self.handleProviderStreamEvent(event)
             }
+            try Task.checkCancellation()
 
             await finishTypewriter()
             if !completion.toolCalls.isEmpty {
@@ -65,6 +70,10 @@ extension CPSLChatModel {
             }
 
             guard !completion.toolCalls.isEmpty else {
+                if hasUnresolvedToolFailure, let toolStatusNodeID {
+                    toolStatus.state = .failed
+                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+                }
                 if completion.text.isEmpty {
                     try await appendProviderLoopError("Provider returned an empty response.", context: &context)
                 }
@@ -110,6 +119,7 @@ extension CPSLChatModel {
             var executedToolCalls: [(toolCall: CPSLOpenAIToolCall, result: CPSLToolExecutionResult)] = []
 
             for toolCall in completion.toolCalls {
+                try Task.checkCancellation()
                 statusSummary = CPSLAgentToolFormatting.statusSummary(
                     for: toolCall,
                     assistantText: completion.text
@@ -129,8 +139,15 @@ extension CPSLChatModel {
                         requestDirectory: sandboxDirectory
                     )
                 )
+                try Task.checkCancellation()
                 executedToolCalls.append((toolCall, toolResult))
-                lastToolStatusState = toolResult.isError ? .failed : .succeeded
+                if toolResult.isError {
+                    hasUnresolvedToolFailure = true
+                    toolStatus.state = .running
+                } else {
+                    hasUnresolvedToolFailure = false
+                    toolStatus.state = .succeeded
+                }
 #if DEBUG
                 toolStatus.invocations.append(toolResult.debugInvocation)
                 toolStatus.summary = statusSummary
@@ -150,12 +167,17 @@ extension CPSLChatModel {
                 context: &context
             )
             toolStatus.summary = statusSummary
-            toolStatus.state = lastToolStatusState
+            toolStatus.state = hasUnresolvedToolFailure ? .running : .succeeded
             if let toolStatusNodeID {
                 try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
             }
         }
 
+        try Task.checkCancellation()
+        if hasUnresolvedToolFailure, let toolStatusNodeID {
+            toolStatus.state = .failed
+            try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+        }
         try await synthesizeAfterToolLimit(&context)
     }
 
@@ -227,7 +249,7 @@ extension CPSLChatModel {
         context.onParentIDChange(context.parentID)
 
         let sandboxDirectory = await service.currentDirectory()
-        let requestMessages = preparedRequestMessages(
+        let requestMessages = await preparedRequestMessages(
             CPSLRequestPreparation(
                 systemPrompt: context.systemPrompt,
                 providerMessages: context.providerMessages,
@@ -308,145 +330,32 @@ extension CPSLChatModel {
         activeToolStatusStore = nil
     }
 
-    private func preparedRequestMessages(_ preparation: CPSLRequestPreparation) -> [CPSLOpenAIMessage] {
-        let compactedMessages = compactedProviderMessagesIfNeeded(
-            preparation.providerMessages,
-            systemPrompt: preparation.systemPrompt,
-            config: preparation.config
-        )
-        let estimatedTokens = estimatedTokenCount(
-            systemPrompt: preparation.systemPrompt,
-            messages: compactedMessages
-        )
-        let prompt = systemPromptWithBudgetReminder(
-            preparation,
-            estimatedTokens: estimatedTokens
-        )
-        return [CPSLOpenAIMessage.system(prompt)] + compactedMessages
-    }
-
-    private func compactedProviderMessagesIfNeeded(
-        _ messages: [CPSLOpenAIMessage],
-        systemPrompt: String,
-        config: CPSLAgentConfig
-    ) -> [CPSLOpenAIMessage] {
-        guard let contextWindowTokens = config.contextWindowTokens,
-                contextWindowTokens > 0
+    func markActiveToolStatusStopped() async {
+        guard let nodeID = activeToolStatusNodeID,
+              var payload = activeToolStatusPayload,
+              let store = activeToolStatusStore
         else {
-            return messages
+            clearActiveToolStatus()
+            return
         }
-
-        let estimatedTokens = estimatedTokenCount(systemPrompt: systemPrompt, messages: messages)
-        let threshold = Int(Double(contextWindowTokens) * toolResultClearThreshold)
-        guard estimatedTokens >= threshold else {
-            return messages
-        }
-
-        var compacted = messages
-        let toolIndices = compacted.indices.filter { compacted[$0].role == "tool" }
-        let keepIndices = Set(toolIndices.suffix(recentToolResultsToKeep))
-        for index in toolIndices where !keepIndices.contains(index) {
-            compacted[index].content = clearedToolResultContent(from: compacted[index].content)
-        }
-        return compacted
+        payload.state = .failed
+        payload.summary = String(localized: "Stopped")
+        try? await updateToolStatus(payload, nodeID: nodeID, store: store)
+        clearActiveToolStatus()
     }
 
-    private func clearedToolResultContent(from content: String?) -> String {
-        let summary = toolResultSummary(from: content)
-        var payload: [String: Any] = [
-            "ok": summary.ok,
-            "stdout": summary.ok ? "[output cleared to reduce context]" : "",
-            "stderr": ""
-        ]
-        if !summary.ok {
-            payload["error"] = summary.failureText.isEmpty
-                ? "[error output cleared to reduce context]"
-                : "[error output cleared to reduce context]\n\(summary.failureText)"
-        }
-        guard JSONSerialization.isValidJSONObject(payload),
-                let data = try? JSONSerialization.data(withJSONObject: payload),
-                let json = String(data: data, encoding: .utf8)
-        else {
-            return summary.ok
-                ? #"{"ok":true,"stdout":"[output cleared to reduce context]","stderr":""}"#
-                : #"{"ok":false,"stdout":"","stderr":"","error":"[error output cleared to reduce context]"}"#
-        }
-        return json
-    }
-
-    private func toolResultSummary(from content: String?) -> (ok: Bool, failureText: String) {
-        guard let content,
-                let data = content.data(using: .utf8),
-                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return (false, "")
-        }
-        let ok = object["ok"] as? Bool ?? false
-        guard !ok else {
-            return (true, "")
-        }
-
-        let detailKeys = [
-            "error",
-            "error_message",
-            "ffi_error",
-            "stderr",
-            "output",
-            "exit_code",
-            "error_code"
-        ]
-        let details = detailKeys.compactMap { key -> String? in
-            guard let value = object[key] else {
-                return nil
-            }
-            let text = "\(value)".trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else {
-                return nil
-            }
-            return "\(key): \(text)"
-        }
-        let failureText = CPSLAgentToolFormatting.truncatedText(details.joined(separator: "\n"))
-        return (false, failureText)
-    }
-
-    private func systemPromptWithBudgetReminder(
-        _ preparation: CPSLRequestPreparation,
-        estimatedTokens: Int
-    ) -> String {
-        let remainingIterations = max(0, preparation.maxIterations - preparation.iteration)
-        var lines = ["Session: approximately \(estimatedTokens) replay tokens in the current request."]
-        lines.append(
-            "Current CPSL directory: \(CPSLAgentToolFormatting.promptPathLiteral(preparation.sandboxDirectory))."
-        )
-        if let contextWindowTokens = preparation.config.contextWindowTokens, contextWindowTokens > 0 {
-            let percent = Int((Double(estimatedTokens) * 100 / Double(contextWindowTokens)).rounded())
-            lines.append("Context: approximately \(percent)% full (\(estimatedTokens)/\(contextWindowTokens) tokens).")
-        }
-        let remainingFraction = Double(remainingIterations) / Double(preparation.maxIterations)
-        if remainingFraction < 0.25 {
-            lines.append("Tool budget: \(remainingIterations) of \(preparation.maxIterations) rounds remain; wrap up efficiently.")
-        } else if remainingFraction < 0.50 {
-            lines.append("Tool budget: past halfway with \(remainingIterations) of \(preparation.maxIterations) rounds remaining.")
-        }
-        return preparation.systemPrompt
-            + "\n\n<system-reminder>\n"
-            + lines.joined(separator: "\n")
-            + "\n</system-reminder>"
-    }
-
-    private func estimatedTokenCount(systemPrompt: String, messages: [CPSLOpenAIMessage]) -> Int {
-        var bytes = systemPrompt.utf8.count
-        for message in messages {
-            bytes += message.role.utf8.count
-            bytes += message.content?.utf8.count ?? 0
-            bytes += message.toolCallID?.utf8.count ?? 0
-            for toolCall in message.toolCalls ?? [] {
-                bytes += toolCall.id.utf8.count
-                bytes += toolCall.function.name.utf8.count
-                bytes += toolCall.function.arguments.utf8.count
-            }
-        }
-        return max(1, bytes / estimatedBytesPerToken)
+    private func preparedRequestMessages(_ preparation: CPSLRequestPreparation) async -> [CPSLOpenAIMessage] {
+        let estimatedBytesPerTokenValue = estimatedBytesPerToken
+        let toolResultClearThresholdValue = toolResultClearThreshold
+        let recentToolResultsToKeepValue = recentToolResultsToKeep
+        return await Task.detached(priority: .userInitiated) {
+            CPSLAgentRequestPreparationBuilder.preparedRequestMessages(
+                preparation,
+                estimatedBytesPerToken: estimatedBytesPerTokenValue,
+                toolResultClearThreshold: toolResultClearThresholdValue,
+                recentToolResultsToKeep: recentToolResultsToKeepValue
+            )
+        }.value
     }
 
     private func appendProviderLoopError(
@@ -560,7 +469,7 @@ extension CPSLChatModel {
     private func handleProviderStreamEvent(_ event: CPSLOpenAIStreamEvent) {
         switch event {
         case .textDelta(let delta):
-            guard !isSuppressingAssistantStream else {
+            guard !isSuppressingAssistantStream, !delta.isEmpty else {
                 return
             }
             queueAssistantDelta(delta)
@@ -580,12 +489,22 @@ extension CPSLChatModel {
                 return
             }
 
-            let chunkSize = min(typewriterBuffer.count, typewriterBuffer.count > 240 ? 8 : 3)
+            let chunkSize = min(typewriterBuffer.count, typewriterChunkSize)
             let chunk = String(typewriterBuffer.prefix(chunkSize))
             typewriterBuffer.removeFirst(chunk.count)
             appendToStreamingAssistant(chunk)
-            try? await Task.sleep(nanoseconds: 12_000_000)
+            try? await Task.sleep(nanoseconds: 24_000_000)
         }
+    }
+
+    private var typewriterChunkSize: Int {
+        if typewriterBuffer.count > 1_024 {
+            return 96
+        }
+        if typewriterBuffer.count > 240 {
+            return 48
+        }
+        return 16
     }
 
     func finishTypewriter() async {
@@ -885,8 +804,9 @@ extension CPSLChatModel {
         Complete the assigned task, then return a concise result. Do not ask questions.
         Mode: \(mode.rawValue). Turn budget: \(maxTurns). Agent depth: \(context.agentDepth)/\(context.config.maxAgentDepth).
         CPSL is your execution environment: a Unix-like local environment with Luau as the command interface instead of Bash. Luau is the only supported execution language.
-        Use /home/herm as the default home for durable user-created files and /tmp for temporary files. Other Unix-style directories under / remain available when the task calls for them.
-        You may use local_sandbox_exec for CPSL work. You have no host shell, package manager, browser, or provider-hosted capabilities.
+        Use /home/herm as the default home for durable user-created files and /tmp for temporary files. User-added files remain available under /attachments/<conversation-id>. Other Unix-style directories under / remain available when the task calls for them.
+        You may use local_sandbox_exec for CPSL work, including the sandbox webbrowser module when it is available. You have no host shell, package manager, or provider-hosted capabilities.
+        Calendar and location are available only through CPSL when compiled into the app sandbox and authorized by the user. Use them only when the assigned task materially needs schedule, event, availability, or current-place context. EventKit does not expose native calendar file attachments. Use calendar.attach to associate durable file copies with an event in Herm, and do not describe them as native Calendar.app attachments. Access states are granted, denied, or undefined; undefined access may prompt, and denied access must be fixed in iOS Settings or macOS System Settings.
         """
     }
 
@@ -929,5 +849,168 @@ extension CPSLChatModel {
             return #"{"ok":false,"error":"Could not encode tool result."}"#
         }
         return json
+    }
+}
+
+private enum CPSLAgentRequestPreparationBuilder {
+    static func preparedRequestMessages(
+        _ preparation: CPSLRequestPreparation,
+        estimatedBytesPerToken: Int,
+        toolResultClearThreshold: Double,
+        recentToolResultsToKeep: Int
+    ) -> [CPSLOpenAIMessage] {
+        let compactedMessages = compactedProviderMessagesIfNeeded(
+            preparation.providerMessages,
+            systemPrompt: preparation.systemPrompt,
+            config: preparation.config,
+            estimatedBytesPerToken: estimatedBytesPerToken,
+            toolResultClearThreshold: toolResultClearThreshold,
+            recentToolResultsToKeep: recentToolResultsToKeep
+        )
+        let estimatedTokens = estimatedTokenCount(
+            systemPrompt: preparation.systemPrompt,
+            messages: compactedMessages,
+            estimatedBytesPerToken: estimatedBytesPerToken
+        )
+        let prompt = systemPromptWithBudgetReminder(
+            preparation,
+            estimatedTokens: estimatedTokens
+        )
+        return [CPSLOpenAIMessage.system(prompt)] + compactedMessages
+    }
+
+    private static func compactedProviderMessagesIfNeeded(
+        _ messages: [CPSLOpenAIMessage],
+        systemPrompt: String,
+        config: CPSLAgentConfig,
+        estimatedBytesPerToken: Int,
+        toolResultClearThreshold: Double,
+        recentToolResultsToKeep: Int
+    ) -> [CPSLOpenAIMessage] {
+        guard let contextWindowTokens = config.contextWindowTokens,
+                contextWindowTokens > 0
+        else {
+            return messages
+        }
+
+        let estimatedTokens = estimatedTokenCount(
+            systemPrompt: systemPrompt,
+            messages: messages,
+            estimatedBytesPerToken: estimatedBytesPerToken
+        )
+        let threshold = Int(Double(contextWindowTokens) * toolResultClearThreshold)
+        guard estimatedTokens >= threshold else {
+            return messages
+        }
+
+        var compacted = messages
+        let toolIndices = compacted.indices.filter { compacted[$0].role == "tool" }
+        let keepIndices = Set(toolIndices.suffix(recentToolResultsToKeep))
+        for index in toolIndices where !keepIndices.contains(index) {
+            compacted[index].content = clearedToolResultContent(from: compacted[index].content)
+        }
+        return compacted
+    }
+
+    private static func clearedToolResultContent(from content: String?) -> String {
+        let summary = toolResultSummary(from: content)
+        var payload: [String: Any] = [
+            "ok": summary.ok,
+            "stdout": summary.ok ? "[output cleared to reduce context]" : "",
+            "stderr": ""
+        ]
+        if !summary.ok {
+            payload["error"] = summary.failureText.isEmpty
+                ? "[error output cleared to reduce context]"
+                : "[error output cleared to reduce context]\n\(summary.failureText)"
+        }
+        guard JSONSerialization.isValidJSONObject(payload),
+                let data = try? JSONSerialization.data(withJSONObject: payload),
+                let json = String(data: data, encoding: .utf8)
+        else {
+            return summary.ok
+                ? #"{"ok":true,"stdout":"[output cleared to reduce context]","stderr":""}"#
+                : #"{"ok":false,"stdout":"","stderr":"","error":"[error output cleared to reduce context]"}"#
+        }
+        return json
+    }
+
+    private static func toolResultSummary(from content: String?) -> (ok: Bool, failureText: String) {
+        guard let content,
+                let data = content.data(using: .utf8),
+                let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return (false, "")
+        }
+        let ok = object["ok"] as? Bool ?? false
+        guard !ok else {
+            return (true, "")
+        }
+
+        let detailKeys = [
+            "error",
+            "error_message",
+            "ffi_error",
+            "stderr",
+            "output",
+            "exit_code",
+            "error_code"
+        ]
+        let details = detailKeys.compactMap { key -> String? in
+            guard let value = object[key] else {
+                return nil
+            }
+            let text = "\(value)".trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                return nil
+            }
+            return "\(key): \(text)"
+        }
+        let failureText = CPSLAgentToolFormatting.truncatedText(details.joined(separator: "\n"))
+        return (false, failureText)
+    }
+
+    private static func systemPromptWithBudgetReminder(
+        _ preparation: CPSLRequestPreparation,
+        estimatedTokens: Int
+    ) -> String {
+        let remainingIterations = max(0, preparation.maxIterations - preparation.iteration)
+        var lines = ["Session: approximately \(estimatedTokens) replay tokens in the current request."]
+        lines.append(
+            "Current CPSL directory: \(CPSLAgentToolFormatting.promptPathLiteral(preparation.sandboxDirectory))."
+        )
+        if let contextWindowTokens = preparation.config.contextWindowTokens, contextWindowTokens > 0 {
+            let percent = Int((Double(estimatedTokens) * 100 / Double(contextWindowTokens)).rounded())
+            lines.append("Context: approximately \(percent)% full (\(estimatedTokens)/\(contextWindowTokens) tokens).")
+        }
+        let remainingFraction = Double(remainingIterations) / Double(preparation.maxIterations)
+        if remainingFraction < 0.25 {
+            lines.append("Tool budget: \(remainingIterations) of \(preparation.maxIterations) rounds remain; wrap up efficiently.")
+        } else if remainingFraction < 0.50 {
+            lines.append("Tool budget: past halfway with \(remainingIterations) of \(preparation.maxIterations) rounds remaining.")
+        }
+        return preparation.systemPrompt
+            + "\n\n<system-reminder>\n"
+            + lines.joined(separator: "\n")
+            + "\n</system-reminder>"
+    }
+
+    private static func estimatedTokenCount(
+        systemPrompt: String,
+        messages: [CPSLOpenAIMessage],
+        estimatedBytesPerToken: Int
+    ) -> Int {
+        var bytes = systemPrompt.utf8.count
+        for message in messages {
+            bytes += message.role.utf8.count
+            bytes += message.content?.utf8.count ?? 0
+            bytes += message.toolCallID?.utf8.count ?? 0
+            for toolCall in message.toolCalls ?? [] {
+                bytes += toolCall.id.utf8.count
+                bytes += toolCall.function.name.utf8.count
+                bytes += toolCall.function.arguments.utf8.count
+            }
+        }
+        return max(1, bytes / estimatedBytesPerToken)
     }
 }

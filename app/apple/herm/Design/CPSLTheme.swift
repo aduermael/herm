@@ -54,7 +54,11 @@ enum CPSLTheme {
     static let composerSpacing = Self.small
     static let composerPadding = Self.small
     static let promptVerticalInset = Self.small
-    static let topChromeInset = Self.controlSize + Self.medium * 2
+    static let topChromeSafeAreaGap: CGFloat = 0
+    static let topChromeContentGap = Self.medium
+    static let topChromeInset = Self.controlSize + Self.topChromeSafeAreaGap + Self.topChromeContentGap
+    static let drawerToggleOpenTrailingInset = Self.medium
+    static let drawerGestureEdgeWidth: CGFloat = 28
     static let topBlendHeight: CGFloat = 100
     static let bottomBlendHeight: CGFloat = 200
     static let commandBlockMaxHeight: CGFloat = 320

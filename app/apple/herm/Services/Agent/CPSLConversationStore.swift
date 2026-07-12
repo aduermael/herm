@@ -118,15 +118,17 @@ actor CPSLConversationStore {
 #endif
 
     func createConversation(
+        id: String? = nil,
         userText: String,
+        providerText: String? = nil,
         model: String?,
         systemPrompt: String
     ) throws -> (summary: CPSLConversationSummary, userNode: CPSLStoredNode) {
         let now = Date()
-        let conversationID = UUID().uuidString
+        let conversationID = id ?? UUID().uuidString
         let userNodeID = UUID().uuidString
         let title = Self.generateTitle(from: userText)
-        let providerMessage = CPSLOpenAIMessage.user(userText)
+        let providerMessage = CPSLOpenAIMessage.user(providerText ?? userText)
         let providerJSON = try encodeProviderMessage(providerMessage)
 
         try withTransaction {
@@ -676,7 +678,22 @@ nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Encodable 
         guard role.isVisible else {
             return nil
         }
-        return CPSLChatMessage(id: UUID(uuidString: id) ?? UUID(), role: role, title: title, body: body)
+        let providerParts: (displayText: String, attachments: [CPSLAttachment]) = role == .user
+            ? CPSLAttachmentPrompt.parse(providerMessage?.content)
+            : (displayText: "", attachments: [])
+        let bodyParts: (displayText: String, attachments: [CPSLAttachment]) = role == .user
+            ? CPSLAttachmentPrompt.parse(body)
+            : (displayText: body, attachments: [])
+        let attachments = providerParts.attachments.isEmpty
+            ? bodyParts.attachments
+            : providerParts.attachments
+        return CPSLChatMessage(
+            id: UUID(uuidString: id) ?? UUID(),
+            role: role,
+            title: title,
+            body: bodyParts.attachments.isEmpty ? body : bodyParts.displayText,
+            attachments: attachments
+        )
     }
 }
 

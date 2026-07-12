@@ -11,7 +11,7 @@ struct CPSLProviderLoopContext {
     let onParentIDChange: (String) -> Void
 }
 
-struct CPSLRequestPreparation {
+struct CPSLRequestPreparation: Sendable {
     let systemPrompt: String
     let providerMessages: [CPSLOpenAIMessage]
     let config: CPSLAgentConfig

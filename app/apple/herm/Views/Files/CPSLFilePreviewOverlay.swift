@@ -360,33 +360,42 @@ private struct CPSLPlatformImageFilePreview: View {
     @State private var didAttemptLoad = false
 
     var body: some View {
-        ScrollView([.vertical, .horizontal]) {
+        ZStack {
+            if let image {
+                CPSLPlatformImageView(image: image)
+                    .scaledToFit()
+                    .padding(CPSLTheme.large)
+            } else if didAttemptLoad {
+                CPSLImageLoadFailurePreview(preview: preview)
+            } else {
+                ProgressView()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: url) {
+            image = CPSLPlatformImageLoader.image(for: url)
+            didAttemptLoad = true
+        }
+    }
+}
+
+private struct CPSLImageLoadFailurePreview: View {
+    let preview: CPSLFilePreview
+
+    var body: some View {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: CPSLTheme.large) {
-                if let image {
-                    CPSLPlatformImageView(image: image)
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity)
-                } else if didAttemptLoad {
-                    CPSLFilePreviewHero(
-                        name: preview.name,
-                        category: preview.metadata.category,
-                        reason: "This image could not be loaded."
-                    )
-                    CPSLFileMetadataList(metadata: preview.metadata)
-                } else {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, CPSLTheme.large)
-                }
+                CPSLFilePreviewHero(
+                    name: preview.name,
+                    category: preview.metadata.category,
+                    reason: "This image could not be loaded."
+                )
+                CPSLFileMetadataList(metadata: preview.metadata)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(CPSLTheme.large)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .task(id: url) {
-            image = CPSLPlatformImageLoader.image(for: url)
-            didAttemptLoad = true
-        }
     }
 }
 #endif
@@ -519,8 +528,11 @@ private final class CPSLMediaPlaybackModel: ObservableObject {
             queue: .main
         ) { [weak self] time in
             let seconds = CMTimeGetSeconds(time)
+            guard let playback = self else {
+                return
+            }
             Task { @MainActor in
-                self?.updateCurrentTime(seconds)
+                playback.updateCurrentTime(seconds)
             }
         }
 
@@ -529,8 +541,11 @@ private final class CPSLMediaPlaybackModel: ObservableObject {
             object: player.currentItem,
             queue: .main
         ) { [weak self] _ in
+            guard let playback = self else {
+                return
+            }
             Task { @MainActor in
-                self?.finishPlayback()
+                playback.finishPlayback()
             }
         }
     }
