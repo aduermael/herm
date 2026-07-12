@@ -228,7 +228,6 @@ func (a *App) handleSessionCommand(input string) {
 	}
 }
 
-// rewindCheckpoint represents a single user message the user can rewind to.
 type rewindCheckpoint struct {
 	nodeID string
 	label  string
@@ -249,10 +248,6 @@ func collectRewindCheckpoints(nodes []*types.Node) []rewindCheckpoint {
 	}
 	return checkpoints
 }
-
-// handleRewindCommand shows user message checkpoints and lets the user
-// rewind the conversation to before a selected message. Subsequent messages
-// fork the conversation tree from that point.
 func (a *App) handleRewindCommand() {
 	if a.langdagClient == nil {
 		a.messages = append(a.messages, chatMessage{kind: msgError, content: "No API client available."})
