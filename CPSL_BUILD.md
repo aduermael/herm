@@ -62,10 +62,11 @@ local CPSL checkout:
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 ```
 
-Before compiling CPSL, Herm applies tracked integration patches from
-`scripts/cpsl-patches/` to the selected checkout. These patches keep the pinned
-CPSL dependency aligned with Herm's app/runtime integration. When a patch is
-already present in the submodule commit, the patch helper skips it.
+Before compiling CPSL, Herm applies the tracked integration patches listed in
+`scripts/cpsl-patches/series` to the selected checkout, in manifest order.
+These patches keep the pinned CPSL dependency aligned with Herm's app/runtime
+integration. Unlisted local files are ignored. When a listed patch is already
+present in the submodule commit, the patch helper skips it.
 
 The default host-native build is the minimal CPSL FFI profile. It compiles
 `fs`, `json`, `csv`, `http`, and `grep`.
@@ -251,9 +252,9 @@ auto-builds, reuse also requires the adjacent `.cpsl-source.stamp` to show that
 the artifact was built from Herm's `external/cpsl` submodule at the current
 revision and matching Cargo profile. It rebuilds when the artifact is missing,
 lacks the requested slice, was built from another CPSL checkout, revision, or
-Cargo profile, or is stale because files under `scripts/cpsl-patches/`,
-`scripts/build-cpsl-apple-xcframework.sh`, `scripts/lib/cpsl-xcframework.sh`,
-or `scripts/apply-cpsl-patches.sh` changed.
+Cargo profile, or is stale because the CPSL patch series or one of its listed
+patches, `scripts/build-cpsl-apple-xcframework.sh`,
+`scripts/lib/cpsl-xcframework.sh`, or `scripts/apply-cpsl-patches.sh` changed.
 
 Xcode keeps Debug and Release CPSL artifacts separate:
 

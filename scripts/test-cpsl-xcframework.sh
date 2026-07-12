@@ -107,6 +107,74 @@ assert_eq "manual artifact dir" /tmp/cpsl-work/artifacts/apple "$artifact_dir"
 
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cpsl-xcframework-test.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+
+patch_fixture="$tmp_dir/patch-fixture"
+patch_scripts="$patch_fixture/scripts"
+patch_checkout="$patch_fixture/cpsl"
+mkdir -p "$patch_scripts/cpsl-patches" "$patch_checkout"
+cp "$script_dir/apply-cpsl-patches.sh" "$patch_scripts/apply-cpsl-patches.sh"
+printf '%s\n' '# ordered patches' '' '0001-test.patch' >"$patch_scripts/cpsl-patches/series"
+cat >"$patch_scripts/cpsl-patches/0001-test.patch" <<'EOF'
+diff --git a/value.txt b/value.txt
+--- a/value.txt
++++ b/value.txt
+@@ -1 +1 @@
+-old
++new
+EOF
+printf '%s\n' 'this is not a patch' >"$patch_scripts/cpsl-patches/0002-local-copy 2.patch"
+printf '%s\n' old >"$patch_checkout/value.txt"
+git -C "$patch_checkout" init --quiet
+git -C "$patch_checkout" add value.txt
+apply_output=$(sh "$patch_scripts/apply-cpsl-patches.sh" "$patch_checkout")
+assert_eq "listed patch application" new "$(cat "$patch_checkout/value.txt")"
+case "$apply_output" in
+	*"Applying CPSL patch: 0001-test.patch"*) ;;
+	*) fail "listed patch should be applied" ;;
+esac
+apply_output=$(sh "$patch_scripts/apply-cpsl-patches.sh" "$patch_checkout")
+case "$apply_output" in
+	*"CPSL patch already applied: 0001-test.patch"*) ;;
+	*) fail "listed patch should be idempotent" ;;
+esac
+printf '%s\n' missing.patch >"$patch_scripts/cpsl-patches/series"
+if sh "$patch_scripts/apply-cpsl-patches.sh" "$patch_checkout" >/dev/null 2>&1; then
+	fail "missing listed patch should be rejected"
+fi
+
+freshness_root="$tmp_dir/freshness-root"
+freshness_patch_dir="$freshness_root/scripts/cpsl-patches"
+mkdir -p "$freshness_patch_dir" "$freshness_root/scripts/lib"
+freshness_series="$freshness_patch_dir/series"
+freshness_patch="$freshness_patch_dir/0001-test.patch"
+freshness_stray="$freshness_patch_dir/0002-local-copy 2.patch"
+freshness_info="$tmp_dir/FreshnessInfo.plist"
+printf '%s\n' 0001-test.patch >"$freshness_series"
+: >"$freshness_patch"
+: >"$freshness_stray"
+: >"$freshness_root/scripts/build-cpsl-apple-xcframework.sh"
+: >"$freshness_root/scripts/lib/cpsl-xcframework.sh"
+: >"$freshness_root/scripts/apply-cpsl-patches.sh"
+: >"$freshness_info"
+touch -t 202001010000 \
+	"$freshness_series" \
+	"$freshness_patch" \
+	"$freshness_root/scripts/build-cpsl-apple-xcframework.sh" \
+	"$freshness_root/scripts/lib/cpsl-xcframework.sh" \
+	"$freshness_root/scripts/apply-cpsl-patches.sh"
+touch -t 202101010000 "$freshness_info"
+touch -t 202201010000 "$freshness_stray"
+if cpsl_xcframework_inputs_newer_than "$freshness_info" "$freshness_root"; then
+	fail "unlisted patch should not invalidate the XCFramework cache"
+fi
+touch -t 202201010000 "$freshness_patch"
+cpsl_xcframework_inputs_newer_than "$freshness_info" "$freshness_root" || \
+	fail "listed patch should invalidate the XCFramework cache"
+touch -t 202001010000 "$freshness_patch"
+touch -t 202201010000 "$freshness_series"
+cpsl_xcframework_inputs_newer_than "$freshness_info" "$freshness_root" || \
+	fail "patch series change should invalidate the XCFramework cache"
+
 info="$tmp_dir/Info.plist"
 cat >"$info" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
