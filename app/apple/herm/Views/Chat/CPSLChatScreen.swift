@@ -426,7 +426,7 @@ struct CPSLChatScreen: View {
             promptDismissRequest += 1
         }
         .alert(
-            "Coming soon",
+            "Herm",
             isPresented: Binding(
                 get: { model.comingSoonMessage != nil },
                 set: { isPresented in

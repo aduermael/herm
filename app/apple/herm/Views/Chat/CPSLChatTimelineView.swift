@@ -336,7 +336,15 @@ private struct CPSLChatMessageView: View {
                     .font(CPSLTheme.captionMediumFont)
                     .foregroundStyle(message.role.foreground.opacity(0.72))
             }
-            messageBody
+            if !message.body.isEmpty {
+                messageBody
+            }
+            if !message.attachments.isEmpty {
+                CPSLMessageAttachmentList(
+                    attachments: message.attachments,
+                    openFilePath: openFilePath
+                )
+            }
         }
     }
 
@@ -374,6 +382,25 @@ private struct CPSLChatMessageView: View {
                 lineSpacing: message.role.usesMonospaceBody ? 0 : CPSLTheme.bodyLineSpacing,
                 openFilePath: openFilePath
             )
+        }
+    }
+}
+
+private struct CPSLMessageAttachmentList: View {
+    let attachments: [CPSLAttachment]
+    let openFilePath: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small) {
+            ForEach(attachments) { attachment in
+                Button {
+                    openFilePath(attachment.path)
+                } label: {
+                    CPSLAttachmentBadge(name: attachment.name)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Open attachment \(attachment.name)")
+            }
         }
     }
 }
@@ -1331,7 +1358,7 @@ private enum CPSLDiscussionPathLinks {
         in text: String,
         from cursor: String.Index
     ) -> (range: Range<String.Index>, path: String, lineSuffix: String)? {
-        let prefixes = ["/home/herm", "/tmp", "~/"]
+        let prefixes = ["/attachments", "/home/herm", "/tmp", "~/"]
         var best: (range: Range<String.Index>, prefix: String)?
 
         for prefix in prefixes {
@@ -1381,7 +1408,7 @@ private enum CPSLDiscussionPathLinks {
             }
         }
 
-        if prefix == "/home/herm" || prefix == "/tmp" {
+        if prefix == "/attachments" || prefix == "/home/herm" || prefix == "/tmp" {
             guard range.upperBound == text.endIndex || text[range.upperBound] == "/" else {
                 return false
             }
@@ -1435,7 +1462,9 @@ private enum CPSLDiscussionPathLinks {
     }
 
     private static func isAllowedPath(_ path: String) -> Bool {
-        path == CPSLVirtualPath.home ||
+        path == CPSLVirtualPath.attachments ||
+            path.hasPrefix("\(CPSLVirtualPath.attachments)/") ||
+            path == CPSLVirtualPath.home ||
             path.hasPrefix("\(CPSLVirtualPath.home)/") ||
             path == CPSLVirtualPath.temporary ||
             path.hasPrefix("\(CPSLVirtualPath.temporary)/")

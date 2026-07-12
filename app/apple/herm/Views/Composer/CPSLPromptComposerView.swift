@@ -1,5 +1,7 @@
 import Dispatch
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if canImport(UIKit)
 import UIKit
@@ -150,6 +152,11 @@ struct CPSLPromptComposerView: View {
 #endif
     @State private var promptContentHeight: CGFloat = 0
     @State private var focusPromptRequest = 0
+    @State private var isFileImporterPresented = false
+    @State private var isPhotoPickerPresented = false
+    @State private var isCameraPresented = false
+    @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var pendingPhotoImportCount = 0
     @FocusState private var isPromptFocused: Bool
 
     private var dictation: CPSLDictationService {
@@ -158,6 +165,14 @@ struct CPSLPromptComposerView: View {
 
     private var hasPromptInput: Bool {
         !model.promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var canSubmit: Bool {
+        hasPromptInput || !model.composerAttachments.isEmpty
+    }
+
+    private var isAddingAttachment: Bool {
+        model.isImportingAttachment || pendingPhotoImportCount > 0
     }
 
     private var isCommandInput: Bool {
@@ -205,6 +220,17 @@ struct CPSLPromptComposerView: View {
 
     private var composerContent: some View {
         VStack(alignment: .leading, spacing: isCompact ? 0 : CPSLTheme.composerSpacing) {
+            if !model.composerAttachments.isEmpty {
+                CPSLComposerAttachmentStrip(
+                    attachments: model.composerAttachments,
+                    onRemove: model.removeComposerAttachment
+                )
+                .padding(.bottom, CPSLTheme.small)
+            }
+            if isAddingAttachment {
+                CPSLAttachmentImportStatus()
+                    .padding(.bottom, CPSLTheme.small)
+            }
             if isCompact {
                 HStack(alignment: .bottom, spacing: CPSLTheme.small) {
                     promptInputBox
@@ -301,15 +327,38 @@ struct CPSLPromptComposerView: View {
 
     private var compactActionRow: some View {
         HStack(spacing: CPSLTheme.small) {
+            addButton
             dictationButton
             sendButton
         }
     }
 
     private var addButton: some View {
-        Button {
-            dismissKeyboard()
-            model.showComingSoon("coming soon")
+        Menu {
+            Button {
+                dismissKeyboard()
+                isFileImporterPresented = true
+            } label: {
+                Label("Choose File", systemImage: "folder")
+            }
+
+            Button {
+                dismissKeyboard()
+                isPhotoPickerPresented = true
+            } label: {
+                Label("Photo Library", systemImage: "photo.on.rectangle")
+            }
+
+#if os(iOS)
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button {
+                    dismissKeyboard()
+                    isCameraPresented = true
+                } label: {
+                    Label("Take Photo", systemImage: "camera")
+                }
+            }
+#endif
         } label: {
             Image(systemName: "plus")
                 .font(CPSLTheme.iconLargeFont)
@@ -324,6 +373,8 @@ struct CPSLPromptComposerView: View {
             strokeOpacity: 0.045
         )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+        .disabled(model.isRunning || isAddingAttachment)
+        .accessibilityLabel("Add Attachment")
     }
 
     private var dictationButton: some View {
@@ -351,7 +402,22 @@ struct CPSLPromptComposerView: View {
 
     @ViewBuilder
     private var sendButton: some View {
-        if hasPromptInput {
+        if model.isRunning {
+            Button {
+                model.stopAgent()
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.iconLarge, weight: .semibold))
+                    .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                    .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(CPSLTheme.background)
+            .background(CPSLTheme.error)
+            .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            .accessibilityLabel("Stop")
+        } else if canSubmit {
             Button {
                 dismissKeyboard()
                 model.submitPrompt()
@@ -366,6 +432,7 @@ struct CPSLPromptComposerView: View {
             .background(CPSLTheme.text)
             .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
+            .disabled(isAddingAttachment)
         }
     }
 
@@ -421,6 +488,39 @@ struct CPSLPromptComposerView: View {
         }
 #endif
         .cpslDictationErrorAlert(dictation)
+        .fileImporter(
+            isPresented: $isFileImporterPresented,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true,
+            onCompletion: importFiles
+        )
+#if os(iOS)
+        .sheet(isPresented: $isCameraPresented) {
+            CPSLCameraPicker { data in
+                isCameraPresented = false
+                if let data {
+                    model.addAttachment(
+                        data: data,
+                        preferredName: Self.photoFileName(fileExtension: "jpg")
+                    )
+                }
+            }
+            .ignoresSafeArea()
+        }
+#endif
+        .photosPicker(
+            isPresented: $isPhotoPickerPresented,
+            selection: $selectedPhotos,
+            maxSelectionCount: 10,
+            matching: .images
+        )
+        .onChange(of: selectedPhotos) { _, items in
+            guard !items.isEmpty else {
+                return
+            }
+            selectedPhotos = []
+            importPhotos(items)
+        }
     }
 
     private func toggleDictation() {
@@ -473,6 +573,41 @@ struct CPSLPromptComposerView: View {
         focusPrompt()
     }
 
+    private func importFiles(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            urls.forEach { model.addAttachment(from: $0) }
+        case .failure(let error):
+            model.showComingSoon("Could not choose files: \(error.localizedDescription)")
+        }
+    }
+
+    private func importPhotos(_ items: [PhotosPickerItem]) {
+        pendingPhotoImportCount += items.count
+        for item in items {
+            Task {
+                defer {
+                    pendingPhotoImportCount = max(0, pendingPhotoImportCount - 1)
+                }
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        model.showComingSoon("Could not read the selected photo.")
+                        return
+                    }
+                    let fileExtension = item.supportedContentTypes
+                        .compactMap(\.preferredFilenameExtension)
+                        .first ?? "jpg"
+                    model.addAttachment(
+                        data: data,
+                        preferredName: Self.photoFileName(fileExtension: fileExtension)
+                    )
+                } catch {
+                    model.showComingSoon("Could not read the selected photo: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
     private static func pasteboardString() -> String? {
 #if os(macOS)
         NSPasteboard.general.string(forType: .string)
@@ -482,4 +617,77 @@ struct CPSLPromptComposerView: View {
         nil
 #endif
     }
+
+    private static func photoFileName(fileExtension: String) -> String {
+        "photo-\(UUID().uuidString.prefix(8)).\(fileExtension)"
+    }
 }
+
+private struct CPSLComposerAttachmentStrip: View {
+    let attachments: [CPSLAttachment]
+    let onRemove: (CPSLAttachment) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: CPSLTheme.small) {
+                ForEach(attachments) { attachment in
+                    CPSLAttachmentBadge(
+                        name: attachment.name,
+                        onRemove: { onRemove(attachment) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct CPSLAttachmentImportStatus: View {
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Adding attachment…")
+                .font(CPSLTheme.controlFont)
+                .foregroundStyle(CPSLTheme.secondaryText)
+        }
+        .padding(.horizontal, CPSLTheme.medium)
+    }
+}
+
+#if os(iOS)
+private struct CPSLCameraPicker: UIViewControllerRepresentable {
+    let onCompletion: (Data?) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .camera
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onCompletion: onCompletion)
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let onCompletion: (Data?) -> Void
+
+        init(onCompletion: @escaping (Data?) -> Void) {
+            self.onCompletion = onCompletion
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            onCompletion((info[.originalImage] as? UIImage)?.jpegData(compressionQuality: 0.92))
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCompletion(nil)
+        }
+    }
+}
+#endif

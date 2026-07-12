@@ -12,6 +12,14 @@ struct CPSLCalendarEvent: Identifiable, Equatable, Sendable {
     let endDate: Date
     let isAllDay: Bool
     let location: String?
+    let attachments: [CPSLCalendarAttachment]
+}
+
+struct CPSLCalendarAttachment: Identifiable, Equatable, Sendable {
+    var id: String { path }
+
+    let name: String
+    let path: String
 }
 
 @MainActor
@@ -123,7 +131,8 @@ final class CPSLCalendarService: ObservableObject {
             startDate: event.startDate,
             endDate: event.endDate,
             isAllDay: event.isAllDay,
-            location: event.location?.cpslNilIfEmpty
+            location: event.location?.cpslNilIfEmpty,
+            attachments: Self.attachments(from: event.notes)
         )
     }
 
@@ -142,9 +151,45 @@ final class CPSLCalendarService: ObservableObject {
                 startDate: event.startDate,
                 endDate: event.endDate,
                 isAllDay: event.isAllDay,
-                location: event.location
+                location: event.location,
+                attachments: event.attachments
             )
         }
+    }
+
+    private static func attachments(from notes: String?) -> [CPSLCalendarAttachment] {
+        let attachmentRoot = "/home/herm/calendar-attachments/"
+        guard let notes,
+              let startRange = notes.range(of: "[Herm attachments]"),
+              let endRange = notes.range(
+                  of: "[/Herm attachments]",
+                  range: startRange.upperBound..<notes.endIndex
+              )
+        else {
+            return []
+        }
+
+        var seenPaths = Set<String>()
+        return notes[startRange.upperBound..<endRange.lowerBound]
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { path in
+                guard path.hasPrefix(attachmentRoot) else {
+                    return false
+                }
+                let relativePath = path.dropFirst(attachmentRoot.count)
+                let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+                return components.count == 2 && components.allSatisfy { component in
+                    !component.isEmpty && component != "." && component != ".."
+                }
+            }
+            .filter { seenPaths.insert($0).inserted }
+            .map { path in
+                CPSLCalendarAttachment(
+                    name: URL(fileURLWithPath: path).lastPathComponent,
+                    path: path
+                )
+            }
     }
 
     private static func accessState(for status: EKAuthorizationStatus) -> CPSLFeatureAccessState {

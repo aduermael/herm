@@ -56,7 +56,7 @@
 				Generated/CPSLEnvConstants.swift,
 				Resources/.env,
 				Resources/.env.local,
-				Skills/apple-context/SKILL.md,
+				"Skills/apple-context/SKILL.md",
 				"Skills/beautiful-pdfs/print.css",
 				"Skills/beautiful-pdfs/SKILL.md",
 				Skills/webbrowser/SKILL.md,
@@ -506,6 +506,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Herm uses the camera when you choose to take a photo for a conversation.";
 				INFOPLIST_KEY_NSLocationUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Herm uses the microphone to let you dictate your message.";
@@ -562,6 +563,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "Herm uses Calendar access when you ask the agent to read or manage events.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "Herm uses the camera when you choose to take a photo for a conversation.";
 				INFOPLIST_KEY_NSLocationUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Herm uses your location when you ask the agent for location-aware help.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Herm uses the microphone to let you dictate your message.";

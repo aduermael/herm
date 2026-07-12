@@ -35,25 +35,44 @@ nonisolated struct CPSLBlockingEvalRequest: @unchecked Sendable {
 nonisolated enum CPSLEvalRaceResult: Sendable {
     case completed(CPSLEvalServiceResult)
     case timedOut
+    case cancelled
 }
 
 nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
     private let lock = NSLock()
     private var didResume = false
+    private var pendingResult: CPSLEvalRaceResult?
+    private var continuation: CheckedContinuation<CPSLEvalRaceResult, Never>?
 
-    func resume(
-        _ result: CPSLEvalRaceResult,
-        continuation: CheckedContinuation<CPSLEvalRaceResult, Never>
-    ) {
+    func install(_ continuation: CheckedContinuation<CPSLEvalRaceResult, Never>) {
         lock.lock()
-        let shouldResume = !didResume
-        if shouldResume {
+        if let pendingResult, !didResume {
             didResume = true
+            self.pendingResult = nil
+            lock.unlock()
+            continuation.resume(returning: pendingResult)
+            return
+        }
+        if !didResume {
+            self.continuation = continuation
         }
         lock.unlock()
+    }
 
-        if shouldResume {
+    func resume(_ result: CPSLEvalRaceResult) {
+        lock.lock()
+        guard !didResume, pendingResult == nil else {
+            lock.unlock()
+            return
+        }
+        if let continuation {
+            didResume = true
+            self.continuation = nil
+            lock.unlock()
             continuation.resume(returning: result)
+        } else {
+            pendingResult = result
+            lock.unlock()
         }
     }
 }
@@ -64,9 +83,22 @@ struct CPSLSandboxURLs {
 
 nonisolated enum CPSLVirtualPath {
     static let root = "/"
+    static let attachments = "/attachments"
     static let home = "/home/herm"
     static let temporary = "/tmp"
     static let initialDirectory = home
+}
+
+nonisolated struct CPSLAttachment: Identifiable, Equatable, Sendable, Codable {
+    var id: String { path }
+
+    let name: String
+    let path: String
+
+    nonisolated init(name: String, path: String) {
+        self.name = name
+        self.path = path
+    }
 }
 
 enum CPSLFeatureAccessState: String, Equatable, Sendable {
@@ -147,12 +179,37 @@ nonisolated struct CPSLChatMessage: Identifiable, Equatable, Sendable, Codable {
     let role: CPSLChatRole
     let title: String?
     var body: String
+    let attachments: [CPSLAttachment]
 
-    nonisolated init(id: UUID = UUID(), role: CPSLChatRole, title: String?, body: String) {
+    nonisolated init(
+        id: UUID = UUID(),
+        role: CPSLChatRole,
+        title: String?,
+        body: String,
+        attachments: [CPSLAttachment] = []
+    ) {
         self.id = id
         self.role = role
         self.title = title
         self.body = body
+        self.attachments = attachments
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case role
+        case title
+        case body
+        case attachments
+    }
+
+    nonisolated init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(CPSLChatRole.self, forKey: .role)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        body = try container.decode(String.self, forKey: .body)
+        attachments = try container.decodeIfPresent([CPSLAttachment].self, forKey: .attachments) ?? []
     }
 }
 

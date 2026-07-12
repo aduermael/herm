@@ -946,6 +946,7 @@ cpsl_xcframework_restore_tracked_placeholder() {
 cpsl_xcframework_inputs_newer_than() {
 	info_plist=$1
 	herm_root=$2
+	cpsl_source_root=${3:-}
 
 	[ -f "$info_plist" ] || return 0
 
@@ -962,6 +963,17 @@ cpsl_xcframework_inputs_newer_than() {
 
 	if [ -d "$herm_root/scripts/cpsl-patches" ]; then
 		if find "$herm_root/scripts/cpsl-patches" -type f -newer "$info_plist" | grep -q .; then
+			return 0
+		fi
+	fi
+
+	# The source stamp records the CPSL Git revision, but local submodule edits do
+	# not change that revision. Include source mtimes so Xcode does not relink an
+	# older dylib while exposing newer bundled skill documentation to the agent.
+	if [ -n "$cpsl_source_root" ] && [ -d "$cpsl_source_root" ]; then
+		if find "$cpsl_source_root" \
+			\( -name .git -o -name target \) -prune -o \
+			-type f -newer "$info_plist" -print | grep -q .; then
 			return 0
 		fi
 	fi

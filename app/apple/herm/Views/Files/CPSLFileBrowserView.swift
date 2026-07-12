@@ -552,11 +552,14 @@ private struct CPSLFileBrowserHeaderTitle: View {
         if path == CPSLVirtualPath.temporary {
             return "Temporary"
         }
+        if path == CPSLVirtualPath.attachments {
+            return "Attachments"
+        }
         return isRoot ? "Locations" : path
     }
 
     private var displaySubtitle: String {
-        return isRoot ? "Home and temporary storage" : path
+        return isRoot ? "Home, attachments, and temporary storage" : path
     }
 
     private var iconName: String {
@@ -565,6 +568,9 @@ private struct CPSLFileBrowserHeaderTitle: View {
         }
         if path == CPSLVirtualPath.temporary {
             return "clock.fill"
+        }
+        if path == CPSLVirtualPath.attachments {
+            return "paperclip"
         }
         return "folder.fill"
     }
@@ -624,6 +630,15 @@ private struct CPSLFileLocationsView: View {
                 color: CPSLTheme.IconPalette.home
             ) {
                 actions.loadPath(CPSLVirtualPath.home)
+            }
+
+            CPSLFileLocationRow(
+                title: "Attachments",
+                detail: CPSLVirtualPath.attachments,
+                systemName: "paperclip",
+                color: CPSLTheme.IconPalette.folder
+            ) {
+                actions.loadPath(CPSLVirtualPath.attachments)
             }
 
             CPSLFileLocationRow(

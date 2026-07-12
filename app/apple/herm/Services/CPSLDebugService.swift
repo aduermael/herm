@@ -335,9 +335,21 @@ private nonisolated func cpslWebBrowserOwnedCString(_ value: String) -> UnsafeMu
 #endif
 }
 
+private enum CPSLAttachmentImportError: LocalizedError {
+    case sourceIsNotFile
+
+    var errorDescription: String? {
+        switch self {
+        case .sourceIsNotFile:
+            String(localized: "Only files can be attached.")
+        }
+    }
+}
+
 actor CPSLDebugService {
     private nonisolated static let evalTimeoutMilliseconds: UInt64 = 60_000
     private nonisolated static let textPreviewByteLimit = 1_000_000
+    private nonisolated static let temporaryFileLifetime: TimeInterval = 24 * 60 * 60
 
     private let webBrowser: CPSLWebBrowserService
     private let location: CPSLLocationService
@@ -365,6 +377,93 @@ actor CPSLDebugService {
         if let session {
             cpsl_session_free(session.pointer)
         }
+    }
+
+    func prepareSandbox() async throws {
+        let sandboxURLs = try ensureSandboxURLs()
+        self.sandboxURLs = sandboxURLs
+        await webBrowser.setSandboxRoot(sandboxURLs.root)
+        cleanupTemporaryFiles(
+            in: sandboxURLs.root.appendingPathComponent("tmp", isDirectory: true),
+            olderThan: Date().addingTimeInterval(-Self.temporaryFileLifetime)
+        )
+    }
+
+    func importAttachment(
+        from sourceURL: URL,
+        preferredName: String? = nil,
+        conversationID: String
+    ) throws -> CPSLAttachment {
+        let sandboxURLs = try ensureSandboxURLs()
+        self.sandboxURLs = sandboxURLs
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: sourceURL.path, isDirectory: &isDirectory),
+              !isDirectory.boolValue
+        else {
+            throw CPSLAttachmentImportError.sourceIsNotFile
+        }
+        let destination = try attachmentDestination(
+            preferredName: preferredName ?? sourceURL.lastPathComponent,
+            conversationID: conversationID,
+            sandboxURLs: sandboxURLs
+        )
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+        return composerAttachment(for: destination, conversationID: conversationID)
+    }
+
+    func importAttachment(
+        data: Data,
+        preferredName: String,
+        conversationID: String
+    ) throws -> CPSLAttachment {
+        let sandboxURLs = try ensureSandboxURLs()
+        self.sandboxURLs = sandboxURLs
+        let destination = try attachmentDestination(
+            preferredName: preferredName,
+            conversationID: conversationID,
+            sandboxURLs: sandboxURLs
+        )
+        try data.write(to: destination, options: .atomic)
+        return composerAttachment(for: destination, conversationID: conversationID)
+    }
+
+    func removeAttachment(_ attachment: CPSLAttachment) {
+        guard attachment.path.hasPrefix("\(CPSLVirtualPath.attachments)/") else {
+            return
+        }
+        guard let sandboxURLs = try? ensureSandboxURLs() else {
+            return
+        }
+        let attachmentsRoot = sandboxURLs.root
+            .appendingPathComponent("attachments", isDirectory: true)
+        let url = hostURL(forVirtualPath: attachment.path, sandboxURLs: sandboxURLs)
+        guard url != attachmentsRoot,
+              Self.isHostURL(url, inside: attachmentsRoot)
+        else {
+            return
+        }
+        try? FileManager.default.removeItem(at: url)
+        let scopeURL = url.deletingLastPathComponent()
+        if scopeURL != attachmentsRoot,
+           Self.isHostURL(scopeURL, inside: attachmentsRoot),
+           let contents = try? FileManager.default.contentsOfDirectory(atPath: scopeURL.path),
+           contents.isEmpty {
+            try? FileManager.default.removeItem(at: scopeURL)
+        }
+    }
+
+    func removeAttachmentScope(conversationID: String) {
+        guard let sandboxURLs = try? ensureSandboxURLs() else {
+            return
+        }
+        let component = Self.safePathComponent(conversationID, fallback: "conversation")
+        let url = sandboxURLs.root
+            .appendingPathComponent("attachments", isDirectory: true)
+            .appendingPathComponent(component, isDirectory: true)
+        guard Self.isHostURL(url, inside: sandboxURLs.root) else {
+            return
+        }
+        try? FileManager.default.removeItem(at: url)
     }
 
     func listDirectory(_ virtualPath: String) -> CPSLDirectoryListing {
@@ -738,12 +837,116 @@ actor CPSLDebugService {
                 evaluatingSessionID = nil
             }
             return Self.timeoutFailure()
+        case .cancelled:
+            if session?.id == activeSession.id {
+                // cpsl_eval cannot be interrupted safely; abandon this session and let its
+                // background call finish without blocking the cancelled agent task.
+                session = nil
+                currentVirtualDirectory = CPSLVirtualPath.initialDirectory
+            }
+            if evaluatingSessionID == activeSession.id {
+                evaluatingSessionID = nil
+            }
+            return Self.cancellationFailure()
         }
     }
 
     private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) -> URL {
         let normalized = Self.normalizedVirtualPath(virtualPath)
         return Self.appendingVirtualPath(normalized.dropFirst(), to: sandboxURLs.root)
+    }
+
+    private func attachmentDestination(
+        preferredName: String,
+        conversationID: String,
+        sandboxURLs: CPSLSandboxURLs
+    ) throws -> URL {
+        let fileManager = FileManager.default
+        let conversationComponent = Self.safePathComponent(conversationID, fallback: "conversation")
+        let directory = sandboxURLs.root
+            .appendingPathComponent("attachments", isDirectory: true)
+            .appendingPathComponent(conversationComponent, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let safeName = Self.safeFileName(preferredName)
+        let base = (safeName as NSString).deletingPathExtension
+        let fileExtension = (safeName as NSString).pathExtension
+        var destination = directory.appendingPathComponent(safeName, isDirectory: false)
+        var suffix = 2
+        while fileManager.fileExists(atPath: destination.path) {
+            let candidate = fileExtension.isEmpty
+                ? "\(base)-\(suffix)"
+                : "\(base)-\(suffix).\(fileExtension)"
+            destination = directory.appendingPathComponent(candidate, isDirectory: false)
+            suffix += 1
+        }
+        return destination
+    }
+
+    private func composerAttachment(
+        for destination: URL,
+        conversationID: String
+    ) -> CPSLAttachment {
+        let conversationComponent = Self.safePathComponent(conversationID, fallback: "conversation")
+        return CPSLAttachment(
+            name: destination.lastPathComponent,
+            path: "\(CPSLVirtualPath.attachments)/\(conversationComponent)/\(destination.lastPathComponent)"
+        )
+    }
+
+    private nonisolated static func safeFileName(_ value: String) -> String {
+        let source = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lastComponent = URL(fileURLWithPath: source.isEmpty ? "attachment" : source).lastPathComponent
+        let component = safePathComponent(lastComponent, fallback: "attachment")
+        return component.unicodeScalars.map { scalar in
+            CharacterSet.whitespacesAndNewlines.contains(scalar) ? "-" : String(scalar)
+        }
+        .joined()
+    }
+
+    private nonisolated static func safePathComponent(_ value: String, fallback: String) -> String {
+        let disallowed = CharacterSet(charactersIn: "/:\\?%*|\"<>\0")
+            .union(.controlCharacters)
+        let component = value.unicodeScalars.map { scalar in
+            disallowed.contains(scalar) ? "-" : String(scalar)
+        }
+        .joined()
+        .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return component.isEmpty ? fallback : component
+    }
+
+    private func cleanupTemporaryFiles(in directory: URL, olderThan cutoff: Date) {
+        let fileManager = FileManager.default
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+            options: []
+        ) else {
+            return
+        }
+
+        var directories: [URL] = []
+        for case let url as URL in enumerator {
+            guard let values = try? url.resourceValues(
+                forKeys: [.contentModificationDateKey, .isDirectoryKey]
+            ) else {
+                continue
+            }
+            if values.isDirectory == true {
+                directories.append(url)
+            } else if (values.contentModificationDate ?? .distantFuture) < cutoff {
+                try? fileManager.removeItem(at: url)
+            }
+        }
+
+        for url in directories.sorted(by: { $0.path.count > $1.path.count }) {
+            guard let contents = try? fileManager.contentsOfDirectory(atPath: url.path),
+                  contents.isEmpty
+            else {
+                continue
+            }
+            try? fileManager.removeItem(at: url)
+        }
     }
 
     private nonisolated static func normalizedVirtualPath(
@@ -873,6 +1076,7 @@ actor CPSLDebugService {
         let fileManager = FileManager.default
         let directoryNames = [
             "",
+            "attachments",
             "bin",
             "etc",
             "home",
@@ -912,6 +1116,12 @@ actor CPSLDebugService {
                 "host": rootPath,
                 "virtual": "/",
                 "mode": "rw"
+            ],
+            [
+                "host": URL(fileURLWithPath: rootPath)
+                    .appendingPathComponent("attachments", isDirectory: true).path,
+                "virtual": CPSLVirtualPath.attachments,
+                "mode": "ro"
             ]
         ]
         for mount in CPSLSkillCatalog.systemSkillMounts() {
@@ -1092,19 +1302,28 @@ actor CPSLDebugService {
     private nonisolated static func performBlockingEvalWithTimeout(
         _ request: CPSLBlockingEvalRequest
     ) async -> CPSLEvalRaceResult {
-        await withCheckedContinuation { continuation in
-            let race = CPSLEvalRaceBox()
+        let race = CPSLEvalRaceBox()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                race.install(continuation)
+                guard !Task.isCancelled else {
+                    race.resume(.cancelled)
+                    return
+                }
 
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = performBlockingEval(request)
-                race.resume(.completed(result), continuation: continuation)
-            }
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = performBlockingEval(request)
+                    race.resume(.completed(result))
+                }
 
-            DispatchQueue.global().asyncAfter(
-                deadline: .now() + .milliseconds(Int(evalTimeoutMilliseconds))
-            ) {
-                race.resume(.timedOut, continuation: continuation)
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + .milliseconds(Int(evalTimeoutMilliseconds))
+                ) {
+                    race.resume(.timedOut)
+                }
             }
+        } onCancel: {
+            race.resume(.cancelled)
         }
     }
 
@@ -1170,6 +1389,21 @@ actor CPSLDebugService {
             cwd: nil,
             errorCode: "timeout",
             errorMessage: "Command timed out after \(evalTimeoutMilliseconds / 1_000)s. You can try again.",
+            warnings: [],
+            ffiError: nil
+        )
+    }
+
+    private nonisolated static func cancellationFailure() -> CPSLEvalServiceResult {
+        (
+            rawJSON: nil,
+            stdout: "",
+            stderr: "",
+            exitCode: nil,
+            ok: false,
+            cwd: nil,
+            errorCode: "cancelled",
+            errorMessage: "Command cancelled.",
             warnings: [],
             ffiError: nil
         )

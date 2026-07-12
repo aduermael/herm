@@ -38,7 +38,7 @@ private struct CPSLCalendarPanel: View {
         CPSLFileOverlayPanel {
             CPSLCalendarHeader(model: model, calendar: calendar)
         } content: {
-            CPSLCalendarContent(calendar: calendar)
+            CPSLCalendarContent(model: model, calendar: calendar)
         }
     }
 }
@@ -98,6 +98,7 @@ private struct CPSLCalendarHeader: View {
 }
 
 private struct CPSLCalendarContent: View {
+    let model: CPSLChatModel
     @ObservedObject var calendar: CPSLCalendarService
 
     var body: some View {
@@ -111,7 +112,10 @@ private struct CPSLCalendarContent: View {
                     CPSLCalendarStatusRow(systemName: "calendar.badge.checkmark", title: "No upcoming events")
                 } else {
                     ForEach(calendar.upcomingEvents) { event in
-                        CPSLCalendarEventRow(event: event)
+                        CPSLCalendarEventRow(
+                            event: event,
+                            onOpenAttachment: model.openFilePathFromTimeline
+                        )
                     }
                 }
             }
@@ -149,6 +153,7 @@ private struct CPSLCalendarStatusRow: View {
 
 private struct CPSLCalendarEventRow: View {
     let event: CPSLCalendarEvent
+    let onOpenAttachment: (String) -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: CPSLTheme.medium) {
@@ -169,6 +174,14 @@ private struct CPSLCalendarEventRow: View {
                     .lineLimit(1)
 
                 CPSLCalendarEventDetail(event: event)
+
+                if !event.attachments.isEmpty {
+                    CPSLCalendarEventAttachments(
+                        attachments: event.attachments,
+                        onOpen: onOpenAttachment
+                    )
+                    .padding(.top, CPSLTheme.small / 2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -178,6 +191,37 @@ private struct CPSLCalendarEventRow: View {
             tint: CPSLTheme.background.opacity(0.30),
             strokeOpacity: 0.045
         )
+    }
+}
+
+private struct CPSLCalendarEventAttachments: View {
+    let attachments: [CPSLCalendarAttachment]
+    let onOpen: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: CPSLTheme.small) {
+                ForEach(attachments) { attachment in
+                    Button {
+                        onOpen(attachment.path)
+                    } label: {
+                        Label(attachment.name, systemImage: "paperclip")
+                            .font(CPSLTheme.captionFont)
+                            .lineLimit(1)
+                            .padding(.horizontal, CPSLTheme.small)
+                            .padding(.vertical, CPSLTheme.small / 2)
+                            .cpslSurfaceBackground(
+                                in: Capsule(),
+                                tint: CPSLTheme.IconPalette.calendar.opacity(0.18),
+                                strokeOpacity: 0.05
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CPSLTheme.text)
+                    .accessibilityLabel("Open attachment \(attachment.name)")
+                }
+            }
+        }
     }
 }
 
