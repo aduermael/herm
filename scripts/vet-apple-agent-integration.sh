@@ -138,11 +138,11 @@ require_match 'CPSLEnvConstants\.swift in Sources' app/apple/herm.xcodeproj/proj
 require_match 'source_entitlements_path=.*herm-macOS.entitlements' scripts/dev-apple-macos.sh
 require_match 'sign_entitlements_path=.source_entitlements_path' scripts/dev-apple-macos.sh
 require_match 'cd "\$root"' scripts/dev-apple-macos.sh
-require_match 'allow_html_to_pdf\(html_to_pdf_allowed\(config\)\)' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
+require_match 'allow_webview_pdf_rendering\(webview_pdf_rendering_allowed\(config\)\)' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
 require_match '^0001-disable-html-to-pdf-under-restricted-network\.patch$' scripts/cpsl-patches/series
 require_match 'done <.*series_file' scripts/apply-cpsl-patches.sh
-require_match 'restricted_network_policy_disables_html_to_pdf' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
-require_match 'html_to_pdf_requires_unrestricted_webbrowser_policy' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
+require_match 'restricted_network_policy_returns_structured_webview_pdf_denials' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
+require_match 'webview_pdf_rendering_requires_unrestricted_webbrowser_policy' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
 require_match 'iCloud file-container prototype' docs/apple-agent-storage.md
 require_match 'not Apple.s standard robust' docs/apple-agent-storage.md
 require_match 'CloudKit-backed persistence' docs/apple-agent-storage.md
