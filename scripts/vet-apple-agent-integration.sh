@@ -71,7 +71,6 @@ required_files=(
   scripts/generate-apple-env-constants.swift
   scripts/dev-apple-macos.sh
   scripts/apply-cpsl-patches.sh
-  scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
   scripts/cpsl-patches/series
   scripts/test-cpsl-xcframework.sh
   scripts/vet-apple-agent-config.swift
@@ -81,6 +80,9 @@ required_files=(
   scripts/vet-apple-icloud-staging.swift
   scripts/vet-apple-conversation-store.swift
   scripts/vet-apple-openai-protocol.swift
+  external/cpsl/core/src/doc/render.rs
+  external/cpsl/core/src/sandbox.rs
+  external/cpsl/ffi/src/lib.rs
   "${swift_files[@]}"
 )
 
@@ -138,11 +140,10 @@ require_match 'CPSLEnvConstants\.swift in Sources' app/apple/herm.xcodeproj/proj
 require_match 'source_entitlements_path=.*herm-macOS.entitlements' scripts/dev-apple-macos.sh
 require_match 'sign_entitlements_path=.source_entitlements_path' scripts/dev-apple-macos.sh
 require_match 'cd "\$root"' scripts/dev-apple-macos.sh
-require_match 'allow_webview_pdf_rendering\(webview_pdf_rendering_allowed\(config\)\)' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
-require_match '^0001-disable-html-to-pdf-under-restricted-network\.patch$' scripts/cpsl-patches/series
 require_match 'done <.*series_file' scripts/apply-cpsl-patches.sh
-require_match 'restricted_network_policy_returns_structured_webview_pdf_denials' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
-require_match 'webview_pdf_rendering_requires_unrestricted_webbrowser_policy' scripts/cpsl-patches/0001-disable-html-to-pdf-under-restricted-network.patch
+require_match 'allow_webview_pdf_rendering\(webview_pdf_rendering_allowed\(config\)\)' external/cpsl/ffi/src/lib.rs
+require_match 'restricted_network_policy_returns_structured_webview_pdf_denials' external/cpsl/ffi/src/lib.rs
+require_match 'webview_pdf_rendering_requires_unrestricted_webbrowser_policy' external/cpsl/ffi/src/lib.rs
 require_match 'iCloud file-container prototype' docs/apple-agent-storage.md
 require_match 'not Apple.s standard robust' docs/apple-agent-storage.md
 require_match 'CloudKit-backed persistence' docs/apple-agent-storage.md
