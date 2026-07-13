@@ -18,6 +18,7 @@ const cpslWorkerStartupTimeout = 10 * time.Second
 
 type cpslWorkerBackend interface {
 	cpslEvaluator
+	ConfigureVision(context.Context, cpslVisionRuntimeConfig) error
 	Close() error
 }
 
@@ -179,6 +180,24 @@ func (c *CPSLWorkerClient) EvalCPSL(ctx context.Context, opts cpslEvalOptions) (
 		Input:     opts.input,
 		TimeoutMS: opts.timeoutSeconds * 1000,
 	})
+}
+
+func (c *CPSLWorkerClient) ConfigureVision(ctx context.Context, config cpslVisionRuntimeConfig) error {
+	response, err := c.eval(ctx, cpslWorkerRequest{
+		Op:        cpslWorkerOpVision,
+		TimeoutMS: int(cpslWorkerStartupTimeout / time.Millisecond),
+		Vision:    &config,
+	})
+	if err != nil {
+		return err
+	}
+	if !response.OK {
+		if response.Error != nil {
+			return newCPSLWorkerError(cpslWorkerErrorOptions{code: response.Error.Code, message: response.Error.Message})
+		}
+		return fmt.Errorf("CPSL vision configuration failed")
+	}
+	return nil
 }
 
 func (c *CPSLWorkerClient) eval(ctx context.Context, request cpslWorkerRequest) (cpslEvalResponse, error) {

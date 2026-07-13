@@ -59,6 +59,7 @@ required_files=(
   app/apple/herm/Resources/env.example
   app/apple/herm/Skills/beautiful-pdfs/SKILL.md
   app/apple/herm/Skills/beautiful-pdfs/print.css
+  app/apple/herm/Skills/image-vision/SKILL.md
   app/apple/herm/herm.entitlements
   app/apple/herm/herm-macOS.entitlements
   app/apple/herm.xcodeproj/project.pbxproj
@@ -191,6 +192,10 @@ require_match 'validatedCompletion\(\)' app/apple/herm/Services/Agent/CPSLOpenAI
 require_match 'toolChoice: streamRequest\.tools\.isEmpty \? nil : "auto"' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'stream: true' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'text/event-stream' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'HERM_VISION_MODEL' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'actor CPSLVisionClient' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+require_match 'cpsl_session_new_with_host_callbacks_v3' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'cpsl_vision_respond' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'evaluateLuau' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'currentVirtualDirectory' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'func currentDirectory\(\) -> String' app/apple/herm/Services/CPSLDebugService.swift
@@ -224,6 +229,11 @@ require_match 'fs\.write\("/tmp/report\.html", html\)' app/apple/herm/Skills/bea
 require_match 'print\(fs\.exists\("/home/herm/report\.pdf"\)\)' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'platform not supported' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'no PDF was produced' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
+require_match 'name: image-vision' app/apple/herm/Skills/image-vision/SKILL.md
+require_match 'mode = "vision"' app/apple/herm/Skills/image-vision/SKILL.md
+require_match 'doc\.readAsync' app/apple/herm/Skills/image-vision/SKILL.md
+require_match 'vision callback .* not available' app/apple/herm/Skills/image-vision/SKILL.md
+require_match 'Never claim to have seen or analyzed' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'target_os = "ios"' external/cpsl/modules/native-webview-pdf/src/lib.rs
 require_match '@page' app/apple/herm/Skills/beautiful-pdfs/print.css
 require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
@@ -399,7 +409,9 @@ if command -v swiftc >/dev/null 2>&1; then
     -o /tmp/herm-vet-agent-tool-formatting
   /tmp/herm-vet-agent-tool-formatting
   swiftc \
+    app/apple/herm/Services/Agent/CPSLAgentConfig.swift \
     app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
+    app/apple/herm/Services/Agent/CPSLOpenAIClient.swift \
     app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift \
     scripts/vet-apple-openai-protocol.swift \
     -o /tmp/herm-vet-openai-protocol

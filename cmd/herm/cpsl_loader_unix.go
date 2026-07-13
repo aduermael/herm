@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"unsafe"
 
@@ -17,13 +18,29 @@ type cpslSession unsafe.Pointer
 type cpslNativeLibrary struct {
 	handle uintptr
 
-	abiVersionFn   func() uint32
-	metadataJSONFn func() unsafe.Pointer
-	sessionNewFn   func(string) unsafe.Pointer
-	sessionFreeFn  func(unsafe.Pointer)
-	evalFn         func(unsafe.Pointer, string) unsafe.Pointer
-	stringFreeFn   func(unsafe.Pointer)
-	lastErrorFn    func() unsafe.Pointer
+	abiVersionFn                    func() uint32
+	metadataJSONFn                  func() unsafe.Pointer
+	sessionNewFn                    func(string) unsafe.Pointer
+	sessionNewWithHostCallbacksV3Fn func(string, unsafe.Pointer, unsafe.Pointer, unsafe.Pointer, unsafe.Pointer, unsafe.Pointer) unsafe.Pointer
+	visionRespondFn                 func(unsafe.Pointer, unsafe.Pointer, uintptr, uint8)
+	sessionFreeFn                   func(unsafe.Pointer)
+	evalFn                          func(unsafe.Pointer, string) unsafe.Pointer
+	stringFreeFn                    func(unsafe.Pointer)
+	lastErrorFn                     func() unsafe.Pointer
+	visionCallback                  func(uintptr, uintptr, uintptr, uintptr, uintptr)
+}
+
+type cpslVisionInputFFI struct {
+	data      unsafe.Pointer
+	dataLen   uintptr
+	filename  unsafe.Pointer
+	mediaType unsafe.Pointer
+}
+
+type cpslVisionCallbacksFFI struct {
+	userData     unsafe.Pointer
+	handle       uintptr
+	userDataFree uintptr
 }
 
 func openCPSLNativeLibrary(path string) (*cpslNativeLibrary, error) {
@@ -48,6 +65,8 @@ func openCPSLNativeLibrary(path string) (*cpslNativeLibrary, error) {
 	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.sessionNewFn, name: "cpsl_session_new"}); err != nil {
 		return nil, err
 	}
+	_ = lib.registerOptionalFunc(cpslRegisterFuncOptions{target: &lib.sessionNewWithHostCallbacksV3Fn, name: "cpsl_session_new_with_host_callbacks_v3"})
+	_ = lib.registerOptionalFunc(cpslRegisterFuncOptions{target: &lib.visionRespondFn, name: "cpsl_vision_respond"})
 	if err := lib.registerFunc(cpslRegisterFuncOptions{target: &lib.sessionFreeFn, name: "cpsl_session_free"}); err != nil {
 		return nil, err
 	}
@@ -82,6 +101,15 @@ func (l *cpslNativeLibrary) registerFunc(opts cpslRegisterFuncOptions) error {
 	return nil
 }
 
+func (l *cpslNativeLibrary) registerOptionalFunc(opts cpslRegisterFuncOptions) error {
+	symbol, err := purego.Dlsym(l.handle, opts.name)
+	if err != nil || symbol == 0 {
+		return err
+	}
+	purego.RegisterFunc(opts.target, symbol)
+	return nil
+}
+
 func (l *cpslNativeLibrary) abiVersion() (uint32, error) {
 	return l.abiVersionFn(), nil
 }
@@ -104,6 +132,70 @@ func (l *cpslNativeLibrary) sessionNew(configJSON string) (cpslSession, error) {
 		return nil, fmt.Errorf("CPSL session creation failed: %s", l.lastError())
 	}
 	return cpslSession(session), nil
+}
+
+func (l *cpslNativeLibrary) sessionNewWithVision(configJSON string, handler cpslVisionHandler) (cpslSession, error) {
+	if handler == nil || l.sessionNewWithHostCallbacksV3Fn == nil || l.visionRespondFn == nil {
+		return l.sessionNew(configJSON)
+	}
+	if err := validateFFIString(configJSON); err != nil {
+		return nil, err
+	}
+
+	callback := func(_ uintptr, inputsPointer uintptr, inputCount uintptr, queryPointer uintptr, responseContext uintptr) {
+		var result string
+		var callbackErr error
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					callbackErr = fmt.Errorf("vision callback panicked: %v", recovered)
+				}
+			}()
+			ffiInputs := unsafe.Slice((*cpslVisionInputFFI)(unsafe.Pointer(inputsPointer)), inputCount)
+			inputs := make([]cpslVisionInput, 0, len(ffiInputs))
+			for _, input := range ffiInputs {
+				data := append([]byte(nil), unsafe.Slice((*byte)(input.data), input.dataLen)...)
+				inputs = append(inputs, cpslVisionInput{
+					Data:      data,
+					Filename:  stringFromC(input.filename),
+					MediaType: stringFromC(input.mediaType),
+				})
+			}
+			result, callbackErr = handler(inputs, stringFromC(unsafe.Pointer(queryPointer)))
+		}()
+		if callbackErr != nil {
+			result = callbackErr.Error()
+		}
+		bytes := []byte(result)
+		var data unsafe.Pointer
+		if len(bytes) > 0 {
+			data = unsafe.Pointer(&bytes[0])
+		}
+		l.visionRespondFn(unsafe.Pointer(responseContext), data, uintptr(len(bytes)), boolByte(callbackErr != nil))
+		runtime.KeepAlive(bytes)
+	}
+	l.visionCallback = callback
+	callbacks := cpslVisionCallbacksFFI{handle: purego.NewCallback(callback)}
+	session := l.sessionNewWithHostCallbacksV3Fn(
+		configJSON,
+		nil,
+		nil,
+		nil,
+		nil,
+		unsafe.Pointer(&callbacks),
+	)
+	runtime.KeepAlive(callbacks)
+	if session == nil {
+		return nil, fmt.Errorf("CPSL session creation failed: %s", l.lastError())
+	}
+	return cpslSession(session), nil
+}
+
+func boolByte(value bool) uint8 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (l *cpslNativeLibrary) sessionFree(session cpslSession) {

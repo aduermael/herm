@@ -24,6 +24,7 @@ type Config struct {
 	Routing               *RoutingPolicy              `json:"routing,omitempty"`
 	ActiveModel           string                      `json:"active_model,omitempty"`
 	ExplorationModel      string                      `json:"exploration_model,omitempty"` // model for sub-agents; falls back to ActiveModel
+	VisionModel           string                      `json:"vision_model,omitempty"`      // model for doc vision; falls back to ActiveModel
 	ModelSortCol          string                      `json:"model_sort_col,omitempty"`    // "name","provider","price","context"
 	ModelSortDirs         map[string]bool             `json:"model_sort_dirs,omitempty"`   // column name → ascending (per-column)
 	SubAgentMaxTurns      int                         `json:"sub_agent_max_turns,omitempty"`
@@ -740,6 +741,31 @@ func (c Config) resolveExplorationModelResult(models []ModelDef) configuredModel
 		Fallback:          true,
 		Status:            lookup.Status,
 		Diagnostic:        configuredModelDiagnostic(configuredModelDiagnosticOptions{field: "exploration_model", configured: c.ExplorationModel, fallback: fallback, status: lookup.Status}),
+	}
+}
+
+// resolveVisionModel returns the model used by CPSL vision document reads.
+// Vision is optional in config and follows the active model when unset.
+func (c Config) resolveVisionModel(models []ModelDef) string {
+	return c.resolveVisionModelResult(models).ResolvedModelID
+}
+
+func (c Config) resolveVisionModelResult(models []ModelDef) configuredModelResolution {
+	if c.VisionModel == "" {
+		return configuredModelResolution{ResolvedModelID: c.resolveActiveModel(models)}
+	}
+	available := c.availableModels(models)
+	lookup := c.lookupConfiguredModelID(lookupConfiguredModelIDOptions{modelID: c.VisionModel, smartDefault: defaultCanonicalVisionModel, available: available, models: models})
+	if lookup.Status == configuredModelUsable {
+		return lookup
+	}
+	fallback := c.resolveActiveModel(models)
+	return configuredModelResolution{
+		ConfiguredModelID: c.VisionModel,
+		ResolvedModelID:   fallback,
+		Fallback:          true,
+		Status:            lookup.Status,
+		Diagnostic:        configuredModelDiagnostic(configuredModelDiagnosticOptions{field: "vision_model", configured: c.VisionModel, fallback: fallback, status: lookup.Status}),
 	}
 }
 

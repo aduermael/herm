@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -14,14 +15,30 @@ import (
 type cpslSession uintptr
 
 type cpslNativeLibrary struct {
-	dll              *syscall.DLL
-	abiVersionProc   *syscall.Proc
-	metadataJSONProc *syscall.Proc
-	sessionNewProc   *syscall.Proc
-	sessionFreeProc  *syscall.Proc
-	evalProc         *syscall.Proc
-	stringFreeProc   *syscall.Proc
-	lastErrorProc    *syscall.Proc
+	dll                               *syscall.DLL
+	abiVersionProc                    *syscall.Proc
+	metadataJSONProc                  *syscall.Proc
+	sessionNewProc                    *syscall.Proc
+	sessionNewWithHostCallbacksV3Proc *syscall.Proc
+	visionRespondProc                 *syscall.Proc
+	sessionFreeProc                   *syscall.Proc
+	evalProc                          *syscall.Proc
+	stringFreeProc                    *syscall.Proc
+	lastErrorProc                     *syscall.Proc
+	visionCallback                    uintptr
+}
+
+type cpslVisionInputFFI struct {
+	data      unsafe.Pointer
+	dataLen   uintptr
+	filename  unsafe.Pointer
+	mediaType unsafe.Pointer
+}
+
+type cpslVisionCallbacksFFI struct {
+	userData     unsafe.Pointer
+	handle       uintptr
+	userDataFree uintptr
 }
 
 func openCPSLNativeLibrary(path string) (*cpslNativeLibrary, error) {
@@ -46,6 +63,8 @@ func openCPSLNativeLibrary(path string) (*cpslNativeLibrary, error) {
 	if lib.sessionNewProc, err = dll.FindProc("cpsl_session_new"); err != nil {
 		return nil, fmt.Errorf("resolve CPSL symbol cpsl_session_new: %w", err)
 	}
+	lib.sessionNewWithHostCallbacksV3Proc, _ = dll.FindProc("cpsl_session_new_with_host_callbacks_v3")
+	lib.visionRespondProc, _ = dll.FindProc("cpsl_vision_respond")
 	if lib.sessionFreeProc, err = dll.FindProc("cpsl_session_free"); err != nil {
 		return nil, fmt.Errorf("resolve CPSL symbol cpsl_session_free: %w", err)
 	}
@@ -83,6 +102,68 @@ func (l *cpslNativeLibrary) sessionNew(configJSON string) (cpslSession, error) {
 		return 0, err
 	}
 	value, _, _ := l.sessionNewProc.Call(uintptr(unsafe.Pointer(config)))
+	if value == 0 {
+		return 0, fmt.Errorf("CPSL session creation failed: %s", l.lastError())
+	}
+	return cpslSession(value), nil
+}
+
+func (l *cpslNativeLibrary) sessionNewWithVision(configJSON string, handler cpslVisionHandler) (cpslSession, error) {
+	if handler == nil || l.sessionNewWithHostCallbacksV3Proc == nil || l.visionRespondProc == nil {
+		return l.sessionNew(configJSON)
+	}
+	config, err := bytePtrFromString(configJSON)
+	if err != nil {
+		return 0, err
+	}
+
+	callback := func(_ uintptr, inputsPointer uintptr, inputCount uintptr, queryPointer uintptr, responseContext uintptr) uintptr {
+		var result string
+		var callbackErr error
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					callbackErr = fmt.Errorf("vision callback panicked: %v", recovered)
+				}
+			}()
+			ffiInputs := unsafe.Slice((*cpslVisionInputFFI)(unsafe.Pointer(inputsPointer)), inputCount)
+			inputs := make([]cpslVisionInput, 0, len(ffiInputs))
+			for _, input := range ffiInputs {
+				inputs = append(inputs, cpslVisionInput{
+					Data:      append([]byte(nil), unsafe.Slice((*byte)(input.data), input.dataLen)...),
+					Filename:  stringFromC(input.filename),
+					MediaType: stringFromC(input.mediaType),
+				})
+			}
+			result, callbackErr = handler(inputs, stringFromC(unsafe.Pointer(queryPointer)))
+		}()
+		if callbackErr != nil {
+			result = callbackErr.Error()
+		}
+		bytes := []byte(result)
+		var data uintptr
+		if len(bytes) > 0 {
+			data = uintptr(unsafe.Pointer(&bytes[0]))
+		}
+		isError := uintptr(0)
+		if callbackErr != nil {
+			isError = 1
+		}
+		l.visionRespondProc.Call(responseContext, data, uintptr(len(bytes)), isError)
+		runtime.KeepAlive(bytes)
+		return 0
+	}
+	l.visionCallback = syscall.NewCallback(callback)
+	callbacks := cpslVisionCallbacksFFI{handle: l.visionCallback}
+	value, _, _ := l.sessionNewWithHostCallbacksV3Proc.Call(
+		uintptr(unsafe.Pointer(config)),
+		0,
+		0,
+		0,
+		0,
+		uintptr(unsafe.Pointer(&callbacks)),
+	)
+	runtime.KeepAlive(callbacks)
 	if value == 0 {
 		return 0, fmt.Errorf("CPSL session creation failed: %s", l.lastError())
 	}

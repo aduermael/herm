@@ -59,7 +59,7 @@ func configChangeNoticeFor(opts configChangeNoticeForOptions) configChangeNotice
 }
 
 func isModelConfigLabel(label string) bool {
-	return isActiveModelConfigLabel(label) || isExplorationModelConfigLabel(label)
+	return isActiveModelConfigLabel(label) || isExplorationModelConfigLabel(label) || isVisionModelConfigLabel(label)
 }
 
 func modelConfigChangeNotice(opts configChangeNoticeForOptions) configChangeNotice {
@@ -93,6 +93,8 @@ func configNoticeProfileFor(label string) configNoticeProfile {
 		return configNoticeProfile{accentStyle: styleChatCyan, removedSuffix: uiConfigNoticeUnset}
 	case isExplorationModelConfigLabel(label):
 		return configNoticeProfile{accentStyle: styleChatMagenta, removedSuffix: uiConfigNoticeUnset}
+	case isVisionModelConfigLabel(label):
+		return configNoticeProfile{accentStyle: styleChatBlue, removedSuffix: uiConfigNoticeUnset}
 	case isAPIKeyConfigLabel(label):
 		return configNoticeProfile{accentStyle: styleChatGreen, removedSuffix: uiConfigNoticeRemoved}
 	default:

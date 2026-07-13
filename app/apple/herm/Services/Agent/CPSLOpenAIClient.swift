@@ -85,3 +85,112 @@ nonisolated struct CPSLOpenAIStreamRequest: Sendable {
     let tools: [CPSLOpenAITool]
     let maxTokens: Int?
 }
+
+nonisolated struct CPSLVisionInput: Sendable {
+    let data: Data
+    let mediaType: String
+}
+
+actor CPSLVisionClient {
+    private let config: CPSLAgentConfig
+    private let session: URLSession
+
+    init(config: CPSLAgentConfig, session: URLSession = .shared) {
+        self.config = config
+        self.session = session
+    }
+
+    func read(inputs: [CPSLVisionInput], query: String) async throws -> String {
+        guard !inputs.isEmpty,
+              inputs.allSatisfy({ ["image/jpeg", "image/png"].contains($0.mediaType) })
+        else {
+            throw CPSLOpenAIError.provider(
+                "This vision endpoint accepts JPEG and PNG inputs. Use structural mode for other file types."
+            )
+        }
+        var content = [CPSLVisionContentPart(type: "text", text: query, imageURL: nil)]
+        content.append(contentsOf: inputs.map { input in
+            CPSLVisionContentPart(
+                type: "image_url",
+                text: nil,
+                imageURL: CPSLVisionImageURL(
+                    url: "data:\(input.mediaType);base64,\(input.data.base64EncodedString())"
+                )
+            )
+        })
+        let body = CPSLVisionChatRequest(
+            model: config.visionModel,
+            messages: [CPSLVisionMessage(role: "user", content: content)],
+            maxCompletionTokens: config.maxOutputTokens
+        )
+        var request = URLRequest(url: config.visionBaseURL
+            .appendingPathComponent("chat")
+            .appendingPathComponent("completions"))
+        request.httpMethod = "POST"
+        request.httpBody = try JSONEncoder().encode(body)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(config.visionToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await session.data(for: request)
+        if let httpResponse = response as? HTTPURLResponse,
+           !(200..<300).contains(httpResponse.statusCode) {
+            throw CPSLOpenAIError.httpStatus(
+                httpResponse.statusCode,
+                String(decoding: data.prefix(4_096), as: UTF8.self)
+            )
+        }
+        let completion = try JSONDecoder().decode(CPSLVisionChatResponse.self, from: data)
+        guard let text = completion.choices.first?.message.content?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else {
+            throw CPSLOpenAIError.provider("Vision model returned no text.")
+        }
+        return text
+    }
+}
+
+nonisolated struct CPSLVisionChatRequest: Encodable, Sendable {
+    let model: String
+    let messages: [CPSLVisionMessage]
+    let maxCompletionTokens: Int
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case messages
+        case maxCompletionTokens = "max_completion_tokens"
+    }
+}
+
+nonisolated struct CPSLVisionMessage: Encodable, Sendable {
+    let role: String
+    let content: [CPSLVisionContentPart]
+}
+
+nonisolated struct CPSLVisionContentPart: Encodable, Sendable {
+    let type: String
+    let text: String?
+    let imageURL: CPSLVisionImageURL?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case imageURL = "image_url"
+    }
+}
+
+nonisolated struct CPSLVisionImageURL: Encodable, Sendable {
+    let url: String
+}
+
+private nonisolated struct CPSLVisionChatResponse: Decodable, Sendable {
+    let choices: [CPSLVisionChoice]
+}
+
+private nonisolated struct CPSLVisionChoice: Decodable, Sendable {
+    let message: CPSLVisionResponseMessage
+}
+
+private nonisolated struct CPSLVisionResponseMessage: Decodable, Sendable {
+    let content: String?
+}

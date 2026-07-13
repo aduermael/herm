@@ -19,6 +19,7 @@ func TestDeploymentAwareConfigMigratesLegacyFlatCredentials(t *testing.T) {
 		OllamaBaseURL:         "http://localhost:11434",
 		ActiveModel:           "gpt-4.1-2025-04-14",
 		ExplorationModel:      "claude-haiku-4-5",
+		VisionModel:           "gemini-2.5-pro",
 		ModelSortCol:          "price",
 		ModelSortDirs:         map[string]bool{"price": false, "name": true},
 		SubAgentMaxTurns:      12,
@@ -38,10 +39,10 @@ func TestDeploymentAwareConfigMigratesLegacyFlatCredentials(t *testing.T) {
 	if migrated.ConfigVersion != hermConfigVersionDeploymentAware {
 		t.Fatalf("ConfigVersion = %d", migrated.ConfigVersion)
 	}
-	if result.ActiveModel.Status != ModelIDMigrationUniqueNative || result.ExplorationModel.Status != ModelIDMigrationUniqueNative {
-		t.Fatalf("model migration diagnostics = active:%+v exploration:%+v", result.ActiveModel, result.ExplorationModel)
+	if result.ActiveModel.Status != ModelIDMigrationUniqueNative || result.ExplorationModel.Status != ModelIDMigrationUniqueNative || result.VisionModel.Status != ModelIDMigrationUniqueNative {
+		t.Fatalf("model migration diagnostics = active:%+v exploration:%+v vision:%+v", result.ActiveModel, result.ExplorationModel, result.VisionModel)
 	}
-	if migrated.ActiveModel != "openai/gpt-4.1-2025-04-14" || migrated.ExplorationModel != "anthropic/claude-haiku-4-5" {
+	if migrated.ActiveModel != "openai/gpt-4.1-2025-04-14" || migrated.ExplorationModel != "anthropic/claude-haiku-4-5" || migrated.VisionModel != "google/gemini-2.5-pro" {
 		t.Fatalf("models did not migrate to canonical IDs: %+v", migrated)
 	}
 	if migrated.PasteCollapseMinChars != legacy.PasteCollapseMinChars ||
@@ -140,6 +141,7 @@ func TestDeploymentAwareProjectConfigCannotOverrideDeploymentsOrRouting(t *testi
 		ConfigVersion:    hermConfigVersionDeploymentAware,
 		ActiveModel:      "openai/gpt-4.1-2025-04-14",
 		ExplorationModel: "anthropic/claude-haiku-4-5",
+		VisionModel:      "openai/gpt-4.1-2025-04-14",
 		Deployments: map[string]DeploymentConfig{
 			"openai-direct": {APIKey: "secret"},
 		},
@@ -153,6 +155,7 @@ func TestDeploymentAwareProjectConfigCannotOverrideDeploymentsOrRouting(t *testi
 	project := ProjectConfig{
 		ActiveModel:      "anthropic/claude-sonnet-4-20250514",
 		ExplorationModel: "openai/gpt-4.1-mini-2025-04-14",
+		VisionModel:      "google/gemini-2.5-pro",
 		Personality:      "project",
 		SubAgentMaxTurns: 9,
 		Thinking:         &projectThinking,
@@ -162,7 +165,7 @@ func TestDeploymentAwareProjectConfigCannotOverrideDeploymentsOrRouting(t *testi
 		global:  global,
 		project: project,
 	})
-	if merged.ActiveModel != project.ActiveModel || merged.ExplorationModel != project.ExplorationModel {
+	if merged.ActiveModel != project.ActiveModel || merged.ExplorationModel != project.ExplorationModel || merged.VisionModel != project.VisionModel {
 		t.Fatalf("project model overrides not applied: %+v", merged)
 	}
 	if merged.Personality != project.Personality || merged.SubAgentMaxTurns != project.SubAgentMaxTurns || merged.Thinking == nil || !*merged.Thinking {

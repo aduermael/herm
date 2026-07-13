@@ -48,6 +48,21 @@ private nonisolated final class CPSLLocationCallbackBox: @unchecked Sendable {
     }
 }
 
+private nonisolated final class CPSLVisionCallbackBox: @unchecked Sendable {
+    let client: CPSLVisionClient?
+    let configurationError: String?
+
+    init() {
+        do {
+            client = CPSLVisionClient(config: try CPSLAgentConfig.load())
+            configurationError = nil
+        } catch {
+            client = nil
+            configurationError = error.localizedDescription
+        }
+    }
+}
+
 private typealias CPSLFileActivityHandleFunction = @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafePointer<CChar>?,
@@ -80,6 +95,25 @@ private typealias CPSLLocationUserDataFreeFunction = @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Void
 
+private typealias CPSLVisionHandleFunction = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafeRawPointer?,
+    UInt,
+    UnsafePointer<CChar>?,
+    UnsafeMutableRawPointer?
+) -> Void
+
+private typealias CPSLVisionUserDataFreeFunction = @convention(c) (
+    UnsafeMutableRawPointer?
+) -> Void
+
+private typealias CPSLVisionRespondFunction = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafeRawPointer?,
+    UInt,
+    UInt8
+) -> Void
+
 private nonisolated struct CPSLFileActivityCallbacks {
     var user_data: UnsafeMutableRawPointer?
     var handle_activity: CPSLFileActivityHandleFunction?
@@ -97,6 +131,19 @@ private nonisolated struct CPSLLocationCallbacks {
     var handle_json: CPSLLocationHandleJSONFunction?
     var string_free: CPSLLocationStringFreeFunction?
     var user_data_free: CPSLLocationUserDataFreeFunction?
+}
+
+private nonisolated struct CPSLVisionInputFFI {
+    var data: UnsafeRawPointer?
+    var data_len: UInt
+    var filename: UnsafePointer<CChar>?
+    var media_type: UnsafePointer<CChar>?
+}
+
+private nonisolated struct CPSLVisionCallbacks {
+    var user_data: UnsafeMutableRawPointer?
+    var handle: CPSLVisionHandleFunction?
+    var user_data_free: CPSLVisionUserDataFreeFunction?
 }
 
 private typealias CPSLSessionNewWithCallbacksFunction = @convention(c) (
@@ -120,6 +167,15 @@ private typealias CPSLSessionNewWithHostCallbacksV2Function = @convention(c) (
     UnsafeRawPointer?
 ) -> OpaquePointer?
 
+private typealias CPSLSessionNewWithHostCallbacksV3Function = @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafePointer<cpsl_webbrowser_callbacks_t>?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?
+) -> OpaquePointer?
+
 private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
     private let lock = NSLock()
     private var value: String
@@ -135,6 +191,24 @@ private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Senda
     }
 
     func get() -> String {
+        lock.lock()
+        let value = value
+        lock.unlock()
+        return value
+    }
+}
+
+private nonisolated final class CPSLVisionCallbackResponse: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<String, Error>?
+
+    func set(_ value: Result<String, Error>) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+
+    func get() -> Result<String, Error>? {
         lock.lock()
         let value = value
         lock.unlock()
@@ -271,6 +345,107 @@ private nonisolated let cpslCalendarActivityUserDataFree: CPSLCalendarActivityUs
     Unmanaged<CPSLCalendarActivityCallbackBox>.fromOpaque(userData).release()
 }
 
+private nonisolated let cpslVisionHandle: CPSLVisionHandleFunction = {
+    userData, rawInputs, inputCount, queryPointer, responseContext in
+    guard let respond = cpslVisionRespondFunction(), let responseContext else {
+        return
+    }
+
+    func complete(_ value: String, isError: Bool) {
+        let data = Data(value.utf8)
+        data.withUnsafeBytes { bytes in
+            respond(responseContext, bytes.baseAddress, UInt(bytes.count), isError ? 1 : 0)
+        }
+    }
+
+    guard let userData, let queryPointer else {
+        complete("vision callback received NULL input", isError: true)
+        return
+    }
+    guard !Thread.isMainThread else {
+        complete("vision callback cannot run on the main thread", isError: true)
+        return
+    }
+    guard inputCount == 0 || rawInputs != nil else {
+        complete("vision callback received a NULL input array", isError: true)
+        return
+    }
+    guard inputCount <= UInt(Int.max) else {
+        complete("vision callback received too many inputs", isError: true)
+        return
+    }
+
+    let callbackBox = Unmanaged<CPSLVisionCallbackBox>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+    guard let client = callbackBox.client else {
+        complete(
+            callbackBox.configurationError ?? "Vision model configuration is unavailable.",
+            isError: true
+        )
+        return
+    }
+
+    let inputsPointer = rawInputs?.assumingMemoryBound(to: CPSLVisionInputFFI.self)
+    var inputs: [CPSLVisionInput] = []
+    inputs.reserveCapacity(Int(inputCount))
+    for index in 0..<Int(inputCount) {
+        guard let ffiInput = inputsPointer?[index],
+              ffiInput.data_len == 0 || ffiInput.data != nil,
+              ffiInput.data_len <= UInt(Int.max),
+              let mediaTypePointer = ffiInput.media_type
+        else {
+            complete("vision callback received an invalid input", isError: true)
+            return
+        }
+        let data = ffiInput.data_len == 0
+            ? Data()
+            : Data(bytes: ffiInput.data!, count: Int(ffiInput.data_len))
+        inputs.append(CPSLVisionInput(
+            data: data,
+            mediaType: String(cString: mediaTypePointer)
+        ))
+    }
+
+    let query = String(cString: queryPointer)
+    let response = CPSLVisionCallbackResponse()
+    let semaphore = DispatchSemaphore(value: 0)
+    let task = Task {
+        do {
+            response.set(.success(try await client.read(
+                inputs: inputs,
+                query: query
+            )))
+        } catch {
+            response.set(.failure(error))
+        }
+        semaphore.signal()
+    }
+
+    if semaphore.wait(timeout: .now() + .seconds(55)) == .timedOut {
+        task.cancel()
+        complete("vision callback timed out", isError: true)
+        return
+    }
+    guard let result = response.get() else {
+        complete("vision callback did not complete", isError: true)
+        return
+    }
+    switch result {
+    case .success(let text):
+        complete(text, isError: false)
+    case .failure(let error):
+        complete(error.localizedDescription, isError: true)
+    }
+}
+
+private nonisolated let cpslVisionUserDataFree: CPSLVisionUserDataFreeFunction = { userData in
+    guard let userData else {
+        return
+    }
+    Unmanaged<CPSLVisionCallbackBox>.fromOpaque(userData).release()
+}
+
 private nonisolated func cpslSessionNewWithCallbacksFunction() -> CPSLSessionNewWithCallbacksFunction? {
 #if canImport(Darwin)
     let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
@@ -314,6 +489,36 @@ private nonisolated func cpslSessionNewWithHostCallbacksV2Function() -> CPSLSess
         return nil
     }
     return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksV2Function.self)
+}
+
+private nonisolated func cpslSessionNewWithHostCallbacksV3Function() -> CPSLSessionNewWithHostCallbacksV3Function? {
+#if canImport(Darwin)
+    let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
+#else
+    let lookupHandle: UnsafeMutableRawPointer? = nil
+#endif
+    let symbol = "cpsl_session_new_with_host_callbacks_v3".withCString { name in
+        dlsym(lookupHandle, name)
+    }
+    guard let symbol else {
+        return nil
+    }
+    return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksV3Function.self)
+}
+
+private nonisolated func cpslVisionRespondFunction() -> CPSLVisionRespondFunction? {
+#if canImport(Darwin)
+    let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
+#else
+    let lookupHandle: UnsafeMutableRawPointer? = nil
+#endif
+    let symbol = "cpsl_vision_respond".withCString { name in
+        dlsym(lookupHandle, name)
+    }
+    guard let symbol else {
+        return nil
+    }
+    return unsafeBitCast(symbol, to: CPSLVisionRespondFunction.self)
 }
 
 private nonisolated func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutablePointer<CChar>? {
@@ -1029,12 +1234,14 @@ actor CPSLDebugService {
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
         let calendarActivityCallbackBox = CPSLCalendarActivityCallbackBox(notifier: calendarActivityNotifier)
         let locationCallbackBox = CPSLLocationCallbackBox(service: location)
+        let visionCallbackBox = CPSLVisionCallbackBox()
         let result = await Self.performBlockingSessionInit(
             configJSON: configJSON,
             callbackBox: callbackBox,
             fileActivityCallbackBox: fileActivityCallbackBox,
             calendarActivityCallbackBox: calendarActivityCallbackBox,
-            locationCallbackBox: locationCallbackBox
+            locationCallbackBox: locationCallbackBox,
+            visionCallbackBox: visionCallbackBox
         )
         guard let newSession = result.pointer else {
             return result.errorMessage ?? "cpsl_session_new returned NULL"
@@ -1175,7 +1382,8 @@ actor CPSLDebugService {
         callbackBox: CPSLWebBrowserCallbackBox,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
-        locationCallbackBox: CPSLLocationCallbackBox
+        locationCallbackBox: CPSLLocationCallbackBox,
+        visionCallbackBox: CPSLVisionCallbackBox
     ) async -> CPSLSessionInitResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .default).async {
@@ -1184,7 +1392,8 @@ actor CPSLDebugService {
                     callbackBox: callbackBox,
                     fileActivityCallbackBox: fileActivityCallbackBox,
                     calendarActivityCallbackBox: calendarActivityCallbackBox,
-                    locationCallbackBox: locationCallbackBox
+                    locationCallbackBox: locationCallbackBox,
+                    visionCallbackBox: visionCallbackBox
                 ))
             }
         }
@@ -1195,7 +1404,8 @@ actor CPSLDebugService {
         callbackBox: CPSLWebBrowserCallbackBox,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
-        locationCallbackBox: CPSLLocationCallbackBox
+        locationCallbackBox: CPSLLocationCallbackBox,
+        visionCallbackBox: CPSLVisionCallbackBox
     ) -> CPSLSessionInitResult {
         configureCPSLLibraryDirectory()
         let userData = Unmanaged.passRetained(callbackBox).toOpaque()
@@ -1224,9 +1434,37 @@ actor CPSLDebugService {
             string_free: cpslLocationStringFree,
             user_data_free: cpslLocationUserDataFree
         )
+        let visionUserData = Unmanaged.passRetained(visionCallbackBox).toOpaque()
+        var visionCallbacks = CPSLVisionCallbacks(
+            user_data: visionUserData,
+            handle: cpslVisionHandle,
+            user_data_free: cpslVisionUserDataFree
+        )
         let pointer: OpaquePointer?
         let fallback: String
-        if let sessionNewWithHostCallbacksV2 = cpslSessionNewWithHostCallbacksV2Function() {
+        if let sessionNewWithHostCallbacksV3 = cpslSessionNewWithHostCallbacksV3Function(),
+           cpslVisionRespondFunction() != nil {
+            pointer = configJSON.withCString { configPointer in
+                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                    withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+                        withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                            withUnsafePointer(to: &visionCallbacks) { visionCallbacksPointer in
+                                sessionNewWithHostCallbacksV3(
+                                    configPointer,
+                                    &callbacks,
+                                    UnsafeRawPointer(fileActivityCallbacksPointer),
+                                    UnsafeRawPointer(calendarActivityCallbacksPointer),
+                                    UnsafeRawPointer(locationCallbacksPointer),
+                                    UnsafeRawPointer(visionCallbacksPointer)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            fallback = "cpsl_session_new_with_host_callbacks_v3 returned NULL"
+        } else if let sessionNewWithHostCallbacksV2 = cpslSessionNewWithHostCallbacksV2Function() {
+            cpslVisionUserDataFree(visionUserData)
             pointer = configJSON.withCString { configPointer in
                 withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
                     withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
@@ -1244,6 +1482,7 @@ actor CPSLDebugService {
             }
             fallback = "cpsl_session_new_with_host_callbacks_v2 returned NULL"
         } else if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
+            cpslVisionUserDataFree(visionUserData)
             cpslCalendarActivityUserDataFree(calendarActivityUserData)
             pointer = configJSON.withCString { configPointer in
                 withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
@@ -1259,6 +1498,7 @@ actor CPSLDebugService {
             }
             fallback = "cpsl_session_new_with_host_callbacks returned NULL"
         } else if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
+            cpslVisionUserDataFree(visionUserData)
             cpslCalendarActivityUserDataFree(calendarActivityUserData)
             cpslLocationUserDataFree(locationUserData)
             pointer = configJSON.withCString { configPointer in
@@ -1272,6 +1512,7 @@ actor CPSLDebugService {
             }
             fallback = "cpsl_session_new_with_callbacks returned NULL"
         } else {
+            cpslVisionUserDataFree(visionUserData)
             cpslFileActivityUserDataFree(fileActivityUserData)
             cpslCalendarActivityUserDataFree(calendarActivityUserData)
             cpslLocationUserDataFree(locationUserData)
