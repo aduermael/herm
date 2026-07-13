@@ -564,7 +564,7 @@ actor CPSLDebugService {
     private var nextSessionID = 0
     private var isInitializingSession = false
     private var evaluatingSessionID: Int?
-    private var timedOutEvaluations: [CPSLEvalRaceBox] = []
+    private var detachedEvaluations: [CPSLEvalRaceBox] = []
     private var sandboxURLs: CPSLSandboxURLs?
     private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
 
@@ -1084,7 +1084,7 @@ actor CPSLDebugService {
 
         let evaluation = await Self.performBlockingEvalWithTimeout(request) {
             Task {
-                await self.pruneFinishedTimedOutEvaluations()
+                await self.pruneFinishedDetachedEvaluations()
             }
         }
         switch evaluation.result {
@@ -1097,9 +1097,7 @@ actor CPSLDebugService {
             }
             return result
         case .timedOut:
-            if evaluation.race.isTimedOutEvaluationRunning {
-                timedOutEvaluations.append(evaluation.race)
-            }
+            retainDetachedEvaluationIfRunning(evaluation.race)
             if session?.id == activeSession.id {
                 // cpsl_eval may still be blocked. The worker owns this session
                 // until the native call returns and it is safe to release.
@@ -1111,7 +1109,9 @@ actor CPSLDebugService {
             }
             return Self.timeoutFailure()
         case .cancelled:
-            if !evaluation.race.didStartEvaluation {
+            if evaluation.race.didStartEvaluation {
+                retainDetachedEvaluationIfRunning(evaluation.race)
+            } else {
                 cpsl_session_free(activeSession.pointer)
             }
             if session?.id == activeSession.id {
@@ -1313,15 +1313,21 @@ actor CPSLDebugService {
     }
 
     private var isSessionBusy: Bool {
-        pruneFinishedTimedOutEvaluations()
+        pruneFinishedDetachedEvaluations()
         return isInitializingSession ||
             iCloudMountManager.isStaging ||
             evaluatingSessionID != nil ||
-            !timedOutEvaluations.isEmpty
+            !detachedEvaluations.isEmpty
     }
 
-    private func pruneFinishedTimedOutEvaluations() {
-        timedOutEvaluations.removeAll { !$0.isTimedOutEvaluationRunning }
+    private func retainDetachedEvaluationIfRunning(_ race: CPSLEvalRaceBox) {
+        if race.isDetachedEvaluationRunning {
+            detachedEvaluations.append(race)
+        }
+    }
+
+    private func pruneFinishedDetachedEvaluations() {
+        detachedEvaluations.removeAll { !$0.isDetachedEvaluationRunning }
     }
 
     private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) async -> String? {
@@ -1336,9 +1342,7 @@ actor CPSLDebugService {
             isInitializingSession = false
         }
         await webBrowser.setSandboxRoot(sandboxURLs.root)
-        guard let configJSON = makeSessionConfigJSON(
-            rootPath: sandboxURLs.root.resolvingSymlinksInPath().path
-        ) else {
+        guard let configJSON = makeSessionConfigJSON(sandboxURLs: sandboxURLs) else {
             return "Could not encode session config JSON"
         }
 
@@ -1389,7 +1393,10 @@ actor CPSLDebugService {
         let appURL = supportURL.appendingPathComponent(bundleID, isDirectory: true)
         let sandboxURL = appURL.appendingPathComponent("CPSLDebugSandbox", isDirectory: true)
         let rootURL = sandboxURL.appendingPathComponent("root", isDirectory: true)
-        let sandboxURLs = CPSLSandboxURLs(root: rootURL)
+        let sandboxURLs = CPSLSandboxURLs(
+            root: rootURL,
+            iCloudNamespace: sandboxURL.appendingPathComponent("icloud", isDirectory: true)
+        )
 
         try ensureSandboxScaffold(sandboxURLs)
         return sandboxURLs
@@ -1415,6 +1422,10 @@ actor CPSLDebugService {
             let url = name.isEmpty ? sandboxURLs.root : sandboxURLs.root.appendingPathComponent(name, isDirectory: true)
             try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
         }
+        try fileManager.createDirectory(
+            at: sandboxURLs.iCloudNamespace,
+            withIntermediateDirectories: true
+        )
 
         try writeFileIfMissing(
             sandboxURLs.root.appendingPathComponent("etc/hosts", isDirectory: false),
@@ -1433,7 +1444,8 @@ actor CPSLDebugService {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func makeSessionConfigJSON(rootPath: String) -> String? {
+    private func makeSessionConfigJSON(sandboxURLs: CPSLSandboxURLs) -> String? {
+        let rootPath = sandboxURLs.root.resolvingSymlinksInPath().path
         var mounts: [[String: Any]] = [
             [
                 "host": rootPath,
@@ -1444,6 +1456,11 @@ actor CPSLDebugService {
                 "host": URL(fileURLWithPath: rootPath)
                     .appendingPathComponent("attachments", isDirectory: true).path,
                 "virtual": CPSLVirtualPath.attachments,
+                "mode": "ro"
+            ],
+            [
+                "host": sandboxURLs.iCloudNamespace.resolvingSymlinksInPath().path,
+                "virtual": CPSLVirtualPath.iCloudRoot,
                 "mode": "ro"
             ]
         ]
@@ -1686,7 +1703,7 @@ actor CPSLDebugService {
 
     private nonisolated static func performBlockingEvalWithTimeout(
         _ request: CPSLBlockingEvalRequest,
-        onTimedOutEvaluationFinished: @escaping @Sendable () -> Void
+        onDetachedEvaluationFinished: @escaping @Sendable () -> Void
     ) async -> (result: CPSLEvalRaceResult, race: CPSLEvalRaceBox) {
         let race = CPSLEvalRaceBox()
         let result = await withTaskCancellationHandler {
@@ -1701,8 +1718,8 @@ actor CPSLDebugService {
                     let result = performBlockingEval(request)
                     if !race.resume(.completed(result)) {
                         cpsl_session_free(request.session)
-                        race.finishTimedOutEvaluation()
-                        onTimedOutEvaluationFinished()
+                        race.finishDetachedEvaluation()
+                        onDetachedEvaluationFinished()
                     }
                 }
 

@@ -40,7 +40,7 @@ nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
     private var pendingResult: CPSLEvalRaceResult?
     private var continuation: CheckedContinuation<CPSLEvalRaceResult, Never>?
     private var evaluationStarted = false
-    private var timedOutEvaluationRunning = false
+    private var detachedEvaluationRunning = false
 
     func install(_ continuation: CheckedContinuation<CPSLEvalRaceResult, Never>) {
         lock.lock()
@@ -64,8 +64,13 @@ nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
             lock.unlock()
             return false
         }
-        if case .timedOut = result {
-            timedOutEvaluationRunning = true
+        if evaluationStarted {
+            switch result {
+            case .timedOut, .cancelled:
+                detachedEvaluationRunning = true
+            case .completed:
+                break
+            }
         }
         if let continuation {
             didResume = true
@@ -88,9 +93,9 @@ nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
         return resume(result)
     }
 
-    var isTimedOutEvaluationRunning: Bool {
+    var isDetachedEvaluationRunning: Bool {
         lock.lock()
-        let isRunning = timedOutEvaluationRunning
+        let isRunning = detachedEvaluationRunning
         lock.unlock()
         return isRunning
     }
@@ -114,9 +119,9 @@ nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
         return didStart
     }
 
-    func finishTimedOutEvaluation() {
+    func finishDetachedEvaluation() {
         lock.lock()
-        timedOutEvaluationRunning = false
+        detachedEvaluationRunning = false
         lock.unlock()
     }
 }

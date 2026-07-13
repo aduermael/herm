@@ -214,8 +214,8 @@ require_match 'cpsl_session_new_with_host_callbacks_v3' app/apple/herm/Services/
 require_match 'cpsl_vision_respond' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'evaluateLuau' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'currentVirtualDirectory' app/apple/herm/Services/CPSLDebugService.swift
-require_match 'timedOutEvaluations: \[CPSLEvalRaceBox\]' app/apple/herm/Services/CPSLDebugService.swift
-require_match 'race\.finishTimedOutEvaluation\(\)' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'detachedEvaluations: \[CPSLEvalRaceBox\]' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'race\.finishDetachedEvaluation\(\)' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'cpsl_session_free\(request\.session\)' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'guard iCloudMountManager\.beginStaging\(\)' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'iCloudMountManager\.finishStaging\(\)' app/apple/herm/Services/CPSLDebugService.swift
@@ -323,6 +323,7 @@ require_match '"tmp"' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"etc"' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"initial_cwd": CPSLVirtualPath\.initialDirectory' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"virtual": "/"' app/apple/herm/Services/CPSLDebugService.swift
+require_match '"virtual": CPSLVirtualPath\.iCloudRoot' app/apple/herm/Services/CPSLDebugService.swift
 reject_match 'workdir|/workdir' \
   app/apple/herm/Services/CPSLDebugService.swift \
   app/apple/herm/Models/CPSLChatModel.swift \

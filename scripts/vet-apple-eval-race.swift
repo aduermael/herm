@@ -24,8 +24,35 @@ private struct CPSLEvalRaceChecks {
             !cancelledBeforeStart.didStartEvaluation,
             "cancelled evaluation was marked as started"
         )
+        try require(
+            !cancelledBeforeStart.isDetachedEvaluationRunning,
+            "pre-start cancellation left detached work"
+        )
+
+        let cancelledAfterStart = CPSLEvalRaceBox()
+        try require(cancelledAfterStart.startEvaluationIfPending(), "evaluation did not start")
+        let cancelledResult = await withCheckedContinuation { continuation in
+            cancelledAfterStart.resume(.cancelled, continuation: continuation)
+        }
+        guard case .cancelled = cancelledResult else {
+            throw CheckFailure("started evaluation was not cancelled")
+        }
+        try require(
+            cancelledAfterStart.isDetachedEvaluationRunning,
+            "cancelled native evaluation was not retained as running"
+        )
+        try require(
+            !cancelledAfterStart.resume(.completed(successResult)),
+            "late cancelled completion resumed the continuation twice"
+        )
+        cancelledAfterStart.finishDetachedEvaluation()
+        try require(
+            !cancelledAfterStart.isDetachedEvaluationRunning,
+            "finished cancelled evaluation remained busy"
+        )
 
         let timedOutRace = CPSLEvalRaceBox()
+        try require(timedOutRace.startEvaluationIfPending(), "timed-out evaluation did not start")
         var timedOutContinuation: CheckedContinuation<CPSLEvalRaceResult, Never>?
         let timeoutResult = await withCheckedContinuation { continuation in
             timedOutContinuation = continuation
@@ -35,7 +62,7 @@ private struct CPSLEvalRaceChecks {
             throw CheckFailure("timeout did not win the evaluation race")
         }
         try require(
-            timedOutRace.isTimedOutEvaluationRunning,
+            timedOutRace.isDetachedEvaluationRunning,
             "timed-out evaluation was not retained as running"
         )
 
@@ -48,13 +75,13 @@ private struct CPSLEvalRaceChecks {
         )
         try require(!lateCompletionWon, "late completion resumed the continuation twice")
         try require(
-            timedOutRace.isTimedOutEvaluationRunning,
+            timedOutRace.isDetachedEvaluationRunning,
             "late completion cleared the busy state before native cleanup"
         )
 
-        timedOutRace.finishTimedOutEvaluation()
+        timedOutRace.finishDetachedEvaluation()
         try require(
-            !timedOutRace.isTimedOutEvaluationRunning,
+            !timedOutRace.isDetachedEvaluationRunning,
             "finished timed-out evaluation remained busy"
         )
 
@@ -66,7 +93,7 @@ private struct CPSLEvalRaceChecks {
             throw CheckFailure("normal completion did not win the evaluation race")
         }
         try require(
-            !completedRace.isTimedOutEvaluationRunning,
+            !completedRace.isDetachedEvaluationRunning,
             "normal completion entered the timed-out busy state"
         )
     }

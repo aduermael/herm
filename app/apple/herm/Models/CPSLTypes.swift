@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 
 struct CPSLSandboxURLs {
     let root: URL
+    let iCloudNamespace: URL
 }
 
 nonisolated enum CPSLVirtualPath {
