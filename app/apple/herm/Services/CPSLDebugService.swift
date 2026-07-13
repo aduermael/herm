@@ -643,7 +643,12 @@ actor CPSLDebugService {
         }
         let attachmentsRoot = sandboxURLs.root
             .appendingPathComponent("attachments", isDirectory: true)
-        let url = hostURL(forVirtualPath: attachment.path, sandboxURLs: sandboxURLs)
+        guard let url = try? hostURL(
+            forVirtualPath: attachment.path,
+            sandboxURLs: sandboxURLs
+        ) else {
+            return
+        }
         guard url != attachmentsRoot,
               Self.isHostURL(url, inside: attachmentsRoot)
         else {
@@ -723,7 +728,10 @@ actor CPSLDebugService {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             let normalizedPath = Self.normalizedVirtualPath(virtualPath)
-            let hostURL = hostURL(forVirtualPath: normalizedPath, sandboxURLs: sandboxURLs)
+            let hostURL = try hostURL(
+                forVirtualPath: normalizedPath,
+                sandboxURLs: sandboxURLs
+            )
             guard FileManager.default.fileExists(atPath: hostURL.path) else {
                 return CPSLFileEntryLookup(entry: nil, error: "File does not exist.")
             }
