@@ -66,7 +66,9 @@ Before compiling CPSL, Herm applies the tracked integration patches listed in
 `scripts/cpsl-patches/series` to the selected checkout, in manifest order.
 These patches keep the pinned CPSL dependency aligned with Herm's app/runtime
 integration. Unlisted local files are ignored. When a listed patch is already
-present in the submodule commit, the patch helper skips it.
+present in the submodule commit, the patch helper skips it. The helper also
+rejects custom checkouts that lack the web-view PDF network policy required to
+keep personal mounts isolated.
 
 The default host-native build is the minimal CPSL FFI profile. It compiles
 `fs`, `json`, `csv`, `http`, and `grep`.

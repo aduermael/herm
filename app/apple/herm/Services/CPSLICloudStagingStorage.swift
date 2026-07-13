@@ -496,12 +496,6 @@ nonisolated enum CPSLICloudStagingStorage {
                 switch item.kind {
                 case .directory:
                     try fileManager.createDirectory(at: destination, withIntermediateDirectories: false)
-                case .symbolicLink:
-                    let target = try fileManager.destinationOfSymbolicLink(atPath: item.sourceURL.path)
-                    try fileManager.createSymbolicLink(
-                        atPath: destination.path,
-                        withDestinationPath: target
-                    )
                 case .file:
                     let nextCompletedBytes = try copyFile(
                         FileCopyRequest(
@@ -558,7 +552,6 @@ nonisolated enum CPSLICloudStagingStorage {
     private enum ItemKind: Equatable {
         case directory
         case file
-        case symbolicLink
     }
 
     private struct ManifestItem {
@@ -629,12 +622,11 @@ nonisolated enum CPSLICloudStagingStorage {
             }
 
             let values = try sourceURL.resourceValues(forKeys: keys)
-            let isSymbolicLink = values.isSymbolicLink == true
+            guard values.isSymbolicLink != true else {
+                throw CPSLICloudStagingError.unsupportedItem
+            }
             let kind: ItemKind
-            if isSymbolicLink {
-                kind = .symbolicLink
-                enumerator.skipDescendants()
-            } else if values.isDirectory == true {
+            if values.isDirectory == true {
                 kind = .directory
             } else if values.isRegularFile == true {
                 kind = .file
@@ -657,13 +649,11 @@ nonisolated enum CPSLICloudStagingStorage {
                     sourceURL: sourceURL,
                     relativeComponents: Array(components.dropFirst(rootComponents.count)),
                     kind: kind,
-                    metadata: kind == .symbolicLink
-                        ? [:]
-                        : try copyableMetadata(
-                            at: sourceURL,
-                            isDirectory: kind == .directory,
-                            fileManager: fileManager
-                        )
+                    metadata: try copyableMetadata(
+                        at: sourceURL,
+                        isDirectory: kind == .directory,
+                        fileManager: fileManager
+                    )
                 )
             )
         }

@@ -19,6 +19,7 @@ private struct CPSLICloudStagingChecks {
 
         try checkStaleRootCleanup(in: testRoot)
         try checkBoundedCopy(in: testRoot)
+        try checkSymbolicLinkRejection(in: testRoot)
         try checkSpecialFileRejection(in: testRoot)
         try await checkCancellation(in: testRoot)
     }
@@ -223,6 +224,31 @@ private struct CPSLICloudStagingChecks {
             }
         }.value
         try require(wasCancelled, "cancelled staging left output or returned the wrong error")
+    }
+
+    private static func checkSymbolicLinkRejection(in testRoot: URL) throws {
+        let source = testRoot.appendingPathComponent("symlink-source", isDirectory: true)
+        let destination = testRoot.appendingPathComponent("symlink-destination", isDirectory: true)
+        let outside = testRoot.appendingPathComponent("outside.txt")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data("outside".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            atPath: source.appendingPathComponent("link.txt").path,
+            withDestinationPath: outside.path
+        )
+
+        try expect(.unsupportedItem, destination: destination) { destination in
+            _ = try CPSLICloudStagingStorage.stageDirectory(
+                CPSLICloudStagingRequest(
+                    sourceRoot: source,
+                    destinationRoot: destination,
+                    permit: CPSLICloudStagingImportPermit(
+                        remainingUsage: CPSLICloudStagingUsage(bytes: 1, items: 2),
+                        availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 1
+                    )
+                )
+            )
+        }
     }
 
     private static func checkSpecialFileRejection(in testRoot: URL) throws {

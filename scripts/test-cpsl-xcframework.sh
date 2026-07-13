@@ -111,7 +111,7 @@ trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 patch_fixture="$tmp_dir/patch-fixture"
 patch_scripts="$patch_fixture/scripts"
 patch_checkout="$patch_fixture/cpsl"
-mkdir -p "$patch_scripts/cpsl-patches" "$patch_checkout"
+mkdir -p "$patch_scripts/cpsl-patches" "$patch_checkout/ffi/src"
 cp "$script_dir/apply-cpsl-patches.sh" "$patch_scripts/apply-cpsl-patches.sh"
 printf '%s\n' '# ordered patches' '' '0001-test.patch' >"$patch_scripts/cpsl-patches/series"
 cat >"$patch_scripts/cpsl-patches/0001-test.patch" <<'EOF'
@@ -124,6 +124,8 @@ diff --git a/value.txt b/value.txt
 EOF
 printf '%s\n' 'this is not a patch' >"$patch_scripts/cpsl-patches/0002-local-copy 2.patch"
 printf '%s\n' old >"$patch_checkout/value.txt"
+printf '%s\n' 'allow_webview_pdf_rendering(webview_pdf_rendering_allowed(config))' \
+	>"$patch_checkout/ffi/src/lib.rs"
 git -C "$patch_checkout" init --quiet
 git -C "$patch_checkout" add value.txt
 apply_output=$(sh "$patch_scripts/apply-cpsl-patches.sh" "$patch_checkout")
@@ -140,6 +142,11 @@ esac
 printf '%s\n' missing.patch >"$patch_scripts/cpsl-patches/series"
 if sh "$patch_scripts/apply-cpsl-patches.sh" "$patch_checkout" >/dev/null 2>&1; then
 	fail "missing listed patch should be rejected"
+fi
+printf '%s\n' '# no patches' >"$patch_scripts/cpsl-patches/series"
+printf '%s\n' 'missing required policy' >"$patch_checkout/ffi/src/lib.rs"
+if sh "$patch_scripts/apply-cpsl-patches.sh" "$patch_checkout" >/dev/null 2>&1; then
+	fail "CPSL checkout without the PDF network policy should be rejected"
 fi
 
 freshness_root="$tmp_dir/freshness-root"

@@ -3,6 +3,28 @@ import Foundation
 @main
 private struct CPSLEvalRaceChecks {
     static func main() async throws {
+        let startState = CPSLEvalRaceBox()
+        try require(!startState.didStartEvaluation, "new evaluation was marked as started")
+        try require(startState.startEvaluationIfPending(), "evaluation did not start")
+        try require(startState.didStartEvaluation, "evaluation start was not recorded")
+        try require(!startState.startEvaluationIfPending(), "evaluation started twice")
+
+        let cancelledBeforeStart = CPSLEvalRaceBox()
+        let cancellationResult = await withCheckedContinuation { continuation in
+            cancelledBeforeStart.resume(.cancelled, continuation: continuation)
+        }
+        guard case .cancelled = cancellationResult else {
+            throw CheckFailure("pre-start cancellation did not win the race")
+        }
+        try require(
+            !cancelledBeforeStart.startEvaluationIfPending(),
+            "evaluation started after cancellation"
+        )
+        try require(
+            !cancelledBeforeStart.didStartEvaluation,
+            "cancelled evaluation was marked as started"
+        )
+
         let timedOutRace = CPSLEvalRaceBox()
         var timedOutContinuation: CheckedContinuation<CPSLEvalRaceResult, Never>?
         let timeoutResult = await withCheckedContinuation { continuation in

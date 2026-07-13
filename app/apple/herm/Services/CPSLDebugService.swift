@@ -1111,9 +1111,11 @@ actor CPSLDebugService {
             }
             return Self.timeoutFailure()
         case .cancelled:
+            if !evaluation.race.didStartEvaluation {
+                cpsl_session_free(activeSession.pointer)
+            }
             if session?.id == activeSession.id {
-                // cpsl_eval cannot be interrupted safely; abandon this session and let its
-                // background call finish without blocking the cancelled agent task.
+                // A started worker releases the session after cpsl_eval returns.
                 session = nil
                 currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
@@ -1690,7 +1692,7 @@ actor CPSLDebugService {
         let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation)
-                guard !Task.isCancelled else {
+                guard !Task.isCancelled, race.startEvaluationIfPending() else {
                     race.resume(.cancelled)
                     return
                 }

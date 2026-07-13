@@ -45,3 +45,10 @@ while IFS= read -r name || [ -n "$name" ]; do
 		die "CPSL patch does not apply cleanly: $name"
 	fi
 done <"$series_file"
+
+policy_source="$cpsl_root/ffi/src/lib.rs"
+policy_marker='allow_webview_pdf_rendering(webview_pdf_rendering_allowed(config))'
+[ -f "$policy_source" ] || die "CPSL FFI source is missing: $policy_source"
+if ! grep -Fq "$policy_marker" "$policy_source"; then
+	die "CPSL checkout lacks the required web-view PDF network policy; use external/cpsl or a compatible checkout"
+fi
