@@ -273,7 +273,6 @@
 		};
 		85A100072FEA000000000007 /* Build CPSL XCFramework */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);

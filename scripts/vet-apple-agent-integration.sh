@@ -204,7 +204,7 @@ require_match '"skills"' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"virtual": mount.virtualPath' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"mode": "ro"' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'Copy Bundled Skills' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'alwaysOutOfDate = 1;' app/apple/herm.xcodeproj/project.pbxproj
+reject_match 'alwaysOutOfDate = 1;' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Skills,' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'SRCROOT.*/herm/Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodeproj/project.pbxproj

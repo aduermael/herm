@@ -2071,7 +2071,7 @@ private final class CPSLWebBrowserKeyboardMonitor {
                 object: nil,
                 queue: .main
             ) { [weak self] notification in
-                Task { @MainActor in
+                MainActor.assumeIsolated {
                     self?.record(notification)
                 }
             }

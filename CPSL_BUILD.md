@@ -239,8 +239,9 @@ The helper target is built as a dependency of `herm`, so it receives the same
 `PLATFORM_NAME`/`SDK_NAME`, `ARCHS`, and `CONFIGURATION` values as the app
 build and finishes before `ProcessXCFramework` runs. Its declared output is a
 DerivedData stamp file so Xcode does not create a dependency cycle with the
-linked XCFramework path. It is marked always-out-of-date so Xcode invokes the
-script each build, but the ensure script itself is cheap when nothing changed:
+linked XCFramework path. The phase has no declared inputs, so dependency
+analysis invokes it on each build without forcing the phase out of date. The
+ensure script itself is cheap when nothing changed:
 it reuses
 `.herm-cpsl/artifacts/apple/Debug/cpsl.xcframework` or
 `.herm-cpsl/artifacts/apple/Release/cpsl.xcframework` when it contains the
