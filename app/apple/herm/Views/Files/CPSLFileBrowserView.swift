@@ -174,7 +174,7 @@ struct CPSLFileBrowserView: View {
     @State private var isICloudImporterPending = false
     @State private var isICloudAccessModePickerPresented = false
     @State private var isICloudAccessModePickerPending = false
-    @State private var selectedICloudAccessMode: CPSLICloudMountAccessMode?
+    @State private var selectedICloudDirectory: URL?
 
     var body: some View {
         browserPanel
@@ -186,15 +186,13 @@ struct CPSLFileBrowserView: View {
                 switch result {
                 case .success(let urls):
                     if let url = urls.first {
-                        model.importICloudDirectory(
-                            url,
-                            accessMode: selectedICloudAccessMode ?? .readOnly
-                        )
+                        selectedICloudDirectory = url
+                        isICloudAccessModePickerPending = true
+                        presentICloudAccessModePickerIfReady()
                     }
                 case .failure(let error):
                     model.reportICloudImportError(error)
                 }
-                selectedICloudAccessMode = nil
             }
             .confirmationDialog(
                 "iCloud Folder Access",
@@ -207,7 +205,9 @@ struct CPSLFileBrowserView: View {
                 Button("Read & Write") {
                     chooseICloudAccessMode(.readWrite)
                 }
-                Button("Cancel", role: .cancel) {}
+                Button("Cancel", role: .cancel) {
+                    selectedICloudDirectory = nil
+                }
             } message: {
                 Text(
                     "Read Only prevents Herm from changing the folder. Read & Write lets Herm add, edit, and delete files in the selected folder; iCloud Drive syncs those changes."
@@ -233,9 +233,9 @@ struct CPSLFileBrowserView: View {
     }
 
     private func connectICloud() {
-        isICloudAccessModePickerPending = true
+        isICloudImporterPending = true
         model.dictation.finish()
-        presentICloudAccessModePickerIfReady()
+        presentICloudImporterIfReady()
     }
 
     private func presentICloudAccessModePickerIfReady() {
@@ -247,9 +247,14 @@ struct CPSLFileBrowserView: View {
     }
 
     private func chooseICloudAccessMode(_ accessMode: CPSLICloudMountAccessMode) {
-        selectedICloudAccessMode = accessMode
-        isICloudImporterPending = true
-        presentICloudImporterIfReady()
+        guard let selectedICloudDirectory else {
+            return
+        }
+        self.selectedICloudDirectory = nil
+        model.importICloudDirectory(
+            selectedICloudDirectory,
+            accessMode: accessMode
+        )
     }
 
     private func presentICloudImporterIfReady() {
