@@ -210,7 +210,7 @@ struct CPSLFileBrowserView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text(
-                    "Herm keeps a persistent local copy. Read & Write changes that copy only; changes do not sync back to iCloud Drive."
+                    "Read Only prevents Herm from changing the folder. Read & Write lets Herm add, edit, and delete files in the selected folder; iCloud Drive syncs those changes."
                 )
             }
             .onChange(of: model.dictation.isActive) { _, isActive in

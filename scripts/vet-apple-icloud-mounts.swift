@@ -7,91 +7,181 @@ nonisolated enum CPSLVirtualPath {
 @main
 private struct CPSLICloudMountChecks {
     static func main() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        let testRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
             "herm-mount-store-check-\(UUID().uuidString)",
             isDirectory: true
         )
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: testRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: testRoot) }
 
+        try checkBookmarkRegistry(in: testRoot)
+        try checkLegacyMigration(in: testRoot)
+        try checkMountResolver(in: testRoot)
+        try checkInvalidRegistries(in: testRoot)
+    }
+
+    private static func checkBookmarkRegistry(in testRoot: URL) throws {
+        let storageRoot = testRoot.appendingPathComponent("registry", isDirectory: true)
         let readOnly = CPSLICloudMountRecord(
             label: "Reference",
             slug: "reference",
-            accessMode: .readOnly
+            accessMode: .readOnly,
+            bookmarkData: Data("readonly-bookmark".utf8)
         )
         let readWrite = CPSLICloudMountRecord(
             label: "Drafts",
             slug: "drafts",
-            accessMode: .readWrite
+            accessMode: .readWrite,
+            bookmarkData: Data("readwrite-bookmark".utf8)
         )
 
-        try CPSLICloudMountStore.save([readOnly, readWrite], to: root)
+        try CPSLICloudMountStore.save([readOnly, readWrite], to: storageRoot)
         try require(
-            try CPSLICloudMountStore.load(from: root) == [readWrite, readOnly],
-            "mount records or access modes did not survive reload"
+            try CPSLICloudMountStore.load(from: storageRoot) == [readWrite, readOnly],
+            "bookmark records or access modes did not survive reload"
         )
 
-        let readOnlyRoot = root.appendingPathComponent(readOnly.slug, isDirectory: true)
-        let readWriteRoot = root.appendingPathComponent(readWrite.slug, isDirectory: true)
-        try FileManager.default.createDirectory(at: readOnlyRoot, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: readWriteRoot, withIntermediateDirectories: true)
-        try Data("persisted".utf8).write(to: readWriteRoot.appendingPathComponent("note.txt"))
-
-        let restoredMounts = try CPSLICloudMountStore.restoreMounts(from: root)
-        try require(restoredMounts.map(\.accessMode) == [.readWrite, .readOnly],
-                    "mount restore lost access modes")
+        let registryData = try Data(
+            contentsOf: storageRoot.appendingPathComponent(CPSLICloudMountStore.registryFileName)
+        )
+        let registry = try JSONSerialization.jsonObject(with: registryData) as? [String: Any]
+        try require(registry?["version"] as? Int == 2, "bookmark registry was not version 2")
         try require(
-            try String(
-                contentsOf: restoredMounts[0].hostURL.appendingPathComponent("note.txt"),
-                encoding: .utf8
-            ) == "persisted",
-            "mount restore lost staged contents"
+            !(registryData.isEmpty),
+            "bookmark registry was unexpectedly empty"
         )
 
-        try FileManager.default.removeItem(at: readOnlyRoot)
+        try CPSLICloudMountStore.save([readWrite], to: storageRoot)
         try require(
-            try CPSLICloudMountStore.restoreMounts(from: root).map(\.slug) == [readWrite.slug],
-            "missing staged directory was not pruned on restore"
+            try CPSLICloudMountStore.load(from: storageRoot) == [readWrite],
+            "removed bookmark returned after reload"
+        )
+    }
+
+    private static func checkLegacyMigration(in testRoot: URL) throws {
+        let storageRoot = testRoot.appendingPathComponent("legacy", isDirectory: true)
+        let recoveryRoot = testRoot.appendingPathComponent("recovered", isDirectory: true)
+        let stagedRoot = storageRoot.appendingPathComponent("drafts", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: recoveryRoot.appendingPathComponent("drafts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try Data("old local copy".utf8).write(to: stagedRoot.appendingPathComponent("note.txt"))
+
+        let legacyJSON = """
+        {
+          "version": 1,
+          "mounts": [
+            {"label": "Drafts", "slug": "drafts", "accessMode": "rw"}
+          ]
+        }
+        """
+        let legacyData = Data(legacyJSON.utf8)
+        try legacyData.write(
+            to: storageRoot.appendingPathComponent(CPSLICloudMountStore.registryFileName),
+            options: .atomic
         )
 
-        try CPSLICloudMountStore.save([readWrite], to: root)
         try require(
-            try CPSLICloudMountStore.load(from: root) == [readWrite],
-            "removed mount returned after reload"
+            try CPSLICloudMountStore.migrateLegacyRegistryIfNeeded(
+                from: storageRoot,
+                recoveryRoot: recoveryRoot
+            ),
+            "version 1 registry was not migrated"
         )
+        try require(
+            try CPSLICloudMountStore.load(from: storageRoot).isEmpty,
+            "legacy records without bookmarks remained connected"
+        )
+        try require(
+            !FileManager.default.fileExists(atPath: stagedRoot.path),
+            "legacy app-private copy stayed hidden in mount storage"
+        )
+        let recoveredFile = recoveryRoot
+            .appendingPathComponent("drafts-2", isDirectory: true)
+            .appendingPathComponent("note.txt")
+        try require(
+            try String(contentsOf: recoveredFile, encoding: .utf8) == "old local copy",
+            "legacy app-private copy was not preserved in the recovery folder"
+        )
+        try require(
+            try Data(
+                contentsOf: storageRoot.appendingPathComponent(
+                    CPSLICloudMountStore.legacyRegistryFileName
+                )
+            ) == legacyData,
+            "legacy registry backup did not preserve the original data"
+        )
+        try require(
+            try !CPSLICloudMountStore.migrateLegacyRegistryIfNeeded(
+                from: storageRoot,
+                recoveryRoot: recoveryRoot
+            ),
+            "version 2 registry was migrated more than once"
+        )
+    }
 
+    private static func checkMountResolver(in testRoot: URL) throws {
         let mount = CPSLICloudMount(
-            label: readWrite.label,
-            slug: readWrite.slug,
-            hostURL: root.appendingPathComponent(readWrite.slug),
-            accessMode: readWrite.accessMode
+            label: "Drafts",
+            slug: "drafts",
+            hostURL: testRoot.appendingPathComponent("live-source", isDirectory: true),
+            accessMode: .readWrite
         )
         try require(
             CPSLICloudMountResolver.mount(containing: "/icloud/drafts", in: [mount]) == mount,
             "mount resolver missed exact path"
         )
         try require(
-            CPSLICloudMountResolver.mount(containing: "/icloud/drafts/file.txt", in: [mount]) == mount,
+            CPSLICloudMountResolver.mount(
+                containing: "/icloud/drafts/file.txt",
+                in: [mount]
+            ) == mount,
             "mount resolver missed descendant path"
         )
         try require(
             CPSLICloudMountResolver.mount(containing: "/icloud/drafts-old", in: [mount]) == nil,
             "mount resolver ignored a path-component boundary"
         )
+    }
+
+    private static func checkInvalidRegistries(in testRoot: URL) throws {
+        let storageRoot = testRoot.appendingPathComponent("invalid", isDirectory: true)
+        let record = CPSLICloudMountRecord(
+            label: "Drafts",
+            slug: "drafts",
+            accessMode: .readWrite,
+            bookmarkData: Data("bookmark".utf8)
+        )
 
         do {
-            try CPSLICloudMountStore.save([readWrite, readWrite], to: root)
+            try CPSLICloudMountStore.save([record, record], to: storageRoot)
             throw CheckFailure("duplicate mount records were accepted")
         } catch CPSLICloudMountStoreError.invalidRegistry {
             // Expected.
         }
 
+        let emptyBookmark = CPSLICloudMountRecord(
+            label: "Drafts",
+            slug: "drafts",
+            accessMode: .readWrite,
+            bookmarkData: Data()
+        )
+        do {
+            try CPSLICloudMountStore.save([emptyBookmark], to: storageRoot)
+            throw CheckFailure("empty bookmark was accepted")
+        } catch CPSLICloudMountStoreError.invalidRegistry {
+            // Expected.
+        }
+
+        try FileManager.default.createDirectory(at: storageRoot, withIntermediateDirectories: true)
         try Data("not-json".utf8).write(
-            to: root.appendingPathComponent(CPSLICloudMountStore.registryFileName),
+            to: storageRoot.appendingPathComponent(CPSLICloudMountStore.registryFileName),
             options: .atomic
         )
         do {
-            _ = try CPSLICloudMountStore.load(from: root)
+            _ = try CPSLICloudMountStore.load(from: storageRoot)
             throw CheckFailure("damaged mount registry was accepted")
         } catch CPSLICloudMountStoreError.invalidRegistry {
             // Expected.

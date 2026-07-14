@@ -8,6 +8,7 @@ struct CPSLSandboxURLs {
     let root: URL
     let iCloudNamespace: URL
     let iCloudMountStorage: URL
+    let legacyICloudRecovery: URL
 }
 
 nonisolated enum CPSLVirtualPath {
@@ -684,9 +685,20 @@ struct CPSLFilePreview: Identifiable, Equatable, Sendable {
     let kind: CPSLFilePreviewKind
 }
 
-struct CPSLFilePreviewLoadResult: Sendable {
+struct CPSLFilePreviewLoadResult: @unchecked Sendable {
     let preview: CPSLFilePreview?
     let error: String?
+    let lifetimeToken: AnyObject?
+
+    init(
+        preview: CPSLFilePreview?,
+        error: String?,
+        lifetimeToken: AnyObject? = nil
+    ) {
+        self.preview = preview
+        self.error = error
+        self.lifetimeToken = lifetimeToken
+    }
 }
 
 extension CPSLFileEntry {

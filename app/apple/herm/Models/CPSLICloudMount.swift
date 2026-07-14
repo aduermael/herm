@@ -1,6 +1,6 @@
 import Foundation
 
-/// Access inside CPSL. Both modes use a local staged copy; neither writes back to iCloud Drive.
+/// Access granted to CPSL for the original selected iCloud Drive folder.
 nonisolated enum CPSLICloudMountAccessMode: String, Codable, Equatable, Sendable {
     case readOnly = "ro"
     case readWrite = "rw"
@@ -47,6 +47,7 @@ nonisolated struct CPSLICloudMountRecord: Codable, Equatable, Sendable {
     let label: String
     let slug: String
     let accessMode: CPSLICloudMountAccessMode
+    let bookmarkData: Data
 }
 
 nonisolated enum CPSLICloudMountResolver {
@@ -65,30 +66,48 @@ nonisolated enum CPSLICloudMountResolver {
 
 nonisolated enum CPSLICloudMountStore {
     static let registryFileName = "mounts.json"
+    static let legacyRegistryFileName = "mounts-v1.json"
     static let didChangeNotification = Notification.Name("CPSLICloudMountStoreDidChange")
-    private static let registryVersion = 1
+
+    private static let registryVersion = 2
+    private static let legacyRegistryVersion = 1
 
     private struct Registry: Codable {
         let version: Int
         let mounts: [CPSLICloudMountRecord]
     }
 
-    static func load(from storageRoot: URL, fileManager: FileManager = .default) throws
-        -> [CPSLICloudMountRecord]
-    {
+    private struct RegistryHeader: Decodable {
+        let version: Int
+    }
+
+    private struct LegacyRegistry: Decodable {
+        let version: Int
+        let mounts: [LegacyMountRecord]
+    }
+
+    private struct LegacyMountRecord: Decodable {
+        let label: String
+        let slug: String
+        let accessMode: CPSLICloudMountAccessMode
+    }
+
+    static func load(
+        from storageRoot: URL,
+        fileManager: FileManager = .default
+    ) throws -> [CPSLICloudMountRecord] {
         let registryURL = storageRoot.appendingPathComponent(registryFileName)
         guard fileManager.fileExists(atPath: registryURL.path) else {
             return []
         }
 
         do {
-            let registry = try JSONDecoder().decode(
-                Registry.self,
-                from: Data(contentsOf: registryURL)
-            )
-            guard registry.version == registryVersion else {
+            let data = try Data(contentsOf: registryURL)
+            let header = try JSONDecoder().decode(RegistryHeader.self, from: data)
+            guard header.version == registryVersion else {
                 throw CPSLICloudMountStoreError.unsupportedRegistry
             }
+            let registry = try JSONDecoder().decode(Registry.self, from: data)
             return try validated(registry.mounts)
         } catch let error as CPSLICloudMountStoreError {
             throw error
@@ -118,51 +137,61 @@ nonisolated enum CPSLICloudMountStore {
         }
     }
 
-    static func restoreMounts(
+    /// Version 1 stored app-private copies without their iCloud source bookmark.
+    /// Preserve those copies in the visible CPSL home before starting a v2 registry.
+    static func migrateLegacyRegistryIfNeeded(
         from storageRoot: URL,
+        recoveryRoot: URL,
         fileManager: FileManager = .default
-    ) throws -> [CPSLICloudMount] {
-        let records = try load(from: storageRoot, fileManager: fileManager)
-        var mounts: [CPSLICloudMount] = []
-        for record in records {
-            let hostURL = storageRoot.appendingPathComponent(record.slug, isDirectory: true)
-            guard fileManager.fileExists(atPath: hostURL.path) else {
+    ) throws -> Bool {
+        let registryURL = storageRoot.appendingPathComponent(registryFileName)
+        guard fileManager.fileExists(atPath: registryURL.path) else {
+            return false
+        }
+
+        let data: Data
+        let header: RegistryHeader
+        do {
+            data = try Data(contentsOf: registryURL)
+            header = try JSONDecoder().decode(RegistryHeader.self, from: data)
+        } catch {
+            throw CPSLICloudMountStoreError.invalidRegistry
+        }
+        guard header.version == legacyRegistryVersion else {
+            return false
+        }
+
+        let legacy: LegacyRegistry
+        do {
+            legacy = try JSONDecoder().decode(LegacyRegistry.self, from: data)
+        } catch {
+            throw CPSLICloudMountStoreError.invalidRegistry
+        }
+        guard legacy.version == legacyRegistryVersion else {
+            throw CPSLICloudMountStoreError.invalidRegistry
+        }
+        try validateLegacy(legacy.mounts)
+
+        try fileManager.createDirectory(at: recoveryRoot, withIntermediateDirectories: true)
+        for record in legacy.mounts {
+            let source = storageRoot.appendingPathComponent(record.slug, isDirectory: true)
+            guard fileManager.fileExists(atPath: source.path) else {
                 continue
             }
-            let values = try hostURL.resourceValues(
-                forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
-            )
-            guard values.isDirectory == true,
-                  values.isSymbolicLink != true,
-                  isHostURL(hostURL, inside: storageRoot)
-            else {
-                throw CPSLICloudMountStoreError.unavailableMount
-            }
-            mounts.append(
-                CPSLICloudMount(
-                    label: record.label,
-                    slug: record.slug,
-                    hostURL: hostURL,
-                    accessMode: record.accessMode
-                )
-            )
-        }
-        mounts.sort { $0.virtualPath < $1.virtualPath }
-
-        if mounts.count != records.count {
-            try save(
-                mounts.map {
-                    CPSLICloudMountRecord(
-                        label: $0.label,
-                        slug: $0.slug,
-                        accessMode: $0.accessMode
-                    )
-                },
-                to: storageRoot,
+            let destination = uniqueRecoveryURL(
+                for: record.slug,
+                in: recoveryRoot,
                 fileManager: fileManager
             )
+            try fileManager.moveItem(at: source, to: destination)
         }
-        return mounts
+
+        let backupURL = storageRoot.appendingPathComponent(legacyRegistryFileName)
+        if !fileManager.fileExists(atPath: backupURL.path) {
+            try data.write(to: backupURL, options: .atomic)
+        }
+        try save([], to: storageRoot, fileManager: fileManager)
+        return true
     }
 
     private static func validated(
@@ -170,10 +199,9 @@ nonisolated enum CPSLICloudMountStore {
     ) throws -> [CPSLICloudMountRecord] {
         var slugs: Set<String> = []
         for record in records {
-            let trimmedLabel = record.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedLabel.isEmpty,
-                  trimmedLabel.count <= 120,
+            guard isValidLabel(record.label),
                   isValidSlug(record.slug),
+                  !record.bookmarkData.isEmpty,
                   slugs.insert(record.slug).inserted
             else {
                 throw CPSLICloudMountStoreError.invalidRegistry
@@ -182,9 +210,28 @@ nonisolated enum CPSLICloudMountStore {
         return records
     }
 
+    private static func validateLegacy(_ records: [LegacyMountRecord]) throws {
+        var slugs: Set<String> = []
+        for record in records {
+            guard isValidLabel(record.label),
+                  isValidSlug(record.slug),
+                  slugs.insert(record.slug).inserted
+            else {
+                throw CPSLICloudMountStoreError.invalidRegistry
+            }
+        }
+    }
+
+    private static func isValidLabel(_ label: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.count <= 120
+    }
+
     private static func isValidSlug(_ slug: String) -> Bool {
-        guard !slug.isEmpty, slug.count <= 64,
-              slug.first != "-", slug.last != "-"
+        guard !slug.isEmpty,
+              slug.count <= 64,
+              slug.first != "-",
+              slug.last != "-"
         else {
             return false
         }
@@ -196,17 +243,27 @@ nonisolated enum CPSLICloudMountStore {
         }
     }
 
-    private static func isHostURL(_ url: URL, inside rootURL: URL) -> Bool {
-        let rootPath = rootURL.resolvingSymlinksInPath().standardizedFileURL.path
-        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
-        return path == rootPath || path.hasPrefix("\(rootPath)/")
+    private static func uniqueRecoveryURL(
+        for slug: String,
+        in recoveryRoot: URL,
+        fileManager: FileManager
+    ) -> URL {
+        var candidate = recoveryRoot.appendingPathComponent(slug, isDirectory: true)
+        var suffix = 2
+        while fileManager.fileExists(atPath: candidate.path) {
+            candidate = recoveryRoot.appendingPathComponent(
+                "\(slug)-\(suffix)",
+                isDirectory: true
+            )
+            suffix += 1
+        }
+        return candidate
     }
 }
 
 nonisolated enum CPSLICloudMountStoreError: LocalizedError, Equatable {
     case cannotSaveRegistry
     case invalidRegistry
-    case unavailableMount
     case unsupportedRegistry
 
     var errorDescription: String? {
@@ -215,8 +272,6 @@ nonisolated enum CPSLICloudMountStoreError: LocalizedError, Equatable {
             return "Herm could not save the connected iCloud folders."
         case .invalidRegistry:
             return "Herm's saved iCloud folder list is damaged."
-        case .unavailableMount:
-            return "A saved iCloud folder copy is no longer available."
         case .unsupportedRegistry:
             return "Herm's saved iCloud folder list was created by an unsupported version."
         }

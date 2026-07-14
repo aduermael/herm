@@ -785,24 +785,11 @@ private struct CPSLICloudImportStatusView: View {
     private var detailText: String {
         switch progress.phase {
         case .cancelling:
-            return "Stopping import…"
+            return "Stopping…"
         case .preparing:
-            return "Preparing persistent copy…"
+            return "Preparing folder…"
         case .downloading:
             return "Downloading \(progress.completedItems) of \(progress.totalItems) iCloud files"
-        case .copying:
-            if progress.totalBytes > 0 {
-                let completed = ByteCountFormatter.string(
-                    fromByteCount: progress.completedBytes,
-                    countStyle: .file
-                )
-                let total = ByteCountFormatter.string(
-                    fromByteCount: progress.totalBytes,
-                    countStyle: .file
-                )
-                return "\(completed) of \(total)"
-            }
-            return "\(progress.completedItems) of \(progress.totalItems) items"
         }
     }
 }

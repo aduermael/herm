@@ -684,14 +684,14 @@ actor CPSLDebugService {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             let normalizedPath = Self.normalizedVirtualPath(virtualPath)
-            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
-            defer { mountUseLease?.release() }
             if normalizedPath == CPSLVirtualPath.iCloudRoot {
                 let entries = try ensureICloudMountManager().mounts.map {
                     CPSLFileEntry(name: $0.label, path: $0.virtualPath, isDirectory: true)
                 }
                 return CPSLDirectoryListing(entries: entries, error: nil)
             }
+            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
+            defer { mountUseLease?.release() }
             let hostURL = try hostURL(forVirtualPath: normalizedPath, sandboxURLs: sandboxURLs)
             guard isBrowserHostURLAllowed(hostURL, sandboxURLs: sandboxURLs) else {
                 throw CPSLFileAccessError.outsideFilesystem
@@ -766,7 +766,9 @@ actor CPSLDebugService {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             let mountUseLease = try iCloudUseLease(forVirtualPath: entry.path)
-            defer { mountUseLease?.release() }
+            if mountUseLease != nil {
+                try await ensureICloudMountManager().materializeFile(at: entry.path)
+            }
             let hostURL = try hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
             guard isBrowserHostURLAllowed(hostURL, sandboxURLs: sandboxURLs) else {
                 return CPSLFilePreviewLoadResult(
@@ -792,11 +794,12 @@ actor CPSLDebugService {
                 CPSLFileActivity(path: entry.path, operation: "read")
             )
             var metadata = Self.metadata(for: hostURL, values: values)
+            let result: CPSLFilePreviewLoadResult
             switch metadata.category {
             case .pdf:
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .pdf(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .pdf(hostURL))
             case .code(let language):
-                return try Self.textualPreview(
+                result = try Self.textualPreview(
                     hostURL: hostURL,
                     entry: entry,
                     metadata: metadata,
@@ -805,7 +808,7 @@ actor CPSLDebugService {
                     .code(text, language: language)
                 }
             case .text:
-                return try Self.textualPreview(
+                result = try Self.textualPreview(
                     hostURL: hostURL,
                     entry: entry,
                     metadata: metadata,
@@ -815,18 +818,30 @@ actor CPSLDebugService {
                 }
             case .image:
                 metadata.dimensions = Self.imageDimensions(for: hostURL)
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .image(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .image(hostURL))
             case .audio:
                 metadata.durationSeconds = await Self.mediaDuration(for: hostURL)
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .audio(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .audio(hostURL))
             case .video:
                 let mediaInfo = await Self.videoInfo(for: hostURL)
                 metadata.durationSeconds = mediaInfo.durationSeconds
                 metadata.dimensions = mediaInfo.dimensions
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .video(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .video(hostURL))
             case .archive, .data, .file:
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .file(reason: nil))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .file(reason: nil))
             }
+            let lifetimeToken: AnyObject?
+            switch metadata.category {
+            case .pdf, .image, .audio, .video:
+                lifetimeToken = mountUseLease?.releaseGateRetainingScopes()
+            case .archive, .code, .data, .file, .text:
+                lifetimeToken = nil
+            }
+            return CPSLFilePreviewLoadResult(
+                preview: result.preview,
+                error: result.error,
+                lifetimeToken: lifetimeToken
+            )
         } catch {
             return CPSLFilePreviewLoadResult(preview: nil, error: error.localizedDescription)
         }
@@ -996,11 +1011,11 @@ actor CPSLDebugService {
         iCloudMountManager?.mounts ?? []
     }
 
-    func prepareICloudStaging() throws -> [CPSLICloudMount] {
+    func prepareICloudMounts() throws -> [CPSLICloudMount] {
         try ensureICloudMountManager().mounts
     }
 
-    func stageICloudDirectory(
+    func connectICloudDirectory(
         from sourceURL: URL,
         accessMode: CPSLICloudMountAccessMode,
         progress: @escaping @Sendable (CPSLICloudImportProgress) -> Void
@@ -1010,7 +1025,7 @@ actor CPSLDebugService {
         }
         let iCloudMountManager = try ensureICloudMountManager()
         self.sandboxURLs = try ensureSandboxURLs()
-        let mount = try await iCloudMountManager.stageReservedDirectory(
+        let mount = try await iCloudMountManager.connectDirectory(
             from: sourceURL,
             accessMode: accessMode,
             progress: progress
@@ -1058,10 +1073,11 @@ actor CPSLDebugService {
         let mountUseLease: CPSLICloudMountUseLease
         do {
             let manager = try ensureICloudMountManager()
-            guard let lease = manager.beginUse() else {
-                return Self.ffiFailure("iCloud folders are still being updated")
+            guard let lease = try manager.beginSessionUse() else {
+                return Self.ffiFailure("An iCloud folder is already in use")
             }
             mountUseLease = lease
+            try await manager.materializeMountsForAccess()
         } catch {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
         }
@@ -1416,12 +1432,10 @@ actor CPSLDebugService {
         forVirtualPath virtualPath: String
     ) throws -> CPSLICloudMountUseLease? {
         let normalized = Self.normalizedVirtualPath(virtualPath)
-        guard normalized == CPSLVirtualPath.iCloudRoot ||
-                normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/")
-        else {
+        guard normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") else {
             return nil
         }
-        guard let lease = try ensureICloudMountManager().beginUse() else {
+        guard let lease = try ensureICloudMountManager().beginReadUse(for: normalized) else {
             throw CPSLICloudMountError.sessionBusy
         }
         return lease
@@ -1449,14 +1463,27 @@ actor CPSLDebugService {
             iCloudMountStorage: sandboxURL.appendingPathComponent(
                 "iCloudMounts",
                 isDirectory: true
+            ),
+            legacyICloudRecovery: rootURL.appendingPathComponent(
+                "home/herm/recovered-icloud-copies",
+                isDirectory: true
             )
         )
 
         try ensureSandboxScaffold(sandboxURLs)
         let iCloudMountManager = CPSLICloudMountManager.shared(
-            stagingRoot: sandboxURLs.iCloudMountStorage
+            storageRoot: sandboxURLs.iCloudMountStorage,
+            legacyRecoveryRoot: sandboxURLs.legacyICloudRecovery
         )
-        try iCloudMountManager.prepare()
+        do {
+            try iCloudMountManager.prepare()
+        } catch {
+            if iCloudMountManager.hasPreparedState {
+                self.iCloudMountManager = iCloudMountManager
+                self.sandboxURLs = sandboxURLs
+            }
+            throw error
+        }
         self.iCloudMountManager = iCloudMountManager
         self.sandboxURLs = sandboxURLs
         return sandboxURLs

@@ -25,7 +25,17 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var expandedFilePaths: Set<String> = []
     @Published private(set) var loadingFilePaths: Set<String> = []
     @Published private(set) var fileBrowserError: String?
-    @Published private(set) var filePreview: CPSLFilePreview?
+    @Published private(set) var filePreview: CPSLFilePreview? {
+        didSet {
+            if filePreview == nil {
+                activeFileNavigationRequestID = nil
+                activeFilePreviewRequestID = nil
+                filePreviewLoadTask?.cancel()
+                filePreviewLoadTask = nil
+                retireFilePreviewLifetimeToken()
+            }
+        }
+    }
     @Published private(set) var isWebBrowserOpen = false
     @Published private(set) var isFileActivityActive = false
     @Published private(set) var isCalendarOpen = false
@@ -58,6 +68,11 @@ final class CPSLChatModel: ObservableObject {
     var typewriterTask: Task<Void, Never>?
     private var iCloudImportTask: Task<Void, Never>?
     private var activeICloudImportID: UUID?
+    private var activeFileNavigationRequestID: UUID?
+    private var activeFilePreviewRequestID: UUID?
+    private var filePreviewLoadTask: Task<Void, Never>?
+    private var filePreviewLifetimeToken: AnyObject?
+    private var retiredFilePreviewLifetimeTokens: [UUID: AnyObject] = [:]
     private var iCloudMountChangeObserver: NSObjectProtocol?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
@@ -72,6 +87,7 @@ final class CPSLChatModel: ObservableObject {
     private var draftConversationID = UUID().uuidString
     private var attachmentImportCount = 0
     private let activityPulseDuration: TimeInterval = 1.6
+    private static let filePreviewRetirementNanoseconds: UInt64 = 300_000_000
 
     var isToolOverlayOpen: Bool {
         isFileBrowserOpen
@@ -128,18 +144,18 @@ final class CPSLChatModel: ObservableObject {
             return basePrompt
         }
         let mountLines = iCloudMounts.map { mount in
-            "- `\(mount.virtualPath)`: \(mount.accessMode.promptDescription) persistent iCloud Drive copy"
+            "- `\(mount.virtualPath)`: \(mount.accessMode.promptDescription) iCloud Drive folder"
         }.joined(separator: "\n")
         return basePrompt + """
 
 
         ## iCloud Mounts
 
-        The user selected iCloud Drive folders. Persistent staged copies are available in CPSL:
+        The user connected these original iCloud Drive folders to CPSL:
 
         \(mountLines)
 
-        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Do not modify read-only mounts. Read-write mounts may be modified when the task calls for it. These copies do not sync changes back to iCloud Drive. Network access is disabled while these mounts are active.
+        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Do not modify read-only mounts. Changes made in read-write mounts affect the original files; iCloud Drive uploads those changes asynchronously. Network access is disabled while these mounts are active.
         """
     }
 
@@ -295,6 +311,7 @@ final class CPSLChatModel: ObservableObject {
             }
             dictation.cancel()
             promptText = ""
+            dismissOverlaysForRun()
             runCommand(command)
             return
         }
@@ -307,16 +324,20 @@ final class CPSLChatModel: ObservableObject {
         dictation.cancel()
         promptText = ""
         composerAttachments = []
+        dismissOverlaysForRun()
+        isRunning = true
+        activeRunTask = Task {
+            await runAgent(prompt: prompt)
+        }
+    }
+
+    private func dismissOverlaysForRun() {
         isFileBrowserOpen = false
         isCalendarOpen = false
         isLocationOpen = false
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
-        isRunning = true
-        activeRunTask = Task {
-            await runAgent(prompt: prompt)
-        }
     }
 
     func stopAgent() {
@@ -484,20 +505,29 @@ final class CPSLChatModel: ObservableObject {
         isLocationOpen = false
         isFileBrowserOpen = true
         filePreview = nil
+        let navigationID = UUID()
+        activeFileNavigationRequestID = navigationID
 
-        Task {
+        Task { [weak self, service] in
             let lookup = await service.fileEntry(at: normalized)
+            guard let self,
+                  self.activeFileNavigationRequestID == navigationID,
+                  self.isFileBrowserOpen
+            else {
+                return
+            }
+            self.activeFileNavigationRequestID = nil
             guard let entry = lookup.entry else {
-                loadBrowserPath(parentPath(of: normalized))
-                fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
+                self.loadBrowserPath(self.parentPath(of: normalized))
+                self.fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
                 return
             }
 
             if entry.isDirectory {
-                loadBrowserPath(entry.path)
+                self.loadBrowserPath(entry.path)
             } else {
-                loadBrowserPath(parentPath(of: entry.path))
-                await loadPreview(for: entry)
+                self.loadBrowserPath(self.parentPath(of: entry.path))
+                self.requestFilePreview(for: entry)
             }
         }
     }
@@ -564,13 +594,14 @@ final class CPSLChatModel: ObservableObject {
         expandedFilePaths.removeAll()
         childEntriesByPath.removeAll()
 
+        if isChangingPath {
+            filePreview = nil
+            browserEntries = []
+        }
+
         guard normalized != CPSLVirtualPath.root else {
             browserEntries = []
             return
-        }
-
-        if isChangingPath {
-            browserEntries = []
         }
 
         Task {
@@ -615,9 +646,7 @@ final class CPSLChatModel: ObservableObject {
         if entry.isDirectory {
             loadBrowserPath(entry.path)
         } else {
-            Task {
-                await loadPreview(for: entry)
-            }
+            requestFilePreview(for: entry)
         }
     }
 
@@ -710,7 +739,7 @@ final class CPSLChatModel: ObservableObject {
                 }
             }
             do {
-                let mount = try await service.stageICloudDirectory(
+                let mount = try await service.connectICloudDirectory(
                     from: url,
                     accessMode: accessMode
                 ) { [weak self] progress in
@@ -738,6 +767,7 @@ final class CPSLChatModel: ObservableObject {
 
     deinit {
         iCloudImportTask?.cancel()
+        filePreviewLoadTask?.cancel()
         if let iCloudMountChangeObserver {
             NotificationCenter.default.removeObserver(iCloudMountChangeObserver)
         }
@@ -783,7 +813,7 @@ final class CPSLChatModel: ObservableObject {
         }
         if let current = iCloudImportProgress, current.phase == progress.phase {
             switch progress.phase {
-            case .downloading, .copying:
+            case .downloading:
                 guard progress.completedBytes >= current.completedBytes,
                       progress.completedItems >= current.completedItems
                 else {
@@ -845,8 +875,9 @@ final class CPSLChatModel: ObservableObject {
 
     private func bootstrap() async {
         do {
-            iCloudMounts = try await service.prepareICloudStaging()
+            iCloudMounts = try await service.prepareICloudMounts()
         } catch {
+            iCloudMounts = await service.activeICloudMounts()
             appendErrorMessage(title: "iCloud", body: error.localizedDescription)
         }
 
@@ -1241,15 +1272,46 @@ final class CPSLChatModel: ObservableObject {
         fileBrowserError = "\(path): \(message)"
     }
 
-    private func loadPreview(for entry: CPSLFileEntry) async {
-        let result = await service.previewFile(entry)
-        if let preview = result.preview {
-            filePreview = preview
+    private func requestFilePreview(for entry: CPSLFileEntry) {
+        filePreview = nil
+        let requestID = UUID()
+        let requestedBrowserPath = browserPath
+        activeFilePreviewRequestID = requestID
+        filePreviewLoadTask = Task { [weak self, service] in
+            let result = await service.previewFile(entry)
+            guard !Task.isCancelled,
+                  let self,
+                  self.activeFilePreviewRequestID == requestID,
+                  self.isFileBrowserOpen,
+                  self.browserPath == requestedBrowserPath
+            else {
+                return
+            }
+            self.activeFilePreviewRequestID = nil
+            self.filePreviewLoadTask = nil
+            if let preview = result.preview {
+                self.filePreviewLifetimeToken = result.lifetimeToken
+                self.filePreview = preview
+                return
+            }
+
+            self.filePreview = nil
+            let message = result.error ?? "Preview is not available for this file."
+            self.fileBrowserError = "\(entry.path): \(message)"
+        }
+    }
+
+    private func retireFilePreviewLifetimeToken() {
+        guard let token = filePreviewLifetimeToken else {
             return
         }
-
-        let message = result.error ?? "Preview is not available for this file."
-        fileBrowserError = "\(entry.path): \(message)"
+        filePreviewLifetimeToken = nil
+        let retirementID = UUID()
+        retiredFilePreviewLifetimeTokens[retirementID] = token
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.filePreviewRetirementNanoseconds)
+            self?.retiredFilePreviewLifetimeTokens.removeValue(forKey: retirementID)
+        }
     }
 
     func appendErrorMessage(title: String?, body: String) {
