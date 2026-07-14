@@ -80,12 +80,17 @@ func runCPSLWorker(opts runCPSLWorkerOptions) int {
 		return 2
 	}
 
-	session, err := lib.sessionNew(configJSON)
+	vision := &cpslVisionService{}
+	session, err := lib.sessionNewWithVision(cpslSessionVisionOptions{
+		configJSON: configJSON,
+		handler:    vision.Read,
+	})
 	if err != nil {
 		fmt.Fprintf(opts.stderr, "cpsl worker: session: %v\n", err)
 		return 2
 	}
 	defer lib.sessionFree(session)
+	defer func() { _ = vision.Configure(cpslVisionRuntimeConfig{}) }()
 
 	if err := serveCPSLWorkerPlatform(serveCPSLWorkerOptions{
 		evaluator:   lib,
@@ -94,6 +99,7 @@ func runCPSLWorker(opts runCPSLWorkerOptions) int {
 		stdout:      opts.stdout,
 		stderr:      opts.stderr,
 		exitProcess: os.Exit,
+		vision:      vision,
 	}); err != nil {
 		if errors.Is(err, errCPSLWorkerTerminated) {
 			return 0
@@ -148,6 +154,7 @@ type serveCPSLWorkerOptions struct {
 	stdout      io.Writer
 	stderr      io.Writer
 	exitProcess func(int)
+	vision      *cpslVisionService
 }
 
 var errCPSLWorkerTerminated = errors.New("CPSL worker terminated after response")
@@ -180,6 +187,7 @@ func serveCPSLWorker(opts serveCPSLWorkerOptions) error {
 			evaluator: opts.evaluator,
 			session:   opts.session,
 			request:   request,
+			vision:    opts.vision,
 		})
 		if err := encoder.Encode(action.response); err != nil {
 			return err
@@ -202,9 +210,19 @@ type handleCPSLWorkerRequestOptions struct {
 	evaluator cpslSessionEvaluator
 	session   cpslSession
 	request   cpslWorkerRequest
+	vision    *cpslVisionService
 }
 
 func handleCPSLWorkerRequest(opts handleCPSLWorkerRequestOptions) cpslWorkerAction {
+	if opts.request.Op == cpslWorkerOpVision {
+		if opts.vision == nil || opts.request.Vision == nil {
+			return cpslWorkerAction{response: cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "invalid_request", message: "Missing vision configuration"})}
+		}
+		if err := opts.vision.Configure(*opts.request.Vision); err != nil {
+			return cpslWorkerAction{response: cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "vision_config", message: err.Error()})}
+		}
+		return cpslWorkerAction{response: cpslOKResponse(opts.request.ID)}
+	}
 	if opts.request.Op != cpslWorkerOpEval {
 		return cpslWorkerAction{response: cpslErrorResponse(cpslErrorResponseOptions{id: opts.request.ID, code: "invalid_request", message: "Unsupported CPSL worker operation"})}
 	}

@@ -14,7 +14,9 @@ private struct CPSLAgentConfigChecks {
         try assertConfigLoadsGeneratedValues()
         try assertConfigPrefersFileValues()
         try assertEnvironmentFallbacks()
+        try assertDedicatedVisionConfig()
         try assertInvalidBaseURLFails()
+        try assertInvalidVisionBaseURLFails()
         try assertBaseURLQueryFails()
         try assertBaseURLCredentialsFail()
     }
@@ -25,6 +27,9 @@ private struct CPSLAgentConfigChecks {
         guard config.baseURL.absoluteString == "https://api.x.ai/v1",
               config.token == "generated-token",
               config.model == "generated-model",
+              config.visionBaseURL.absoluteString == "https://api.x.ai/v1",
+              config.visionToken == "generated-token",
+              config.visionModel == "generated-model",
               config.maxToolRounds == 200,
               config.maxOutputTokens == 16_384,
               config.contextWindowTokens == nil,
@@ -33,6 +38,24 @@ private struct CPSLAgentConfigChecks {
               config.maxAgentDepth == 1
         else {
             throw CheckFailure("generated constants should load as the default config")
+        }
+    }
+
+    private static func assertDedicatedVisionConfig() throws {
+        let config = try CPSLAgentConfig.make(values: [
+            "OPENAI_BASE_URL": "https://api.x.ai/v1",
+            "OPENAI_API_KEY": "main-token",
+            "OPENAI_MODEL": "grok-4.5",
+            "HERM_VISION_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "HERM_VISION_API_KEY": "vision-token",
+            "HERM_VISION_MODEL": "gemini-2.5-pro"
+        ])
+
+        guard config.visionBaseURL.absoluteString == "https://generativelanguage.googleapis.com/v1beta/openai",
+              config.visionToken == "vision-token",
+              config.visionModel == "gemini-2.5-pro"
+        else {
+            throw CheckFailure("dedicated vision config should override the main provider")
         }
     }
 
@@ -103,6 +126,20 @@ private struct CPSLAgentConfigChecks {
             return
         }
         throw CheckFailure("relative OPENAI_BASE_URL should fail validation")
+    }
+
+    private static func assertInvalidVisionBaseURLFails() throws {
+        do {
+            _ = try CPSLAgentConfig.make(values: [
+                "OPENAI_BASE_URL": "https://api.x.ai/v1",
+                "OPENAI_API_KEY": "token",
+                "OPENAI_MODEL": "model",
+                "HERM_VISION_BASE_URL": "not-a-url"
+            ])
+        } catch CPSLAgentConfigError.invalidValue("HERM_VISION_BASE_URL") {
+            return
+        }
+        throw CheckFailure("relative HERM_VISION_BASE_URL should fail validation")
     }
 
     private static func assertBaseURLQueryFails() throws {

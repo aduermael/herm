@@ -719,6 +719,7 @@ func (a *App) handleResult(result any) {
 				})
 				a.resultCh <- langdagReadyMsg{client: client, provider: provider, runtimeApple: hasRuntimeAppleModels(models), err: err}
 			}()
+			a.configureCPSLVision()
 		}
 	case ollamaModelsMsg:
 		a.ollamaFetched = true
@@ -841,6 +842,7 @@ func (a *App) handleResult(result any) {
 		a.cpslReady = true
 		a.cpslErr = nil
 		a.cpslStatusText = "ready (/workdir)"
+		a.configureCPSLVision()
 
 	case cpslErrMsg:
 		a.cpslErr = msg.err

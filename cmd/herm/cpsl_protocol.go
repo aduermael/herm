@@ -5,22 +5,32 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+
+	"langdag.com/langdag"
 )
 
 const (
-	cpslABIVersion      = 1
+	cpslABIVersion      = 2
 	cpslWorkerOpEval    = "eval"
+	cpslWorkerOpVision  = "configure_vision"
 	cpslLanguageLuau    = "luau"
 	cpslLanguageBash    = "bash"
 	cpslWorkerInitialCW = "/workdir"
 )
 
 type cpslWorkerRequest struct {
-	ID        int64  `json:"id"`
-	Op        string `json:"op"`
-	Language  string `json:"language"`
-	Input     string `json:"input"`
-	TimeoutMS int    `json:"timeout_ms"`
+	ID        int64                    `json:"id"`
+	Op        string                   `json:"op"`
+	Language  string                   `json:"language,omitempty"`
+	Input     string                   `json:"input,omitempty"`
+	TimeoutMS int                      `json:"timeout_ms"`
+	Vision    *cpslVisionRuntimeConfig `json:"vision,omitempty"`
+}
+
+type cpslVisionRuntimeConfig struct {
+	Model   string                `json:"model,omitempty"`
+	Config  Config                `json:"config"`
+	Catalog *langdag.ModelCatalog `json:"catalog,omitempty"`
 }
 
 type cpslEvalResponse struct {
@@ -71,6 +81,15 @@ func cpslErrorResponse(opts cpslErrorResponseOptions) cpslEvalResponse {
 		Stderr:   "",
 		ExitCode: nil,
 		Error:    &cpslEvalError{Code: opts.code, Message: opts.message},
+		Warnings: []string{},
+		CWD:      cpslWorkerInitialCW,
+	}
+}
+
+func cpslOKResponse(id int64) cpslEvalResponse {
+	return cpslEvalResponse{
+		ID:       id,
+		OK:       true,
 		Warnings: []string{},
 		CWD:      cpslWorkerInitialCW,
 	}

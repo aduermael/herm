@@ -1,5 +1,9 @@
 import Foundation
 
+nonisolated enum CPSLEnvConstants {
+    static let values: [String: String] = [:]
+}
+
 @main
 private struct CPSLOpenAIProtocolChecks {
     static func main() throws {
@@ -7,6 +11,7 @@ private struct CPSLOpenAIProtocolChecks {
         try assertChatRequestExposesClientTools()
         try assertSubagentToolCanBeDisabled()
         try assertChatRequestCanDisableTools()
+        try assertVisionRequestEncodesMultimodalContent()
         try assertStreamAccumulatorCollectsTextAndToolCall()
         try assertStreamAccumulatorRejectsIncompleteToolCall()
         try assertStreamAccumulatorSurfacesProviderErrors()
@@ -152,6 +157,40 @@ private struct CPSLOpenAIProtocolChecks {
               object["max_completion_tokens"] as? Int == 2048
         else {
             throw CheckFailure("tools-disabled synthesis request encoded tool fields")
+        }
+    }
+
+    private static func assertVisionRequestEncodesMultimodalContent() throws {
+        let request = CPSLVisionChatRequest(
+            model: "grok-4.5",
+            messages: [CPSLVisionMessage(
+                role: "user",
+                content: [
+                    CPSLVisionContentPart(type: "text", text: "Read this", imageURL: nil),
+                    CPSLVisionContentPart(
+                        type: "image_url",
+                        text: nil,
+                        imageURL: CPSLVisionImageURL(
+                            url: "data:image/png;base64,AQID"
+                        )
+                    )
+                ]
+            )],
+            maxCompletionTokens: 4096
+        )
+        let object = try jsonObject(request)
+        guard object["model"] as? String == "grok-4.5",
+              object["max_completion_tokens"] as? Int == 4096,
+              let messages = object["messages"] as? [[String: Any]],
+              let content = messages.first?["content"] as? [[String: Any]],
+              content.count == 2,
+              content[0]["type"] as? String == "text",
+              content[0]["text"] as? String == "Read this",
+              content[1]["type"] as? String == "image_url",
+              let imageURL = content[1]["image_url"] as? [String: Any],
+              imageURL["url"] as? String == "data:image/png;base64,AQID"
+        else {
+            throw CheckFailure("vision request did not encode OpenAI-compatible multimodal content")
         }
     }
 

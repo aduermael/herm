@@ -852,7 +852,7 @@ extension CPSLChatModel {
     }
 }
 
-private enum CPSLAgentRequestPreparationBuilder {
+private nonisolated enum CPSLAgentRequestPreparationBuilder {
     static func preparedRequestMessages(
         _ preparation: CPSLRequestPreparation,
         estimatedBytesPerToken: Int,

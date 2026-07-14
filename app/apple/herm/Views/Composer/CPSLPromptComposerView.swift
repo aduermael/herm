@@ -47,7 +47,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         }
 
         let didChangeTraits = applyInputTraits(to: textView)
-        if !UIEdgeInsetsEqualToEdgeInsets(textView.textContainerInset, textContainerInset) {
+        if textView.textContainerInset != textContainerInset {
             textView.textContainerInset = textContainerInset
         }
         textView.isEditable = !isDisabled

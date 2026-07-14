@@ -16,6 +16,7 @@ import (
 type ProjectConfig struct {
 	ActiveModel       string `json:"active_model,omitempty"`
 	ExplorationModel  string `json:"exploration_model,omitempty"`
+	VisionModel       string `json:"vision_model,omitempty"`
 	Personality       string `json:"personality,omitempty"`
 	SubAgentMaxTurns  int    `json:"sub_agent_max_turns,omitempty"`
 	ExploreMaxTurns   int    `json:"explore_max_turns,omitempty"`
@@ -41,6 +42,9 @@ func mergeConfigs(opts mergeConfigsOptions) Config {
 	}
 	if project.ExplorationModel != "" {
 		merged.ExplorationModel = project.ExplorationModel
+	}
+	if project.VisionModel != "" {
+		merged.VisionModel = project.VisionModel
 	}
 	if project.Personality != "" {
 		merged.Personality = project.Personality
@@ -231,6 +235,7 @@ func normalizeLoadedConfig(cfg Config) Config {
 	cfg = backfillLegacyConfigFieldsFromDeployments(cfg)
 	cfg.ActiveModel = migrateLoadedModelIDWithOfferings(migrateLoadedModelIDOptions{cfg: cfg, modelID: cfg.ActiveModel, smartDefault: defaultCanonicalActiveModel, offerings: defaultModelIDMigrationOfferings()})
 	cfg.ExplorationModel = migrateLoadedModelIDWithOfferings(migrateLoadedModelIDOptions{cfg: cfg, modelID: cfg.ExplorationModel, smartDefault: defaultCanonicalExplorationModel, offerings: defaultModelIDMigrationOfferings()})
+	cfg.VisionModel = migrateLoadedModelIDWithOfferings(migrateLoadedModelIDOptions{cfg: cfg, modelID: cfg.VisionModel, smartDefault: defaultCanonicalVisionModel, offerings: defaultModelIDMigrationOfferings()})
 	return cfg
 }
 
@@ -293,6 +298,7 @@ func normalizeConfigForModels(opts configModelsOptions) Config {
 	offerings = append(offerings, modelIDMigrationOfferingsFromModels(models)...)
 	cfg.ActiveModel = migrateLoadedModelIDWithOfferings(migrateLoadedModelIDOptions{cfg: cfg, modelID: cfg.ActiveModel, smartDefault: defaultCanonicalActiveModel, offerings: offerings})
 	cfg.ExplorationModel = migrateLoadedModelIDWithOfferings(migrateLoadedModelIDOptions{cfg: cfg, modelID: cfg.ExplorationModel, smartDefault: defaultCanonicalExplorationModel, offerings: offerings})
+	cfg.VisionModel = migrateLoadedModelIDWithOfferings(migrateLoadedModelIDOptions{cfg: cfg, modelID: cfg.VisionModel, smartDefault: defaultCanonicalVisionModel, offerings: offerings})
 	return cfg
 }
 
@@ -458,6 +464,7 @@ func normalizeProjectConfigWithOfferings(opts normalizeProjectConfigWithOffering
 	pc, offerings := opts.pc, opts.offerings
 	pc.ActiveModel = migrateProjectModelIDWithOfferings(migrateProjectModelIDOptions{modelID: pc.ActiveModel, smartDefault: defaultCanonicalActiveModel, offerings: offerings})
 	pc.ExplorationModel = migrateProjectModelIDWithOfferings(migrateProjectModelIDOptions{modelID: pc.ExplorationModel, smartDefault: defaultCanonicalExplorationModel, offerings: offerings})
+	pc.VisionModel = migrateProjectModelIDWithOfferings(migrateProjectModelIDOptions{modelID: pc.VisionModel, smartDefault: defaultCanonicalVisionModel, offerings: offerings})
 	return pc
 }
 

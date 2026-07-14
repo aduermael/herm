@@ -118,6 +118,7 @@ func (a *App) enterConfigMode() {
 	if len(a.cfgDraft.configuredProviders()) == 0 {
 		a.cfgDraft.ActiveModel = ""
 		a.cfgDraft.ExplorationModel = ""
+		a.cfgDraft.VisionModel = ""
 	}
 	if a.cfgDraft.Deployments != nil {
 		cloned := make(map[string]DeploymentConfig, len(a.cfgDraft.Deployments))
@@ -136,6 +137,7 @@ func (a *App) enterConfigMode() {
 	if len(a.cfgDraft.configuredProviders()) == 0 {
 		a.cfgProjectDraft.ActiveModel = ""
 		a.cfgProjectDraft.ExplorationModel = ""
+		a.cfgProjectDraft.VisionModel = ""
 	}
 	a.startConfigTicker()
 	a.renderInput()
@@ -155,12 +157,14 @@ func (a *App) exitConfigMode(save bool) {
 		if len(a.globalConfig.configuredProviders()) == 0 {
 			a.globalConfig.ActiveModel = ""
 			a.globalConfig.ExplorationModel = ""
+			a.globalConfig.VisionModel = ""
 		}
 		a.cfgDraft = a.globalConfig
 		a.projectConfig = normalizeProjectConfigForModels(normalizeProjectConfigForModelsOptions{pc: a.cfgProjectDraft, models: a.models})
 		if len(a.cfgDraft.configuredProviders()) == 0 {
 			a.projectConfig.ActiveModel = ""
 			a.projectConfig.ExplorationModel = ""
+			a.projectConfig.VisionModel = ""
 		}
 		a.cfgProjectDraft = a.projectConfig
 		a.rebuildEffectiveConfig()
@@ -231,6 +235,7 @@ func (a *App) exitConfigMode(save bool) {
 				})
 				a.resultCh <- langdagReadyMsg{client: client, provider: provider, runtimeApple: hasRuntimeAppleModels(models), err: err}
 			}()
+			a.configureCPSLVision()
 		}
 	}
 	a.cfgActive = false
@@ -444,6 +449,13 @@ func (a *App) resolvedExplorationDisplay(c Config) string {
 	return ""
 }
 
+func (a *App) resolvedVisionDisplay(c Config) string {
+	if c.VisionModel != "" {
+		return c.VisionModel
+	}
+	return ""
+}
+
 func (a *App) settingsTabFields() []cfgField {
 	return []cfgField{
 		{label: uiConfigLabelActiveModel, get: func(c Config) string { return c.ActiveModel }, set: func(c *Config, v string) {
@@ -462,6 +474,15 @@ func (a *App) settingsTabFields() []cfgField {
 			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.ExplorationModel }, onSelect: func(id string) {
 				a.cfgDraft.ExplorationModel = id
 				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelExplorationModel, oldVal: oldVal, newVal: id})
+			}})
+		}},
+		{label: uiConfigLabelVisionModel, get: func(c Config) string { return c.VisionModel }, display: func(c Config) string { return a.resolvedVisionDisplay(c) }, set: func(c *Config, v string) {
+			c.VisionModel = normalizeConfigModelIDForModels(normalizeConfigModelIDForModelsOptions{cfg: *c, modelID: v, smartDefault: defaultCanonicalVisionModel, models: a.models})
+		}, picker: func(a *App) {
+			oldVal := a.cfgDraft.VisionModel
+			a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgDraft.VisionModel }, onSelect: func(id string) {
+				a.cfgDraft.VisionModel = id
+				recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelVisionModel, oldVal: oldVal, newVal: id})
 			}})
 		}},
 		{label: "Paste Collapse", get: func(c Config) string { return strconv.Itoa(c.PasteCollapseMinChars) }, set: func(c *Config, v string) {
@@ -559,6 +580,27 @@ func (a *App) projectTabFields() []cfgField {
 				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.ExplorationModel }, onSelect: func(id string) {
 					a.cfgProjectDraft.ExplorationModel = id
 					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelProjectExplorationModel, oldVal: oldVal, newVal: id})
+				}})
+			},
+		},
+		{
+			label: uiConfigLabelVisionModel,
+			get:   func(_ Config) string { return a.cfgProjectDraft.VisionModel },
+			display: func(_ Config) string {
+				if a.cfgProjectDraft.VisionModel != "" && len(a.cfgDraft.configuredProviders()) == 0 {
+					return ""
+				}
+				return a.cfgProjectDraft.VisionModel
+			},
+			set: func(_ *Config, v string) {
+				a.cfgProjectDraft.VisionModel = normalizeProjectModelIDForModels(normalizeProjectModelIDForModelsOptions{modelID: v, smartDefault: defaultCanonicalVisionModel, models: a.models})
+			},
+			globalHint: func(c Config) string { return a.resolvedVisionDisplay(c) },
+			picker: func(a *App) {
+				oldVal := a.cfgProjectDraft.VisionModel
+				a.openConfigModelPicker(openConfigModelPickerOptions{getCurrentID: func() string { return a.cfgProjectDraft.VisionModel }, onSelect: func(id string) {
+					a.cfgProjectDraft.VisionModel = id
+					recordConfigChange(recordConfigChangeOptions{changed: a.cfgChangedLabels, label: uiConfigLabelProjectVisionModel, oldVal: oldVal, newVal: id})
 				}})
 			},
 		},

@@ -93,6 +93,29 @@ func TestServeCPSLWorkerMalformedAndUnsupportedRequests(t *testing.T) {
 	}
 }
 
+func TestServeCPSLWorkerConfiguresVision(t *testing.T) {
+	request := `{"id":8,"op":"configure_vision","timeout_ms":1000,"vision":{"model":"","config":{}}}` + "\n"
+	var stdout bytes.Buffer
+
+	err := serveCPSLWorker(serveCPSLWorkerOptions{
+		evaluator: fakeCPSLEvaluator{evalFunc: func(cpslSessionEvalOptions) (string, error) {
+			t.Fatal("eval should not be called")
+			return "", nil
+		}},
+		vision: &cpslVisionService{},
+		stdin:  strings.NewReader(request),
+		stdout: &stdout,
+		stderr: ioDiscard{},
+	})
+	if err != nil {
+		t.Fatalf("serveCPSLWorker: %v", err)
+	}
+	response := decodeWorkerTestResponse(t, stdout.Bytes())
+	if response.ID != 8 || !response.OK {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
 func TestServeCPSLWorkerTimeoutRespondsAndTerminates(t *testing.T) {
 	request := `{"id":9,"op":"eval","language":"bash","input":"sleep","timeout_ms":5}` + "\n"
 	var stdout bytes.Buffer
@@ -199,17 +222,17 @@ func TestCPSLSessionConfigJSONUsesEmptyDomainArrays(t *testing.T) {
 }
 
 func TestValidateCPSLBackendMetadataJSON(t *testing.T) {
-	valid := `{"name":"cpsl","abi_version":1,"version":"0.1.0","languages":["luau","bash"],"capabilities":{"mounts":true,"network_policy":true}}`
+	valid := `{"name":"cpsl","abi_version":2,"version":"0.1.0","languages":["luau","bash"],"capabilities":{"mounts":true,"network_policy":true}}`
 	if err := validateCPSLBackendMetadataJSON(valid); err != nil {
 		t.Fatalf("valid metadata: %v", err)
 	}
 
 	tests := []string{
-		`{"name":"other","abi_version":1,"languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
-		`{"name":"cpsl","abi_version":2,"languages":["luau","bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
-		`{"name":"cpsl","abi_version":1,"languages":["python"],"capabilities":{"mounts":true,"network_policy":true}}`,
-		`{"name":"cpsl","abi_version":1,"languages":["luau"],"capabilities":{"mounts":true,"network_policy":true}}`,
-		`{"name":"cpsl","abi_version":1,"languages":["luau","bash"],"capabilities":{"mounts":false,"network_policy":true}}`,
+		`{"name":"other","abi_version":2,"languages":["bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":3,"languages":["luau","bash"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":2,"languages":["python"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":2,"languages":["luau"],"capabilities":{"mounts":true,"network_policy":true}}`,
+		`{"name":"cpsl","abi_version":2,"languages":["luau","bash"],"capabilities":{"mounts":false,"network_policy":true}}`,
 		`not-json`,
 	}
 	for _, tt := range tests {

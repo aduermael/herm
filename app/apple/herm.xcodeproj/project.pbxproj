@@ -59,6 +59,7 @@
 				"Skills/apple-context/SKILL.md",
 				"Skills/beautiful-pdfs/print.css",
 				"Skills/beautiful-pdfs/SKILL.md",
+				"Skills/image-vision/SKILL.md",
 				Skills/webbrowser/SKILL.md,
 			);
 			target = 85D75D322FE62B6F0095BAB2 /* herm */;
@@ -273,7 +274,6 @@
 		};
 		85A100072FEA000000000007 /* Build CPSL XCFramework */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);

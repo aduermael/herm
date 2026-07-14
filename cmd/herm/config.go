@@ -24,6 +24,7 @@ type Config struct {
 	Routing               *RoutingPolicy              `json:"routing,omitempty"`
 	ActiveModel           string                      `json:"active_model,omitempty"`
 	ExplorationModel      string                      `json:"exploration_model,omitempty"` // model for sub-agents; falls back to ActiveModel
+	VisionModel           string                      `json:"vision_model,omitempty"`      // model for doc vision; falls back to ActiveModel
 	ModelSortCol          string                      `json:"model_sort_col,omitempty"`    // "name","provider","price","context"
 	ModelSortDirs         map[string]bool             `json:"model_sort_dirs,omitempty"`   // column name → ascending (per-column)
 	SubAgentMaxTurns      int                         `json:"sub_agent_max_turns,omitempty"`
