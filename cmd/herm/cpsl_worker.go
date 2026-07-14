@@ -81,7 +81,10 @@ func runCPSLWorker(opts runCPSLWorkerOptions) int {
 	}
 
 	vision := &cpslVisionService{}
-	session, err := lib.sessionNewWithVision(configJSON, vision.Read)
+	session, err := lib.sessionNewWithVision(cpslSessionVisionOptions{
+		configJSON: configJSON,
+		handler:    vision.Read,
+	})
 	if err != nil {
 		fmt.Fprintf(opts.stderr, "cpsl worker: session: %v\n", err)
 		return 2

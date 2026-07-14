@@ -108,7 +108,8 @@ func (l *cpslNativeLibrary) sessionNew(configJSON string) (cpslSession, error) {
 	return cpslSession(value), nil
 }
 
-func (l *cpslNativeLibrary) sessionNewWithVision(configJSON string, handler cpslVisionHandler) (cpslSession, error) {
+func (l *cpslNativeLibrary) sessionNewWithVision(opts cpslSessionVisionOptions) (cpslSession, error) {
+	configJSON, handler := opts.configJSON, opts.handler
 	if handler == nil || l.sessionNewWithHostCallbacksV3Proc == nil || l.visionRespondProc == nil {
 		return l.sessionNew(configJSON)
 	}
@@ -135,7 +136,10 @@ func (l *cpslNativeLibrary) sessionNewWithVision(configJSON string, handler cpsl
 					MediaType: stringFromC(input.mediaType),
 				})
 			}
-			result, callbackErr = handler(inputs, stringFromC(unsafe.Pointer(queryPointer)))
+			result, callbackErr = handler(cpslVisionReadOptions{
+				inputs: inputs,
+				query:  stringFromC(unsafe.Pointer(queryPointer)),
+			})
 		}()
 		if callbackErr != nil {
 			result = callbackErr.Error()

@@ -1,3 +1,4 @@
+// cpsl_vision_config.go resolves vision models and configures the CPSL worker.
 package main
 
 import (
@@ -23,4 +24,29 @@ func (a *App) configureCPSLVision() {
 			log.Printf("warning: configuring CPSL vision model: %v", err)
 		}
 	}()
+}
+
+// resolveVisionModel returns the model used by CPSL vision document reads.
+// Vision is optional in config and follows the active model when unset.
+func (c Config) resolveVisionModel(models []ModelDef) string {
+	return c.resolveVisionModelResult(models).ResolvedModelID
+}
+
+func (c Config) resolveVisionModelResult(models []ModelDef) configuredModelResolution {
+	if c.VisionModel == "" {
+		return configuredModelResolution{ResolvedModelID: c.resolveActiveModel(models)}
+	}
+	available := c.availableModels(models)
+	lookup := c.lookupConfiguredModelID(lookupConfiguredModelIDOptions{modelID: c.VisionModel, smartDefault: defaultCanonicalVisionModel, available: available, models: models})
+	if lookup.Status == configuredModelUsable {
+		return lookup
+	}
+	fallback := c.resolveActiveModel(models)
+	return configuredModelResolution{
+		ConfiguredModelID: c.VisionModel,
+		ResolvedModelID:   fallback,
+		Fallback:          true,
+		Status:            lookup.Status,
+		Diagnostic:        configuredModelDiagnostic(configuredModelDiagnosticOptions{field: "vision_model", configured: c.VisionModel, fallback: fallback, status: lookup.Status}),
+	}
 }

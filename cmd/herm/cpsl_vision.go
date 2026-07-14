@@ -1,3 +1,4 @@
+// cpsl_vision.go adapts CPSL document inputs to Herm multimodal model requests.
 package main
 
 import (
@@ -18,7 +19,17 @@ type cpslVisionInput struct {
 	MediaType string
 }
 
-type cpslVisionHandler func(inputs []cpslVisionInput, query string) (string, error)
+type cpslVisionReadOptions struct {
+	inputs []cpslVisionInput
+	query  string
+}
+
+type cpslSessionVisionOptions struct {
+	configJSON string
+	handler    cpslVisionHandler
+}
+
+type cpslVisionHandler func(opts cpslVisionReadOptions) (string, error)
 
 type cpslVisionService struct {
 	mu     sync.Mutex
@@ -51,15 +62,15 @@ func (s *cpslVisionService) Configure(config cpslVisionRuntimeConfig) error {
 	return nil
 }
 
-func (s *cpslVisionService) Read(inputs []cpslVisionInput, query string) (string, error) {
+func (s *cpslVisionService) Read(opts cpslVisionReadOptions) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.client == nil || s.model == "" {
 		return "", fmt.Errorf("vision model is not configured")
 	}
 
-	blocks := []types.ContentBlock{{Type: "text", Text: query}}
-	for _, input := range inputs {
+	blocks := []types.ContentBlock{{Type: "text", Text: opts.query}}
+	for _, input := range opts.inputs {
 		switch {
 		case strings.HasPrefix(input.MediaType, "image/"):
 			blocks = append(blocks, types.ContentBlock{

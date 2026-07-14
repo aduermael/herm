@@ -26,8 +26,8 @@ func (l *cpslNativeLibrary) sessionNew(configJSON string) (cpslSession, error) {
 	return 0, fmt.Errorf("CPSL dynamic libraries are unsupported on this platform")
 }
 
-func (l *cpslNativeLibrary) sessionNewWithVision(configJSON string, handler cpslVisionHandler) (cpslSession, error) {
-	return l.sessionNew(configJSON)
+func (l *cpslNativeLibrary) sessionNewWithVision(opts cpslSessionVisionOptions) (cpslSession, error) {
+	return l.sessionNew(opts.configJSON)
 }
 
 func (l *cpslNativeLibrary) sessionFree(session cpslSession) {}

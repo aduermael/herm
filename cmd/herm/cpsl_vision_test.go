@@ -13,10 +13,13 @@ func TestCPSLVisionReadSendsMultimodalBlocksToConfiguredModel(t *testing.T) {
 	defer client.Close()
 	service := &cpslVisionService{client: client, model: "xai/grok-4.5"}
 
-	result, err := service.Read([]cpslVisionInput{
-		{Data: []byte{1, 2, 3}, Filename: "page.png", MediaType: "image/png"},
-		{Data: []byte("notes"), Filename: "notes.txt", MediaType: "text/plain"},
-	}, "Extract the text")
+	result, err := service.Read(cpslVisionReadOptions{
+		inputs: []cpslVisionInput{
+			{Data: []byte{1, 2, 3}, Filename: "page.png", MediaType: "image/png"},
+			{Data: []byte("notes"), Filename: "notes.txt", MediaType: "text/plain"},
+		},
+		query: "Extract the text",
+	})
 	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
@@ -47,7 +50,7 @@ func TestCPSLVisionReadSendsMultimodalBlocksToConfiguredModel(t *testing.T) {
 }
 
 func TestCPSLVisionReadRequiresConfiguration(t *testing.T) {
-	if _, err := (&cpslVisionService{}).Read(nil, "read"); err == nil {
+	if _, err := (&cpslVisionService{}).Read(cpslVisionReadOptions{query: "read"}); err == nil {
 		t.Fatal("Read without configuration returned nil error")
 	}
 }

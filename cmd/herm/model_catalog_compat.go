@@ -1,3 +1,4 @@
+// model_catalog_compat.go supplies short-lived model metadata compatibility entries.
 package main
 
 import (
