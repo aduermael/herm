@@ -4,6 +4,7 @@ import Foundation
 import Observation
 
 enum CPSLDictationState {
+    /// No startup or audio-session cleanup remains in flight.
     case idle
     /// Permissions and model checks; capture hasn't started.
     case preparing
@@ -45,7 +46,7 @@ final class CPSLDictationService {
         state != .idle
     }
 
-    private static let audioQueue = DispatchQueue(label: "CPSLDictationService.audio")
+    private nonisolated static let audioQueue = DispatchQueue(label: "CPSLDictationService.audio")
 
     @ObservationIgnored private let recognizer: any CPSLSpeechRecognizer
     @ObservationIgnored private let maxLevels = 256
@@ -55,6 +56,7 @@ final class CPSLDictationService {
     @ObservationIgnored private var transcriptTask: Task<Void, Never>?
     @ObservationIgnored private var levelTask: Task<Void, Never>?
     @ObservationIgnored private var startTask: Task<Void, Never>?
+    @ObservationIgnored private var shutdownTask: Task<Void, Never>?
 
     init(recognizer: (any CPSLSpeechRecognizer)? = nil) {
         self.recognizer = recognizer ?? CPSLAppleSpeechRecognizer()
@@ -84,7 +86,9 @@ final class CPSLDictationService {
                     self.errorMessage = (error as? CPSLDictationError)?.errorDescription
                         ?? error.localizedDescription
                 }
-                self.abort()
+                if self.state != .finishing {
+                    self.abort(waitForStartTask: false)
+                }
             }
         }
     }
@@ -102,20 +106,32 @@ final class CPSLDictationService {
             break
         }
         state = .finishing
-        stopCapture()
+        let pendingStartTask = startTask
+        let captureStopTask = stopCapture()
         let recognizer = recognizer
-        Task { [weak self] in
-            await self?.startTask?.value
-            self?.startTask = nil
+        shutdownTask = Task { [weak self] in
+            await pendingStartTask?.value
+            await captureStopTask.value
             await recognizer.finish()
             await self?.transcriptTask?.value
-            self?.transcriptTask = nil
-            self?.state = .idle
+            guard let self else {
+                return
+            }
+            self.startTask = nil
+            self.transcriptTask = nil
+            self.shutdownTask = nil
+            self.state = .idle
         }
     }
 
     func cancel() {
         guard isActive else {
+            return
+        }
+        if state == .finishing {
+            startTask?.cancel()
+            transcriptTask?.cancel()
+            transcript = ""
             return
         }
         abort()
@@ -126,8 +142,14 @@ final class CPSLDictationService {
             throw CPSLDictationError.notAuthorized
         }
         try await recognizer.authorize()
+        try Task.checkCancellation()
 
-        if try await recognizer.modelNeedsDownload() {
+        let needsModelDownload = try await recognizer.modelNeedsDownload()
+        try Task.checkCancellation()
+        guard state != .idle, state != .finishing else {
+            return
+        }
+        if needsModelDownload {
             state = .downloadingModel
             try await recognizer.installModel()
         }
@@ -174,7 +196,10 @@ final class CPSLDictationService {
         }
 
         guard isActive, !Task.isCancelled, self.audioContinuation != nil else {
-            stopEngineOffMain(engine, deactivateSession: self.audioContinuation == nil)
+            await Self.stopEngineOffMain(
+                engine,
+                deactivateSession: self.audioContinuation == nil
+            )
             return
         }
         self.audioEngine = engine
@@ -315,21 +340,31 @@ final class CPSLDictationService {
         return output
     }
 
-    private func abort() {
+    private func abort(waitForStartTask: Bool = true) {
+        state = .finishing
+        let pendingStartTask = waitForStartTask ? startTask : nil
         startTask?.cancel()
         startTask = nil
-        stopCapture()
-        transcriptTask?.cancel()
+        let captureStopTask = stopCapture()
+        let pendingTranscriptTask = transcriptTask
+        pendingTranscriptTask?.cancel()
         transcriptTask = nil
         transcript = ""
-        state = .idle
         let recognizer = recognizer
-        Task {
+        shutdownTask = Task { [weak self] in
+            await pendingStartTask?.value
+            await captureStopTask.value
             await recognizer.finish()
+            await pendingTranscriptTask?.value
+            guard let self else {
+                return
+            }
+            self.shutdownTask = nil
+            self.state = .idle
         }
     }
 
-    private func stopCapture() {
+    private func stopCapture() -> Task<Void, Never> {
         let engine = audioEngine
         audioEngine = nil
 
@@ -341,22 +376,33 @@ final class CPSLDictationService {
         levelTask?.cancel()
         levelTask = nil
 
-        stopEngineOffMain(engine, deactivateSession: true)
+        return Task {
+            await Self.stopEngineOffMain(engine, deactivateSession: true)
+        }
     }
 
-    private func stopEngineOffMain(_ engine: AVAudioEngine?, deactivateSession: Bool) {
-        Self.audioQueue.async {
-            if let engine {
-                if engine.isRunning {
-                    engine.stop()
+    private nonisolated static func stopEngineOffMain(
+        _ engine: AVAudioEngine?,
+        deactivateSession: Bool
+    ) async {
+        await withCheckedContinuation { continuation in
+            audioQueue.async {
+                if let engine {
+                    if engine.isRunning {
+                        engine.stop()
+                    }
+                    engine.inputNode.removeTap(onBus: 0)
                 }
-                engine.inputNode.removeTap(onBus: 0)
-            }
 #if !os(macOS)
-            if deactivateSession {
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
+                if deactivateSession {
+                    try? AVAudioSession.sharedInstance().setActive(
+                        false,
+                        options: .notifyOthersOnDeactivation
+                    )
+                }
 #endif
+                continuation.resume()
+            }
         }
     }
 }

@@ -49,8 +49,8 @@ private struct CPSLConversationDrawerContent: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(CPSLTheme.text)
-            .disabled(model.isRunning)
-            .opacity(model.isRunning ? 0.45 : 1)
+            .disabled(model.isBusy)
+            .opacity(model.isBusy ? 0.45 : 1)
             .cpslGlassBackground(
                 in: RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous),
                 tint: CPSLGlassTuning.tint(CPSLTheme.elevated, opacity: 0.44),
@@ -99,6 +99,8 @@ private struct CPSLConversationListView: View {
                     ) {
                         model.selectConversation(id: conversation.id)
                     }
+                    .disabled(model.isBusy)
+                    .opacity(model.isBusy ? 0.45 : 1)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
                             model.deleteConversation(id: conversation.id)
@@ -106,7 +108,7 @@ private struct CPSLConversationListView: View {
                             Text("Remove")
                         }
                         .tint(CPSLTheme.danger)
-                        .disabled(model.isRunning)
+                        .disabled(model.isBusy)
                     }
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                     .listRowSeparator(.hidden)

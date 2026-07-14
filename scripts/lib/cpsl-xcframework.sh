@@ -961,10 +961,24 @@ cpsl_xcframework_inputs_newer_than() {
 		fi
 	done
 
-	if [ -d "$herm_root/scripts/cpsl-patches" ]; then
-		if find "$herm_root/scripts/cpsl-patches" -type f -newer "$info_plist" | grep -q .; then
-			return 0
-		fi
+	patch_dir="$herm_root/scripts/cpsl-patches"
+	series_file="$patch_dir/series"
+	if [ -d "$patch_dir" ]; then
+		[ -f "$series_file" ] || return 0
+		[ "$series_file" -nt "$info_plist" ] && return 0
+		while IFS= read -r name || [ -n "$name" ]; do
+			case "$name" in
+				''|'#'*) continue ;;
+			esac
+			case "$name" in
+				*[!A-Za-z0-9._-]*|.*|*..*) return 0 ;;
+				*.patch) ;;
+				*) return 0 ;;
+			esac
+			patch="$patch_dir/$name"
+			[ -f "$patch" ] || return 0
+			[ "$patch" -nt "$info_plist" ] && return 0
+		done <"$series_file"
 	fi
 
 	# The source stamp records the CPSL Git revision, but local submodule edits do

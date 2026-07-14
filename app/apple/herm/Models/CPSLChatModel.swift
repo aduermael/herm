@@ -25,13 +25,30 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var expandedFilePaths: Set<String> = []
     @Published private(set) var loadingFilePaths: Set<String> = []
     @Published private(set) var fileBrowserError: String?
-    @Published private(set) var filePreview: CPSLFilePreview?
+    @Published private(set) var filePreview: CPSLFilePreview? {
+        didSet {
+            if filePreview == nil {
+                activeFileNavigationRequestID = nil
+                activeFilePreviewRequestID = nil
+                filePreviewLoadTask?.cancel()
+                filePreviewLoadTask = nil
+                retireFilePreviewLifetimeToken()
+            }
+        }
+    }
     @Published private(set) var isWebBrowserOpen = false
     @Published private(set) var isFileActivityActive = false
     @Published private(set) var isCalendarOpen = false
     @Published private(set) var isCalendarActivityActive = false
     @Published private(set) var isLocationOpen = false
     @Published private(set) var isLocationActivityActive = false
+    @Published private(set) var iCloudMounts: [CPSLICloudMount] = []
+    @Published private(set) var isUpdatingICloudMounts = true
+    @Published private(set) var iCloudImportProgress: CPSLICloudImportProgress?
+
+    var isBusy: Bool {
+        isRunning || isUpdatingICloudMounts
+    }
 
     let service: CPSLDebugService
     let webBrowser: CPSLWebBrowserService
@@ -49,9 +66,18 @@ final class CPSLChatModel: ObservableObject {
     var isSuppressingAssistantStream = false
     var typewriterBuffer = ""
     var typewriterTask: Task<Void, Never>?
+    private var iCloudImportTask: Task<Void, Never>?
+    private var activeICloudImportID: UUID?
+    private var activeFileNavigationRequestID: UUID?
+    private var activeFilePreviewRequestID: UUID?
+    private var filePreviewLoadTask: Task<Void, Never>?
+    private var filePreviewLifetimeToken: AnyObject?
+    private var retiredFilePreviewLifetimeTokens: [UUID: AnyObject] = [:]
+    private var iCloudMountChangeObserver: NSObjectProtocol?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
+    private static let iCloudRestrictedSkillNames = Set(["beautiful-pdfs", "webbrowser"])
     var activeToolStatusNodeID: String?
     var activeToolStatusPayload: CPSLToolStatusPayload?
     var activeToolStatusStore: CPSLConversationStore?
@@ -61,6 +87,7 @@ final class CPSLChatModel: ObservableObject {
     private var draftConversationID = UUID().uuidString
     private var attachmentImportCount = 0
     private let activityPulseDuration: TimeInterval = 1.6
+    private static let filePreviewRetirementNanoseconds: UInt64 = 300_000_000
 
     var isToolOverlayOpen: Bool {
         isFileBrowserOpen
@@ -112,6 +139,26 @@ final class CPSLChatModel: ObservableObject {
         """
     }
 
+    func addingICloudMountContext(to basePrompt: String) -> String {
+        guard !iCloudMounts.isEmpty else {
+            return basePrompt
+        }
+        let mountLines = iCloudMounts.map { mount in
+            "- `\(mount.virtualPath)`: \(mount.accessMode.promptDescription) iCloud Drive folder"
+        }.joined(separator: "\n")
+        return basePrompt + """
+
+
+        ## iCloud Mounts
+
+        The user connected these original iCloud Drive folders to CPSL:
+
+        \(mountLines)
+
+        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Do not modify read-only mounts. Changes made in read-write mounts affect the original files; iCloud Drive uploads those changes asynchronously. Network access is disabled while these mounts are active.
+        """
+    }
+
     init() {
         let webBrowser = CPSLWebBrowserService()
         self.webBrowser = webBrowser
@@ -121,6 +168,15 @@ final class CPSLChatModel: ObservableObject {
             calendarActivityNotifier: calendarActivityNotifier,
             fileActivityNotifier: fileActivityNotifier
         )
+        iCloudMountChangeObserver = NotificationCenter.default.addObserver(
+            forName: CPSLICloudMountStore.didChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshICloudMountsAfterChange()
+            }
+        }
         fileActivityNotifier.setHandler { [weak self] _ in
             self?.markFileActivity()
         }
@@ -156,7 +212,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func startNewConversation() {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -200,7 +256,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func selectConversation(id: String) {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -219,7 +275,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func deleteConversation(id: String) {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -243,7 +299,7 @@ final class CPSLChatModel: ObservableObject {
 
     func submitPrompt() {
         let input = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!input.isEmpty || !composerAttachments.isEmpty), !isRunning else {
+        guard (!input.isEmpty || !composerAttachments.isEmpty), !isBusy else {
             return
         }
 
@@ -255,6 +311,7 @@ final class CPSLChatModel: ObservableObject {
             }
             dictation.cancel()
             promptText = ""
+            dismissOverlaysForRun()
             runCommand(command)
             return
         }
@@ -267,16 +324,20 @@ final class CPSLChatModel: ObservableObject {
         dictation.cancel()
         promptText = ""
         composerAttachments = []
+        dismissOverlaysForRun()
+        isRunning = true
+        activeRunTask = Task {
+            await runAgent(prompt: prompt)
+        }
+    }
+
+    private func dismissOverlaysForRun() {
         isFileBrowserOpen = false
         isCalendarOpen = false
         isLocationOpen = false
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
-        isRunning = true
-        activeRunTask = Task {
-            await runAgent(prompt: prompt)
-        }
     }
 
     func stopAgent() {
@@ -444,20 +505,29 @@ final class CPSLChatModel: ObservableObject {
         isLocationOpen = false
         isFileBrowserOpen = true
         filePreview = nil
+        let navigationID = UUID()
+        activeFileNavigationRequestID = navigationID
 
-        Task {
+        Task { [weak self, service] in
             let lookup = await service.fileEntry(at: normalized)
+            guard let self,
+                  self.activeFileNavigationRequestID == navigationID,
+                  self.isFileBrowserOpen
+            else {
+                return
+            }
+            self.activeFileNavigationRequestID = nil
             guard let entry = lookup.entry else {
-                loadBrowserPath(parentPath(of: normalized))
-                fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
+                self.loadBrowserPath(self.parentPath(of: normalized))
+                self.fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
                 return
             }
 
             if entry.isDirectory {
-                loadBrowserPath(entry.path)
+                self.loadBrowserPath(entry.path)
             } else {
-                loadBrowserPath(parentPath(of: entry.path))
-                await loadPreview(for: entry)
+                self.loadBrowserPath(self.parentPath(of: entry.path))
+                self.requestFilePreview(for: entry)
             }
         }
     }
@@ -524,13 +594,14 @@ final class CPSLChatModel: ObservableObject {
         expandedFilePaths.removeAll()
         childEntriesByPath.removeAll()
 
+        if isChangingPath {
+            filePreview = nil
+            browserEntries = []
+        }
+
         guard normalized != CPSLVirtualPath.root else {
             browserEntries = []
             return
-        }
-
-        if isChangingPath {
-            browserEntries = []
         }
 
         Task {
@@ -575,9 +646,7 @@ final class CPSLChatModel: ObservableObject {
         if entry.isDirectory {
             loadBrowserPath(entry.path)
         } else {
-            Task {
-                await loadPreview(for: entry)
-            }
+            requestFilePreview(for: entry)
         }
     }
 
@@ -646,8 +715,154 @@ final class CPSLChatModel: ObservableObject {
         }
     }
 
+    func importICloudDirectory(
+        _ url: URL,
+        accessMode: CPSLICloudMountAccessMode
+    ) {
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before adding an iCloud folder."
+            return
+        }
+
+        fileBrowserError = nil
+        isUpdatingICloudMounts = true
+        iCloudImportProgress = .preparing
+        let importID = UUID()
+        activeICloudImportID = importID
+        iCloudImportTask = Task { [weak self, service] in
+            defer {
+                if let self, self.activeICloudImportID == importID {
+                    self.activeICloudImportID = nil
+                    self.iCloudImportTask = nil
+                    self.iCloudImportProgress = nil
+                    self.isUpdatingICloudMounts = false
+                }
+            }
+            do {
+                let mount = try await service.connectICloudDirectory(
+                    from: url,
+                    accessMode: accessMode
+                ) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.applyICloudImportProgress(progress, importID: importID)
+                    }
+                }
+                let mounts = await service.activeICloudMounts()
+                self?.iCloudMounts = mounts
+                self?.loadBrowserPath(mount.virtualPath)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.fileBrowserError = "iCloud: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func cancelICloudImport() {
+        if let progress = iCloudImportProgress {
+            iCloudImportProgress = progress.cancelling
+        }
+        iCloudImportTask?.cancel()
+    }
+
+    deinit {
+        iCloudImportTask?.cancel()
+        filePreviewLoadTask?.cancel()
+        if let iCloudMountChangeObserver {
+            NotificationCenter.default.removeObserver(iCloudMountChangeObserver)
+        }
+    }
+
+    private func refreshICloudMountsAfterChange() async {
+        let updatedMounts = await service.activeICloudMounts()
+        let previousBrowserPath = browserPath
+        let previewPath = filePreview?.path
+        iCloudMounts = updatedMounts
+
+        if let previewPath,
+           previewPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/"),
+           CPSLICloudMountResolver.mount(containing: previewPath, in: updatedMounts) == nil {
+            filePreview = nil
+        }
+
+        guard previousBrowserPath == CPSLVirtualPath.iCloudRoot ||
+                previousBrowserPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/")
+        else {
+            return
+        }
+        if previousBrowserPath != CPSLVirtualPath.iCloudRoot,
+           CPSLICloudMountResolver.mount(
+               containing: previousBrowserPath,
+               in: updatedMounts
+           ) == nil {
+            loadBrowserPath(CPSLVirtualPath.iCloudRoot)
+        } else if isFileBrowserOpen {
+            loadBrowserPath(previousBrowserPath)
+        }
+    }
+
+    private func applyICloudImportProgress(
+        _ progress: CPSLICloudImportProgress,
+        importID: UUID
+    ) {
+        guard activeICloudImportID == importID else {
+            return
+        }
+        guard iCloudImportProgress?.phase != .cancelling else {
+            return
+        }
+        if let current = iCloudImportProgress, current.phase == progress.phase {
+            switch progress.phase {
+            case .downloading:
+                guard progress.completedBytes >= current.completedBytes,
+                      progress.completedItems >= current.completedItems
+                else {
+                    return
+                }
+            case .preparing, .cancelling:
+                break
+            }
+        }
+        iCloudImportProgress = progress
+    }
+
+    func reportICloudImportError(_ error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain &&
+            nsError.code == CocoaError.Code.userCancelled.rawValue {
+            return
+        }
+        fileBrowserError = "iCloud: \(error.localizedDescription)"
+    }
+
+    func removeICloudMount(_ entry: CPSLFileEntry) {
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before removing an iCloud folder."
+            return
+        }
+
+        fileBrowserError = nil
+        isUpdatingICloudMounts = true
+        Task {
+            defer {
+                isUpdatingICloudMounts = false
+            }
+            do {
+                try await service.removeICloudMount(at: entry.path)
+                iCloudMounts = await service.activeICloudMounts()
+                loadBrowserPath(iCloudMounts.isEmpty ? CPSLVirtualPath.root : CPSLVirtualPath.iCloudRoot)
+            } catch {
+                fileBrowserError = "iCloud: \(error.localizedDescription)"
+            }
+        }
+    }
+
     func children(for path: String) -> [CPSLFileEntry] {
         childEntriesByPath[path] ?? []
+    }
+
+    func iCloudMount(containing path: String) -> CPSLICloudMount? {
+        CPSLICloudMountResolver.mount(containing: path, in: iCloudMounts)
     }
 
     func isExpanded(_ entry: CPSLFileEntry) -> Bool {
@@ -660,10 +875,18 @@ final class CPSLChatModel: ObservableObject {
 
     private func bootstrap() async {
         do {
+            iCloudMounts = try await service.prepareICloudMounts()
+        } catch {
+            iCloudMounts = await service.activeICloudMounts()
+            appendErrorMessage(title: "iCloud", body: error.localizedDescription)
+        }
+
+        do {
             try await service.prepareSandbox()
         } catch {
             appendErrorMessage(title: "Files", body: error.localizedDescription)
         }
+        isUpdatingICloudMounts = false
         do {
             let store = try await loadStore()
             conversations = try await store.loadSummaries()
@@ -829,7 +1052,8 @@ final class CPSLChatModel: ObservableObject {
         do {
             var conversationID: String
             var parentID: String
-            let promptForConversation = systemPrompt(with: await service.availableSkills())
+            let availableSkills = await service.availableSkills()
+            let promptForConversation = systemPrompt(with: availableSkills)
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -879,7 +1103,15 @@ final class CPSLChatModel: ObservableObject {
             activeModel = config.model
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            let replaySystemPrompt = currentSystemPrompt ?? promptForConversation
+            // Stored prompts may advertise capabilities that are deliberately
+            // unavailable while personal mounts are connected. Use the live
+            // catalog for an isolated run instead of replaying stale skills.
+            let replayBasePrompt = iCloudMounts.isEmpty
+                ? currentSystemPrompt ?? promptForConversation
+                : systemPrompt(with: availableSkills.filter { skill in
+                    !Self.iCloudRestrictedSkillNames.contains(skill.name.lowercased())
+                })
+            let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,
@@ -1040,15 +1272,46 @@ final class CPSLChatModel: ObservableObject {
         fileBrowserError = "\(path): \(message)"
     }
 
-    private func loadPreview(for entry: CPSLFileEntry) async {
-        let result = await service.previewFile(entry)
-        if let preview = result.preview {
-            filePreview = preview
+    private func requestFilePreview(for entry: CPSLFileEntry) {
+        filePreview = nil
+        let requestID = UUID()
+        let requestedBrowserPath = browserPath
+        activeFilePreviewRequestID = requestID
+        filePreviewLoadTask = Task { [weak self, service] in
+            let result = await service.previewFile(entry)
+            guard !Task.isCancelled,
+                  let self,
+                  self.activeFilePreviewRequestID == requestID,
+                  self.isFileBrowserOpen,
+                  self.browserPath == requestedBrowserPath
+            else {
+                return
+            }
+            self.activeFilePreviewRequestID = nil
+            self.filePreviewLoadTask = nil
+            if let preview = result.preview {
+                self.filePreviewLifetimeToken = result.lifetimeToken
+                self.filePreview = preview
+                return
+            }
+
+            self.filePreview = nil
+            let message = result.error ?? "Preview is not available for this file."
+            self.fileBrowserError = "\(entry.path): \(message)"
+        }
+    }
+
+    private func retireFilePreviewLifetimeToken() {
+        guard let token = filePreviewLifetimeToken else {
             return
         }
-
-        let message = result.error ?? "Preview is not available for this file."
-        fileBrowserError = "\(entry.path): \(message)"
+        filePreviewLifetimeToken = nil
+        let retirementID = UUID()
+        retiredFilePreviewLifetimeTokens[retirementID] = token
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.filePreviewRetirementNanoseconds)
+            self?.retiredFilePreviewLifetimeTokens.removeValue(forKey: retirementID)
+        }
     }
 
     func appendErrorMessage(title: String?, body: String) {
@@ -1110,7 +1373,11 @@ final class CPSLChatModel: ObservableObject {
             normalized == CPSLVirtualPath.home ||
             normalized.hasPrefix("\(CPSLVirtualPath.home)/") ||
             normalized == CPSLVirtualPath.temporary ||
-            normalized.hasPrefix("\(CPSLVirtualPath.temporary)/")
+            normalized.hasPrefix("\(CPSLVirtualPath.temporary)/") ||
+            normalized == CPSLVirtualPath.iCloudRoot ||
+            iCloudMounts.contains { mount in
+                normalized == mount.virtualPath || normalized.hasPrefix("\(mount.virtualPath)/")
+            }
     }
 
     private func browserParentPath() -> String? {
@@ -1123,7 +1390,8 @@ final class CPSLChatModel: ObservableObject {
         }
         if normalized == CPSLVirtualPath.attachments ||
             normalized == CPSLVirtualPath.home ||
-            normalized == CPSLVirtualPath.temporary {
+            normalized == CPSLVirtualPath.temporary ||
+            normalized == CPSLVirtualPath.iCloudRoot {
             return CPSLVirtualPath.root
         }
         return parentPath(of: normalized)
