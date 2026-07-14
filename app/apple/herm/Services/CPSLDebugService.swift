@@ -559,8 +559,9 @@ actor CPSLDebugService {
     private let location: CPSLLocationService
     private let calendarActivityNotifier: CPSLCalendarActivityNotifier
     private let fileActivityNotifier: CPSLFileActivityNotifier
-    private let iCloudMountManager = CPSLICloudMountManager()
+    private var iCloudMountManager: CPSLICloudMountManager?
     private var session: CPSLSessionHandle?
+    private var sessionMountRevision: UInt64?
     private var nextSessionID = 0
     private var isInitializingSession = false
     private var evaluatingSessionID: Int?
@@ -683,8 +684,10 @@ actor CPSLDebugService {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             let normalizedPath = Self.normalizedVirtualPath(virtualPath)
+            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
+            defer { mountUseLease?.release() }
             if normalizedPath == CPSLVirtualPath.iCloudRoot {
-                let entries = iCloudMountManager.mounts.map {
+                let entries = try ensureICloudMountManager().mounts.map {
                     CPSLFileEntry(name: $0.label, path: $0.virtualPath, isDirectory: true)
                 }
                 return CPSLDirectoryListing(entries: entries, error: nil)
@@ -728,6 +731,8 @@ actor CPSLDebugService {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             let normalizedPath = Self.normalizedVirtualPath(virtualPath)
+            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
+            defer { mountUseLease?.release() }
             let hostURL = try hostURL(
                 forVirtualPath: normalizedPath,
                 sandboxURLs: sandboxURLs
@@ -760,6 +765,8 @@ actor CPSLDebugService {
         do {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
+            let mountUseLease = try iCloudUseLease(forVirtualPath: entry.path)
+            defer { mountUseLease?.release() }
             let hostURL = try hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
             guard isBrowserHostURLAllowed(hostURL, sandboxURLs: sandboxURLs) else {
                 return CPSLFilePreviewLoadResult(
@@ -986,30 +993,29 @@ actor CPSLDebugService {
     }
 
     func activeICloudMounts() -> [CPSLICloudMount] {
-        iCloudMountManager.mounts
+        iCloudMountManager?.mounts ?? []
     }
 
-    func prepareICloudStaging() async {
-        await iCloudMountManager.prepare()
+    func prepareICloudStaging() throws -> [CPSLICloudMount] {
+        try ensureICloudMountManager().mounts
     }
 
     func stageICloudDirectory(
         from sourceURL: URL,
+        accessMode: CPSLICloudMountAccessMode,
         progress: @escaping @Sendable (CPSLICloudImportProgress) -> Void
     ) async throws -> CPSLICloudMount {
         guard !isSessionBusy else {
             throw CPSLICloudMountError.sessionBusy
         }
-        guard iCloudMountManager.beginStaging() else {
-            throw CPSLICloudMountError.sessionBusy
-        }
-        defer { iCloudMountManager.finishStaging() }
+        let iCloudMountManager = try ensureICloudMountManager()
         self.sandboxURLs = try ensureSandboxURLs()
         let mount = try await iCloudMountManager.stageReservedDirectory(
             from: sourceURL,
+            accessMode: accessMode,
             progress: progress
         )
-        resetSessionForMountChange()
+        resetSessionIfMountRevisionChanged(to: iCloudMountManager.currentRevision)
         return mount
     }
 
@@ -1017,9 +1023,10 @@ actor CPSLDebugService {
         guard !isSessionBusy else {
             throw CPSLICloudMountError.sessionBusy
         }
+        let iCloudMountManager = try ensureICloudMountManager()
         let normalizedPath = Self.normalizedVirtualPath(virtualPath)
         try iCloudMountManager.removeMount(at: normalizedPath)
-        resetSessionForMountChange()
+        resetSessionIfMountRevisionChanged(to: iCloudMountManager.currentRevision)
     }
 
     func availableSkills() -> [CPSLAgentSkill] {
@@ -1048,8 +1055,18 @@ actor CPSLDebugService {
     }
 
     private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
-        guard !iCloudMountManager.isStaging else {
-            return Self.ffiFailure("An iCloud folder is still being staged")
+        let mountUseLease: CPSLICloudMountUseLease
+        do {
+            let manager = try ensureICloudMountManager()
+            guard let lease = manager.beginUse() else {
+                return Self.ffiFailure("iCloud folders are still being updated")
+            }
+            mountUseLease = lease
+        } catch {
+            return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
+        }
+        if session != nil, sessionMountRevision != mountUseLease.revision {
+            resetSessionForMountChange()
         }
         let sandboxURLs: CPSLSandboxURLs
         do {
@@ -1060,7 +1077,10 @@ actor CPSLDebugService {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
         }
 
-        if let sessionError = await initializeSessionIfNeeded(sandboxURLs: sandboxURLs) {
+        if let sessionError = await initializeSessionIfNeeded(
+            sandboxURLs: sandboxURLs,
+            mountRevision: mountUseLease.revision
+        ) {
             return Self.ffiFailure("Session init: \(sessionError)")
         }
 
@@ -1079,7 +1099,8 @@ actor CPSLDebugService {
         evaluatingSessionID = activeSession.id
         let request = CPSLBlockingEvalRequest(
             session: activeSession.pointer,
-            requestJSON: requestJSON
+            requestJSON: requestJSON,
+            lifetimeToken: mountUseLease
         )
 
         let evaluation = await Self.performBlockingEvalWithTimeout(request) {
@@ -1102,6 +1123,7 @@ actor CPSLDebugService {
                 // cpsl_eval may still be blocked. The worker owns this session
                 // until the native call returns and it is safe to release.
                 session = nil
+                sessionMountRevision = nil
                 currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
             if evaluatingSessionID == activeSession.id {
@@ -1117,6 +1139,7 @@ actor CPSLDebugService {
             if session?.id == activeSession.id {
                 // A started worker releases the session after cpsl_eval returns.
                 session = nil
+                sessionMountRevision = nil
                 currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
             if evaluatingSessionID == activeSession.id {
@@ -1128,7 +1151,7 @@ actor CPSLDebugService {
 
     private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) throws -> URL {
         let normalized = Self.normalizedVirtualPath(virtualPath)
-        if let resolved = iCloudMountManager.hostURL(for: normalized) {
+        if let resolved = iCloudMountManager?.hostURL(for: normalized) {
             return resolved
         }
         if normalized == CPSLVirtualPath.iCloudRoot ||
@@ -1296,7 +1319,7 @@ actor CPSLDebugService {
         if Self.isHostURL(url, inside: sandboxURLs.root) {
             return true
         }
-        return iCloudMountManager.containsHostURL(url)
+        return iCloudMountManager?.containsHostURL(url) == true
     }
 
     private nonisolated static func virtualChildPath(parent: String, child: String) -> String {
@@ -1308,14 +1331,22 @@ actor CPSLDebugService {
             cpsl_session_free(session.pointer)
         }
         session = nil
+        sessionMountRevision = nil
         evaluatingSessionID = nil
         currentVirtualDirectory = CPSLVirtualPath.initialDirectory
+    }
+
+    private func resetSessionIfMountRevisionChanged(to revision: UInt64) {
+        guard session != nil, sessionMountRevision != revision else {
+            return
+        }
+        resetSessionForMountChange()
     }
 
     private var isSessionBusy: Bool {
         pruneFinishedDetachedEvaluations()
         return isInitializingSession ||
-            iCloudMountManager.isStaging ||
+            iCloudMountManager?.isUpdating == true ||
             evaluatingSessionID != nil ||
             !detachedEvaluations.isEmpty
     }
@@ -1330,7 +1361,10 @@ actor CPSLDebugService {
         detachedEvaluations.removeAll { !$0.isDetachedEvaluationRunning }
     }
 
-    private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) async -> String? {
+    private func initializeSessionIfNeeded(
+        sandboxURLs: CPSLSandboxURLs,
+        mountRevision: UInt64
+    ) async -> String? {
         guard session == nil else {
             return nil
         }
@@ -1348,7 +1382,7 @@ actor CPSLDebugService {
 
         // A domain policy cannot constrain arbitrary JavaScript inside a WKWebView.
         // Omit the browser capability entirely while personal mounts are active.
-        let callbackBox = iCloudMountManager.mounts.isEmpty
+        let callbackBox = (iCloudMountManager?.mounts.isEmpty ?? true)
             ? CPSLWebBrowserCallbackBox(service: webBrowser)
             : nil
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
@@ -1373,8 +1407,24 @@ actor CPSLDebugService {
 
         nextSessionID += 1
         session = CPSLSessionHandle(id: nextSessionID, pointer: newSession)
+        sessionMountRevision = mountRevision
         currentVirtualDirectory = CPSLVirtualPath.initialDirectory
         return nil
+    }
+
+    private func iCloudUseLease(
+        forVirtualPath virtualPath: String
+    ) throws -> CPSLICloudMountUseLease? {
+        let normalized = Self.normalizedVirtualPath(virtualPath)
+        guard normalized == CPSLVirtualPath.iCloudRoot ||
+                normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/")
+        else {
+            return nil
+        }
+        guard let lease = try ensureICloudMountManager().beginUse() else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        return lease
     }
 
     private func ensureSandboxURLs() throws -> CPSLSandboxURLs {
@@ -1395,11 +1445,32 @@ actor CPSLDebugService {
         let rootURL = sandboxURL.appendingPathComponent("root", isDirectory: true)
         let sandboxURLs = CPSLSandboxURLs(
             root: rootURL,
-            iCloudNamespace: sandboxURL.appendingPathComponent("icloud", isDirectory: true)
+            iCloudNamespace: sandboxURL.appendingPathComponent("icloud", isDirectory: true),
+            iCloudMountStorage: sandboxURL.appendingPathComponent(
+                "iCloudMounts",
+                isDirectory: true
+            )
         )
 
         try ensureSandboxScaffold(sandboxURLs)
+        let iCloudMountManager = CPSLICloudMountManager.shared(
+            stagingRoot: sandboxURLs.iCloudMountStorage
+        )
+        try iCloudMountManager.prepare()
+        self.iCloudMountManager = iCloudMountManager
+        self.sandboxURLs = sandboxURLs
         return sandboxURLs
+    }
+
+    private func ensureICloudMountManager() throws -> CPSLICloudMountManager {
+        if let iCloudMountManager {
+            return iCloudMountManager
+        }
+        _ = try ensureSandboxURLs()
+        guard let iCloudMountManager else {
+            throw CPSLICloudMountError.savedMountUnavailable
+        }
+        return iCloudMountManager
     }
 
     private func ensureSandboxScaffold(_ sandboxURLs: CPSLSandboxURLs) throws {
@@ -1471,15 +1542,16 @@ actor CPSLDebugService {
                 "mode": "ro"
             ])
         }
-        for mount in iCloudMountManager.mounts {
+        let iCloudMounts = iCloudMountManager?.mounts ?? []
+        for mount in iCloudMounts {
             mounts.append([
                 "host": mount.hostURL.resolvingSymlinksInPath().path,
                 "virtual": mount.virtualPath,
-                "mode": "ro"
+                "mode": mount.accessMode.rawValue
             ])
         }
 
-        let allowedDomains: [String] = iCloudMountManager.mounts.isEmpty ? ["*"] : []
+        let allowedDomains: [String] = iCloudMounts.isEmpty ? ["*"] : []
         let config: [String: Any] = [
             "mounts": mounts,
             "initial_cwd": CPSLVirtualPath.initialDirectory,
@@ -1738,8 +1810,10 @@ actor CPSLDebugService {
     private nonisolated static func performBlockingEval(
         _ request: CPSLBlockingEvalRequest
     ) -> CPSLEvalServiceResult {
-        let responsePointer = request.requestJSON.withCString { requestPointer in
-            cpsl_eval(request.session, requestPointer)
+        let responsePointer = withExtendedLifetime(request.lifetimeToken) {
+            request.requestJSON.withCString { requestPointer in
+                cpsl_eval(request.session, requestPointer)
+            }
         }
         guard let responsePointer else {
             return ffiFailure(lastErrorMessage(fallback: "cpsl_eval returned NULL"))

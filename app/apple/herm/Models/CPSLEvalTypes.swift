@@ -26,6 +26,7 @@ nonisolated struct CPSLSessionInitResult: @unchecked Sendable {
 nonisolated struct CPSLBlockingEvalRequest: @unchecked Sendable {
     let session: OpaquePointer
     let requestJSON: String
+    let lifetimeToken: AnyObject?
 }
 
 nonisolated enum CPSLEvalRaceResult: Sendable {

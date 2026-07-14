@@ -1,65 +1,223 @@
 import Dispatch
 import Foundation
 
+#if canImport(Darwin)
 nonisolated private final class CPSLFileCoordinatorCancellationBox: @unchecked Sendable {
-    let coordinator = NSFileCoordinator(filePresenter: nil)
+    private let lock = NSLock()
+    private var coordinator: NSFileCoordinator?
+    private var isCancelled = false
+
+    func coordinateFileRead(
+        at sourceURL: URL,
+        accessor: (URL) throws -> Void
+    ) throws {
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        let wasCancelled = lock.withLock {
+            if isCancelled {
+                return true
+            }
+            self.coordinator = coordinator
+            return false
+        }
+        guard !wasCancelled else {
+            throw CancellationError()
+        }
+        defer {
+            lock.withLock {
+                if self.coordinator === coordinator {
+                    self.coordinator = nil
+                }
+            }
+        }
+
+        var coordinatorError: NSError?
+        var accessorError: Error?
+        var didAccessSnapshot = false
+        coordinator.coordinate(
+            readingItemAt: sourceURL,
+            options: .forUploading,
+            error: &coordinatorError
+        ) { snapshotURL in
+            didAccessSnapshot = true
+            do {
+                try accessor(snapshotURL)
+            } catch {
+                accessorError = error
+            }
+        }
+
+        try Task.checkCancellation()
+        if let accessorError {
+            throw accessorError
+        }
+        if let coordinatorError {
+            throw coordinatorError
+        }
+        guard didAccessSnapshot else {
+            throw CPSLICloudStagingError.cannotEnumerateFolder
+        }
+    }
 
     func cancel() {
-        coordinator.cancel()
+        let coordinator = lock.withLock {
+            isCancelled = true
+            return self.coordinator
+        }
+        coordinator?.cancel()
     }
 }
+#else
+nonisolated private final class CPSLFileCoordinatorCancellationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isCancelled = false
+
+    func coordinateFileRead(
+        at sourceURL: URL,
+        accessor: (URL) throws -> Void
+    ) throws {
+        guard !lock.withLock({ isCancelled }) else {
+            throw CancellationError()
+        }
+        try accessor(sourceURL)
+    }
+
+    func cancel() {
+        lock.withLock {
+            isCancelled = true
+        }
+    }
+}
+#endif
 
 nonisolated private struct CPSLICloudDirectoryCopyRequest: Sendable {
     let sourceURL: URL
     let stagedURL: URL
     let permit: CPSLICloudStagingImportPermit
+    let isWritable: Bool
     let progress: @Sendable (CPSLICloudImportProgress) -> Void
 }
 
-/// Owns the staged copies and virtual mounts used by one CPSL debug service.
-/// The service actor is the sole caller, so mutations remain actor-isolated.
+nonisolated final class CPSLICloudMountUseLease: @unchecked Sendable {
+    let revision: UInt64
+
+    private let lock = NSLock()
+    private var manager: CPSLICloudMountManager?
+
+    fileprivate init(manager: CPSLICloudMountManager, revision: UInt64) {
+        self.manager = manager
+        self.revision = revision
+    }
+
+    func release() {
+        let manager = lock.withLock {
+            let manager = self.manager
+            self.manager = nil
+            return manager
+        }
+        manager?.finishUse()
+    }
+
+    deinit {
+        release()
+    }
+}
+
+nonisolated private final class CPSLICloudMountManagerPool: @unchecked Sendable {
+    private let lock = NSLock()
+    private var managers: [String: CPSLICloudMountManager] = [:]
+
+    func manager(for stagingRoot: URL) -> CPSLICloudMountManager {
+        lock.withLock {
+            let key = stagingRoot.resolvingSymlinksInPath().standardizedFileURL.path
+            if let manager = managers[key] {
+                return manager
+            }
+            let manager = CPSLICloudMountManager(stagingRoot: stagingRoot)
+            managers[key] = manager
+            return manager
+        }
+    }
+}
+
+/// Owns the process-wide persistent staged copies and virtual mounts used by CPSL.
 nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
-    private static let processRoot =
-        CPSLICloudStagingStorage.makeProcessRoot(in: FileManager.default.temporaryDirectory)
+    private static let pool = CPSLICloudMountManagerPool()
+
+    static func shared(stagingRoot: URL) -> CPSLICloudMountManager {
+        pool.manager(for: stagingRoot)
+    }
 
     var mounts: [CPSLICloudMount] {
         withLock { storedMounts }
     }
 
-    var isStaging: Bool {
-        withLock { stagingInProgress }
+    var isUpdating: Bool {
+        withLock { updateInProgress }
+    }
+
+    var currentRevision: UInt64 {
+        withLock { revision }
     }
 
     private let lock = NSLock()
     private let stagingRoot: URL
+    private let fileManager: FileManager
     private var storedMounts: [CPSLICloudMount] = []
-    private var stagingInProgress = false
+    private var updateInProgress = false
+    private var activeUseCount = 0
+    private var revision: UInt64 = 0
+    private var isPrepared = false
 
-    init() {
-        stagingRoot = CPSLICloudStagingStorage.makeServiceRoot(in: Self.processRoot)
+    init(stagingRoot: URL, fileManager: FileManager = .default) {
+        self.stagingRoot = stagingRoot
+        self.fileManager = fileManager
     }
 
-    deinit {
-        let stagingRoot = stagingRoot
-        DispatchQueue.global(qos: .utility).async {
-            try? FileManager.default.removeItem(at: stagingRoot)
+    func prepare() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isPrepared else {
+            return
         }
-    }
 
-    func prepare() async {
-        try? await CPSLICloudStagingCoordinator.shared.prepare(
-            serviceRoot: stagingRoot,
-            processRoot: Self.processRoot,
-            temporaryRoot: FileManager.default.temporaryDirectory
+        try fileManager.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
+        let rootValues = try stagingRoot.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
         )
+        guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
+            throw CPSLICloudMountError.savedMountUnavailable
+        }
+
+        let restoredMounts = try CPSLICloudMountStore.restoreMounts(
+            from: stagingRoot,
+            fileManager: fileManager
+        )
+        try removeUnregisteredItems(keeping: Set(restoredMounts.map(\.slug)))
+        storedMounts = restoredMounts
+        isPrepared = true
     }
 
     func stageReservedDirectory(
         from sourceURL: URL,
+        accessMode: CPSLICloudMountAccessMode,
         progress: @escaping @Sendable (CPSLICloudImportProgress) -> Void
     ) async throws -> CPSLICloudMount {
+        guard beginUpdate() else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        var didChangeMounts = false
+        defer {
+            finishUpdate()
+            if didChangeMounts {
+                NotificationCenter.default.post(
+                    name: CPSLICloudMountStore.didChangeNotification,
+                    object: nil
+                )
+            }
+        }
         try Task.checkCancellation()
 
+#if canImport(Darwin)
         let didAccess = sourceURL.startAccessingSecurityScopedResource()
         guard didAccess else {
             throw CPSLICloudMountError.accessDenied
@@ -67,11 +225,17 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
         defer {
             sourceURL.stopAccessingSecurityScopedResource()
         }
+#endif
 
         let values = try sourceURL.resourceValues(
-            forKeys: [.isDirectoryKey, .isUbiquitousItemKey, .localizedNameKey]
+            forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .isUbiquitousItemKey,
+                .localizedNameKey,
+            ]
         )
-        guard values.isDirectory == true else {
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
             throw CPSLICloudMountError.notDirectory
         }
         guard values.isUbiquitousItem == true else {
@@ -83,10 +247,20 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
             throw CPSLICloudMountError.invalidSource
         }
 
-        let permit = try await CPSLICloudStagingCoordinator.shared.beginImport(
-            serviceRoot: stagingRoot,
-            processRoot: Self.processRoot,
-            temporaryRoot: FileManager.default.temporaryDirectory
+        try fileManager.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
+        let usage = try CPSLICloudStagingStorage.currentUsage(
+            of: try stagedContentRoots(),
+            fileManager: fileManager
+        )
+        let permit = CPSLICloudStagingImportPermit(
+            remainingUsage: CPSLICloudStagingUsage(
+                bytes: max(0, CPSLICloudStagingStorage.maximumActiveUsage.bytes - usage.bytes),
+                items: max(0, CPSLICloudStagingStorage.maximumActiveUsage.items - usage.items)
+            ),
+            availableCapacityBytes: try CPSLICloudStagingStorage.availableCapacity(
+                at: stagingRoot,
+                fileManager: fileManager
+            )
         )
         let slug = uniqueMountSlug(for: label)
         let stagedURL = stagingRoot.appendingPathComponent(slug, isDirectory: true)
@@ -96,6 +270,7 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
                     sourceURL: sourceURL,
                     stagedURL: stagedURL,
                     permit: permit,
+                    isWritable: accessMode == .readWrite,
                     progress: progress
                 )
             )
@@ -103,39 +278,88 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
         } catch {
             let originalError = error
             var cleanupFailed = false
-            if FileManager.default.fileExists(atPath: stagedURL.path) {
+            if fileManager.fileExists(atPath: stagedURL.path) {
                 do {
-                    try FileManager.default.removeItem(at: stagedURL)
+                    try fileManager.removeItem(at: stagedURL)
                 } catch {
                     cleanupFailed = true
                 }
             }
-            await CPSLICloudStagingCoordinator.shared.finishImport()
             if cleanupFailed {
                 throw CPSLICloudStagingError.cannotCleanUp
             }
             throw originalError
         }
 
-        let mount = CPSLICloudMount(label: label, slug: slug, hostURL: stagedURL)
-        withLock {
-            storedMounts.append(mount)
-            storedMounts.sort { $0.virtualPath < $1.virtualPath }
+        let mount = CPSLICloudMount(
+            label: label,
+            slug: slug,
+            hostURL: stagedURL,
+            accessMode: accessMode
+        )
+        let updatedMounts = (mounts + [mount]).sorted { $0.virtualPath < $1.virtualPath }
+        do {
+            try persist(updatedMounts)
+        } catch {
+            let persistenceError = error
+            do {
+                try fileManager.removeItem(at: stagedURL)
+            } catch {
+                throw CPSLICloudStagingError.cannotCleanUp
+            }
+            throw persistenceError
         }
-        await CPSLICloudStagingCoordinator.shared.finishImport()
+        withLock {
+            storedMounts = updatedMounts
+            revision &+= 1
+        }
+        didChangeMounts = true
         return mount
     }
 
     func removeMount(at virtualPath: String) throws {
+        guard beginUpdate() else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        var didChangeMounts = false
+        defer {
+            finishUpdate()
+            if didChangeMounts {
+                NotificationCenter.default.post(
+                    name: CPSLICloudMountStore.didChangeNotification,
+                    object: nil
+                )
+            }
+        }
         guard let mount = mounts.first(where: { $0.virtualPath == virtualPath }) else {
             throw CPSLICloudMountError.mountNotFound
         }
 
-        if FileManager.default.fileExists(atPath: mount.hostURL.path) {
-            try FileManager.default.removeItem(at: mount.hostURL)
+        let tombstoneURL = stagingRoot.appendingPathComponent(
+            ".removing-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let movedMount = fileManager.fileExists(atPath: mount.hostURL.path)
+        if movedMount {
+            try fileManager.moveItem(at: mount.hostURL, to: tombstoneURL)
+        }
+
+        let updatedMounts = mounts.filter { $0.virtualPath != virtualPath }
+        do {
+            try persist(updatedMounts)
+        } catch {
+            if movedMount {
+                try? fileManager.moveItem(at: tombstoneURL, to: mount.hostURL)
+            }
+            throw error
         }
         withLock {
-            storedMounts.removeAll { $0.virtualPath == virtualPath }
+            storedMounts = updatedMounts
+            revision &+= 1
+        }
+        didChangeMounts = true
+        if movedMount {
+            try? fileManager.removeItem(at: tombstoneURL)
         }
     }
 
@@ -163,46 +387,27 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
         _ request: CPSLICloudDirectoryCopyRequest
     ) async throws -> CPSLICloudStagingUsage {
         let cancellationBox = CPSLFileCoordinatorCancellationBox()
-        let coordinator = cancellationBox.coordinator
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            var coordinatorError: NSError?
-            var copyError: Error?
-            var stagingUsage: CPSLICloudStagingUsage?
-
-            coordinator.coordinate(
-                readingItemAt: request.sourceURL,
-                options: [],
-                error: &coordinatorError
-            ) { coordinatedURL in
-                do {
-                    stagingUsage = try CPSLICloudStagingStorage.stageDirectory(
-                        CPSLICloudStagingRequest(
-                            sourceRoot: coordinatedURL,
-                            destinationRoot: request.stagedURL,
-                            permit: request.permit
-                        ),
-                        progress: request.progress
-                    )
-                } catch {
-                    copyError = error
-                }
-            }
-
-            try Task.checkCancellation()
-            if let coordinatorError {
-                throw coordinatorError
-            }
-            if let copyError {
-                throw copyError
-            }
-            guard let stagingUsage else {
-                throw CPSLICloudStagingError.cannotEnumerateFolder
-            }
-            return stagingUsage
+            return try CPSLICloudStagingStorage.stageDirectory(
+                CPSLICloudStagingRequest(
+                    sourceRoot: request.sourceURL,
+                    destinationRoot: request.stagedURL,
+                    permit: request.permit,
+                    isWritable: request.isWritable,
+                    coordinateFileRead: { sourceURL, accessor in
+                        try cancellationBox.coordinateFileRead(
+                            at: sourceURL,
+                            accessor: accessor
+                        )
+                    }
+                ),
+                progress: request.progress
+            )
         } onCancel: {
-            // NSFileCoordinator may wait for an active accessor to return.
-            // Never make the UI thread pay for that wait.
+            // A coordinator can cancel while waiting to vend its local
+            // snapshot. Once the accessor starts, the chunked copy observes
+            // Task cancellation directly.
             DispatchQueue.global(qos: .utility).async {
                 cancellationBox.cancel()
             }
@@ -215,26 +420,45 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
         var suffix = 2
         let usedSlugs = Set(mounts.map(\.slug))
         while usedSlugs.contains(slug) ||
-            FileManager.default.fileExists(atPath: stagingRoot.appendingPathComponent(slug).path) {
+            fileManager.fileExists(atPath: stagingRoot.appendingPathComponent(slug).path) {
             slug = "\(baseSlug)-\(suffix)"
             suffix += 1
         }
         return slug
     }
 
-    func beginStaging() -> Bool {
+    func beginUpdate() -> Bool {
         withLock {
-            guard !stagingInProgress else {
+            guard !updateInProgress, activeUseCount == 0 else {
                 return false
             }
-            stagingInProgress = true
+            updateInProgress = true
             return true
         }
     }
 
-    func finishStaging() {
+    func finishUpdate() {
         withLock {
-            stagingInProgress = false
+            updateInProgress = false
+        }
+    }
+
+    func beginUse() -> CPSLICloudMountUseLease? {
+        lock.lock()
+        guard !updateInProgress else {
+            lock.unlock()
+            return nil
+        }
+        activeUseCount += 1
+        let lease = CPSLICloudMountUseLease(manager: self, revision: revision)
+        lock.unlock()
+        return lease
+    }
+
+    fileprivate func finishUse() {
+        withLock {
+            precondition(activeUseCount > 0)
+            activeUseCount -= 1
         }
     }
 
@@ -244,6 +468,42 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
             lock.unlock()
         }
         return try operation()
+    }
+
+    private func persist(_ mounts: [CPSLICloudMount]) throws {
+        try CPSLICloudMountStore.save(
+            mounts.map {
+                CPSLICloudMountRecord(
+                    label: $0.label,
+                    slug: $0.slug,
+                    accessMode: $0.accessMode
+                )
+            },
+            to: stagingRoot,
+            fileManager: fileManager
+        )
+    }
+
+    private func removeUnregisteredItems(keeping slugs: Set<String>) throws {
+        let contents = try fileManager.contentsOfDirectory(
+            at: stagingRoot,
+            includingPropertiesForKeys: nil,
+            options: []
+        )
+        for url in contents where
+            url.lastPathComponent != CPSLICloudMountStore.registryFileName &&
+            !slugs.contains(url.lastPathComponent)
+        {
+            try fileManager.removeItem(at: url)
+        }
+    }
+
+    private func stagedContentRoots() throws -> [URL] {
+        try fileManager.contentsOfDirectory(
+            at: stagingRoot,
+            includingPropertiesForKeys: nil,
+            options: []
+        ).filter { $0.lastPathComponent != CPSLICloudMountStore.registryFileName }
     }
 
     private static func sanitizedMountLabel(_ value: String) -> String {
@@ -302,6 +562,7 @@ nonisolated enum CPSLICloudMountError: LocalizedError {
     case invalidSource
     case mountNotFound
     case notDirectory
+    case savedMountUnavailable
     case sessionBusy
     case unsupportedProvider
 
@@ -315,6 +576,8 @@ nonisolated enum CPSLICloudMountError: LocalizedError {
             return "iCloud mount is not available."
         case .notDirectory:
             return "Choose a folder from iCloud Drive."
+        case .savedMountUnavailable:
+            return "A saved iCloud folder copy is no longer available. Remove it and connect the folder again."
         case .sessionBusy:
             return "Wait for the current operation to finish."
         case .unsupportedProvider:

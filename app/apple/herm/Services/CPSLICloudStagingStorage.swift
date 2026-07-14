@@ -12,6 +12,7 @@ nonisolated struct CPSLICloudStagingUsage: Equatable, Sendable {
 
 nonisolated enum CPSLICloudImportPhase: Equatable, Sendable {
     case preparing
+    case downloading
     case copying
     case cancelling
 }
@@ -56,10 +57,13 @@ nonisolated enum CPSLICloudStagingError: LocalizedError, Equatable {
     case cannotCreateFile
     case cannotEnumerateFolder
     case cannotCleanUp
+    case downloadFailed
+    case downloadTimedOut
     case folderTooLarge
-    case importInProgress
+    case incompleteCopy
     case insufficientStorage
     case tooManyItems
+    case unresolvedConflict
     case unsupportedItem
 
     var errorDescription: String? {
@@ -70,16 +74,22 @@ nonisolated enum CPSLICloudStagingError: LocalizedError, Equatable {
             return "Herm could not read the selected iCloud folder."
         case .cannotCleanUp:
             return "Herm could not remove an incomplete staged iCloud copy."
+        case .downloadFailed:
+            return "Herm could not download an iCloud file."
+        case .downloadTimedOut:
+            return "iCloud did not finish downloading a file in time."
         case .folderTooLarge:
             let megabytes = CPSLICloudStagingStorage.maximumActiveUsage.bytes / (1_024 * 1_024)
             return "Connected iCloud folders are limited to \(megabytes) MB in total."
-        case .importInProgress:
-            return "Another iCloud folder is already being added."
+        case .incompleteCopy:
+            return "An iCloud file changed before Herm could finish copying it."
         case .insufficientStorage:
             return "There is not enough free space to stage this iCloud folder."
         case .tooManyItems:
             let items = CPSLICloudStagingStorage.maximumActiveUsage.items.formatted()
             return "Connected iCloud folders are limited to \(items) items in total."
+        case .unresolvedConflict:
+            return "Resolve iCloud file conflicts before connecting this folder."
         case .unsupportedItem:
             return "The selected iCloud folder contains an unsupported file type."
         }
@@ -91,217 +101,37 @@ nonisolated struct CPSLICloudStagingImportPermit: Sendable {
     let availableCapacityBytes: Int64
 }
 
+typealias CPSLICloudCoordinatedFileRead = @Sendable (
+    _ sourceURL: URL,
+    _ accessor: (URL) throws -> Void
+) throws -> Void
+
 nonisolated struct CPSLICloudStagingRequest: Sendable {
     let sourceRoot: URL
     let destinationRoot: URL
     let permit: CPSLICloudStagingImportPermit
-}
-
-/// Owns the process root's advisory lock for the lifetime of the process.
-/// A later process removes only roots whose owner lock is no longer held.
-nonisolated final class CPSLICloudStagingProcessLease: @unchecked Sendable {
-    let processRoot: URL
-
-    private let ownerHandle: FileHandle
-    private let fileManager: FileManager
+    let isWritable: Bool
+    let materializeFile: @Sendable (URL) throws -> Void
+    let coordinateFileRead: CPSLICloudCoordinatedFileRead
 
     init(
-        processRoot: URL,
-        temporaryRoot: URL,
-        fileManager: FileManager = .default
-    ) throws {
-        self.processRoot = processRoot
-        self.fileManager = fileManager
-
-        let cleanupHandle = try Self.openLockFile(
-            at: temporaryRoot.appendingPathComponent(".herm-icloud-cleanup.lock"),
-            fileManager: fileManager
-        )
-        try Self.lock(cleanupHandle, operation: LOCK_EX)
-        defer {
-            Self.unlockAndClose(cleanupHandle)
+        sourceRoot: URL,
+        destinationRoot: URL,
+        permit: CPSLICloudStagingImportPermit,
+        isWritable: Bool = false,
+        materializeFile: @escaping @Sendable (URL) throws -> Void = {
+            try CPSLICloudStagingStorage.materializeUbiquitousFile(at: $0)
+        },
+        coordinateFileRead: @escaping CPSLICloudCoordinatedFileRead = { sourceURL, accessor in
+            try accessor(sourceURL)
         }
-
-        try fileManager.createDirectory(at: processRoot, withIntermediateDirectories: true)
-        let ownerURL = processRoot.appendingPathComponent(".owner.lock", isDirectory: false)
-        let ownerHandle = try Self.openLockFile(at: ownerURL, fileManager: fileManager)
-        do {
-            try Self.lock(ownerHandle, operation: LOCK_EX | LOCK_NB)
-            for staleRoot in try CPSLICloudStagingStorage.staleRoots(
-                in: temporaryRoot,
-                excluding: processRoot,
-                fileManager: fileManager
-            ) {
-                try Self.removeRootIfInactive(staleRoot, fileManager: fileManager)
-            }
-        } catch {
-            Self.unlockAndClose(ownerHandle)
-            try? fileManager.removeItem(at: processRoot)
-            throw error
-        }
-        self.ownerHandle = ownerHandle
-    }
-
-    deinit {
-        Self.unlockAndClose(ownerHandle)
-    }
-
-    func prepareServiceRoot(_ serviceRoot: URL) throws {
-        guard serviceRoot.deletingLastPathComponent().standardizedFileURL ==
-                processRoot.standardizedFileURL
-        else {
-            throw CPSLICloudStagingError.cannotCreateFile
-        }
-        try fileManager.createDirectory(at: serviceRoot, withIntermediateDirectories: true)
-    }
-
-    private static func removeRootIfInactive(
-        _ root: URL,
-        fileManager: FileManager
-    ) throws {
-        let ownerURL = root.appendingPathComponent(".owner.lock", isDirectory: false)
-        guard fileManager.fileExists(atPath: ownerURL.path) else {
-            try makeRemovable(root, fileManager: fileManager)
-            try fileManager.removeItem(at: root)
-            return
-        }
-
-        let handle = try FileHandle(forUpdating: ownerURL)
-        let lockResult = flock(handle.fileDescriptor, LOCK_EX | LOCK_NB)
-        guard lockResult == 0 else {
-            let code = errno
-            try? handle.close()
-            if code == EWOULDBLOCK || code == EAGAIN {
-                return
-            }
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(code))
-        }
-        defer {
-            unlockAndClose(handle)
-        }
-        try makeRemovable(root, fileManager: fileManager)
-        try fileManager.removeItem(at: root)
-    }
-
-    private static func makeRemovable(_ root: URL, fileManager: FileManager) throws {
-        try fileManager.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: root.path
-        )
-        var enumerationError: Error?
-        guard let enumerator = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: [],
-            errorHandler: { _, error in
-                enumerationError = error
-                return false
-            }
-        ) else {
-            throw CPSLICloudStagingError.cannotCleanUp
-        }
-        for case let url as URL in enumerator {
-            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            if values.isDirectory == true, values.isSymbolicLink != true {
-                try fileManager.setAttributes(
-                    [.posixPermissions: 0o700],
-                    ofItemAtPath: url.path
-                )
-            }
-        }
-        if enumerationError != nil {
-            throw CPSLICloudStagingError.cannotCleanUp
-        }
-    }
-
-    private static func openLockFile(at url: URL, fileManager: FileManager) throws -> FileHandle {
-        if !fileManager.fileExists(atPath: url.path) {
-            guard fileManager.createFile(atPath: url.path, contents: Data()) else {
-                throw CPSLICloudStagingError.cannotCreateFile
-            }
-        }
-        return try FileHandle(forUpdating: url)
-    }
-
-    private static func lock(_ handle: FileHandle, operation: Int32) throws {
-        guard flock(handle.fileDescriptor, operation) == 0 else {
-            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-        }
-    }
-
-    private static func unlockAndClose(_ handle: FileHandle) {
-        _ = flock(handle.fileDescriptor, LOCK_UN)
-        try? handle.close()
-    }
-}
-
-actor CPSLICloudStagingCoordinator {
-    static let shared = CPSLICloudStagingCoordinator()
-
-    private var lease: CPSLICloudStagingProcessLease?
-    private var isImporting = false
-
-    func prepare(
-        serviceRoot: URL,
-        processRoot: URL,
-        temporaryRoot: URL
-    ) throws {
-        let lease = try processLease(processRoot: processRoot, temporaryRoot: temporaryRoot)
-        try lease.prepareServiceRoot(serviceRoot)
-    }
-
-    func beginImport(
-        serviceRoot: URL,
-        processRoot: URL,
-        temporaryRoot: URL
-    ) throws -> CPSLICloudStagingImportPermit {
-        guard !isImporting else {
-            throw CPSLICloudStagingError.importInProgress
-        }
-        isImporting = true
-        do {
-            try prepare(
-                serviceRoot: serviceRoot,
-                processRoot: processRoot,
-                temporaryRoot: temporaryRoot
-            )
-            let used = try CPSLICloudStagingStorage.currentUsage(in: processRoot)
-            let remaining = CPSLICloudStagingUsage(
-                bytes: max(0, CPSLICloudStagingStorage.maximumActiveUsage.bytes - used.bytes),
-                items: max(0, CPSLICloudStagingStorage.maximumActiveUsage.items - used.items)
-            )
-            return CPSLICloudStagingImportPermit(
-                remainingUsage: remaining,
-                availableCapacityBytes: try CPSLICloudStagingStorage.availableCapacity(
-                    at: serviceRoot
-                )
-            )
-        } catch {
-            isImporting = false
-            throw error
-        }
-    }
-
-    func finishImport() {
-        isImporting = false
-    }
-
-    private func processLease(
-        processRoot: URL,
-        temporaryRoot: URL
-    ) throws -> CPSLICloudStagingProcessLease {
-        if let lease {
-            guard lease.processRoot.standardizedFileURL == processRoot.standardizedFileURL else {
-                throw CPSLICloudStagingError.cannotCreateFile
-            }
-            return lease
-        }
-        let lease = try CPSLICloudStagingProcessLease(
-            processRoot: processRoot,
-            temporaryRoot: temporaryRoot
-        )
-        self.lease = lease
-        return lease
+    ) {
+        self.sourceRoot = sourceRoot
+        self.destinationRoot = destinationRoot
+        self.permit = permit
+        self.isWritable = isWritable
+        self.materializeFile = materializeFile
+        self.coordinateFileRead = coordinateFileRead
     }
 }
 
@@ -312,51 +142,14 @@ nonisolated enum CPSLICloudStagingStorage {
     )
     static let freeSpaceReserveBytes: Int64 = 256 * 1_024 * 1_024
 
-    private static let rootPrefix = "herm-icloud-"
     private static let copyChunkBytes = 1 * 1_024 * 1_024
+    private static let materializationPollInterval: TimeInterval = 0.1
+    private static let materializationTimeout: TimeInterval = 10 * 60
     private static let progressByteInterval: Int64 = 4 * 1_024 * 1_024
     private static let progressItemInterval = 100
 
-    static func makeProcessRoot(in temporaryRoot: URL) -> URL {
-        temporaryRoot.appendingPathComponent(
-            "\(rootPrefix)\(UUID().uuidString)",
-            isDirectory: true
-        )
-    }
-
-    static func makeServiceRoot(in processRoot: URL) -> URL {
-        processRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    }
-
-    static func staleRoots(
-        in temporaryRoot: URL,
-        excluding currentProcessRoot: URL,
-        fileManager: FileManager = .default
-    ) throws -> [URL] {
-        let currentPath = currentProcessRoot.standardizedFileURL.path
-        let urls = try fileManager.contentsOfDirectory(
-            at: temporaryRoot,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: []
-        )
-
-        return try urls.filter { url in
-            guard url.standardizedFileURL.path != currentPath,
-                url.lastPathComponent.hasPrefix(rootPrefix)
-            else {
-                return false
-            }
-            let suffix = String(url.lastPathComponent.dropFirst(rootPrefix.count))
-            guard UUID(uuidString: suffix) != nil else {
-                return false
-            }
-            let values = try url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            return values.isDirectory == true && values.isSymbolicLink != true
-        }
-    }
-
     static func currentUsage(
-        in processRoot: URL,
+        of roots: [URL],
         fileManager: FileManager = .default
     ) throws -> CPSLICloudStagingUsage {
         let keys: Set<URLResourceKey> = [
@@ -365,23 +158,40 @@ nonisolated enum CPSLICloudStagingStorage {
             .isRegularFileKey,
             .isSymbolicLinkKey,
         ]
-        let serviceRoots = try fileManager.contentsOfDirectory(
-            at: processRoot,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: []
-        )
-
         var bytes: Int64 = 0
         var items = 0
-        for serviceRoot in serviceRoots {
-            guard UUID(uuidString: serviceRoot.lastPathComponent) != nil,
-                try serviceRoot.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+
+        func include(_ values: URLResourceValues) throws {
+            guard values.isSymbolicLink != true,
+                  values.isDirectory == true || values.isRegularFile == true
             else {
+                throw CPSLICloudStagingError.unsupportedItem
+            }
+            let (nextItems, itemOverflow) = items.addingReportingOverflow(1)
+            guard !itemOverflow else {
+                throw CPSLICloudStagingError.tooManyItems
+            }
+            items = nextItems
+            guard values.isRegularFile == true else {
+                return
+            }
+            let size = Int64(max(0, values.fileSize ?? 0))
+            let (nextBytes, byteOverflow) = bytes.addingReportingOverflow(size)
+            guard !byteOverflow else {
+                throw CPSLICloudStagingError.folderTooLarge
+            }
+            bytes = nextBytes
+        }
+
+        for root in roots {
+            let rootValues = try root.resourceValues(forKeys: keys)
+            try include(rootValues)
+            guard rootValues.isDirectory == true else {
                 continue
             }
             var enumerationError: Error?
             guard let enumerator = fileManager.enumerator(
-                at: serviceRoot,
+                at: root,
                 includingPropertiesForKeys: Array(keys),
                 options: [],
                 errorHandler: { _, error in
@@ -392,20 +202,7 @@ nonisolated enum CPSLICloudStagingStorage {
                 throw CPSLICloudStagingError.cannotEnumerateFolder
             }
             while let url = enumerator.nextObject() as? URL {
-                let (nextItems, itemOverflow) = items.addingReportingOverflow(1)
-                guard !itemOverflow else {
-                    throw CPSLICloudStagingError.tooManyItems
-                }
-                items = nextItems
-                let values = try url.resourceValues(forKeys: keys)
-                if values.isRegularFile == true, values.isSymbolicLink != true {
-                    let size = Int64(max(0, values.fileSize ?? 0))
-                    let (nextBytes, byteOverflow) = bytes.addingReportingOverflow(size)
-                    guard !byteOverflow else {
-                        throw CPSLICloudStagingError.folderTooLarge
-                    }
-                    bytes = nextBytes
-                }
+                try include(url.resourceValues(forKeys: keys))
             }
             if enumerationError != nil {
                 throw CPSLICloudStagingError.cannotEnumerateFolder
@@ -425,6 +222,63 @@ nonisolated enum CPSLICloudStagingStorage {
         return max(0, freeSize.int64Value)
     }
 
+    static func materializeUbiquitousFile(
+        at url: URL,
+        fileManager: FileManager = .default
+    ) throws {
+#if canImport(Darwin)
+        try Task.checkCancellation()
+        let identity = try url.resourceValues(forKeys: [.isUbiquitousItemKey])
+        guard identity.isUbiquitousItem == true else {
+            return
+        }
+
+        let keys: Set<URLResourceKey> = [
+            .ubiquitousItemDownloadingErrorKey,
+            .ubiquitousItemDownloadingStatusKey,
+            .ubiquitousItemHasUnresolvedConflictsKey,
+        ]
+        let deadline = ProcessInfo.processInfo.systemUptime + materializationTimeout
+        var requestedDownload = false
+        while true {
+            try Task.checkCancellation()
+            var refreshedURL = url
+            refreshedURL.removeAllCachedResourceValues()
+            let values: URLResourceValues
+            do {
+                values = try refreshedURL.resourceValues(forKeys: keys)
+            } catch {
+                throw CPSLICloudStagingError.downloadFailed
+            }
+            guard values.ubiquitousItemHasUnresolvedConflicts != true else {
+                throw CPSLICloudStagingError.unresolvedConflict
+            }
+            guard values.ubiquitousItemDownloadingError == nil else {
+                throw CPSLICloudStagingError.downloadFailed
+            }
+            if values.ubiquitousItemDownloadingStatus == .current {
+                return
+            }
+            if !requestedDownload {
+                do {
+                    try fileManager.startDownloadingUbiquitousItem(at: url)
+                } catch {
+                    throw CPSLICloudStagingError.downloadFailed
+                }
+                requestedDownload = true
+            }
+            guard ProcessInfo.processInfo.systemUptime < deadline else {
+                throw CPSLICloudStagingError.downloadTimedOut
+            }
+            Thread.sleep(forTimeInterval: materializationPollInterval)
+        }
+#else
+        _ = url
+        _ = fileManager
+        try Task.checkCancellation()
+#endif
+    }
+
     static func stageDirectory(
         _ request: CPSLICloudStagingRequest,
         fileManager: FileManager = .default,
@@ -438,26 +292,31 @@ nonisolated enum CPSLICloudStagingStorage {
         let remainingUsage = request.permit.remainingUsage
         let availableCapacityBytes = request.permit.availableCapacityBytes
 
+        guard availableCapacityBytes > freeSpaceReserveBytes else {
+            throw CPSLICloudStagingError.insufficientStorage
+        }
+        let capacityForCopy = availableCapacityBytes - freeSpaceReserveBytes
+        let actualByteLimit = min(remainingUsage.bytes, capacityForCopy)
+        let actualByteLimitError: CPSLICloudStagingError =
+            remainingUsage.bytes <= capacityForCopy ? .folderTooLarge : .insufficientStorage
         let manifest = try makeManifest(
             sourceRoot: sourceRoot,
             itemLimit: remainingUsage.items,
-            fileManager: fileManager
+            byteLimit: actualByteLimit,
+            byteLimitError: actualByteLimitError,
+            isWritable: request.isWritable,
+            materializeFile: request.materializeFile,
+            fileManager: fileManager,
+            progress: progress
         )
         guard manifest.usage.bytes <= remainingUsage.bytes else {
             throw CPSLICloudStagingError.folderTooLarge
         }
 
-        guard availableCapacityBytes > freeSpaceReserveBytes else {
-            throw CPSLICloudStagingError.insufficientStorage
-        }
-        let capacityForCopy = availableCapacityBytes - freeSpaceReserveBytes
         guard manifest.usage.bytes <= capacityForCopy else {
             throw CPSLICloudStagingError.insufficientStorage
         }
 
-        let actualByteLimit = min(remainingUsage.bytes, capacityForCopy)
-        let actualByteLimitError: CPSLICloudStagingError =
-            remainingUsage.bytes <= capacityForCopy ? .folderTooLarge : .insufficientStorage
         do {
             try fileManager.createDirectory(at: destinationRoot, withIntermediateDirectories: false)
             var completedBytes: Int64 = 0
@@ -497,19 +356,28 @@ nonisolated enum CPSLICloudStagingStorage {
                 case .directory:
                     try fileManager.createDirectory(at: destination, withIntermediateDirectories: false)
                 case .file:
-                    let nextCompletedBytes = try copyFile(
-                        FileCopyRequest(
-                            source: item.sourceURL,
-                            destination: destination,
-                            byteLimit: actualByteLimit,
-                            byteLimitError: actualByteLimitError,
-                            startingBytes: completedBytes
-                        ),
-                        fileManager: fileManager,
-                        onChunk: { bytes in
-                            reportProgress(bytes: bytes)
-                        }
-                    )
+                    try request.materializeFile(item.sourceURL)
+                    try Task.checkCancellation()
+                    var nextCompletedBytes: Int64?
+                    try request.coordinateFileRead(item.sourceURL) { coordinatedURL in
+                        nextCompletedBytes = try copyFile(
+                            FileCopyRequest(
+                                source: coordinatedURL,
+                                destination: destination,
+                                byteLimit: actualByteLimit,
+                                byteLimitError: actualByteLimitError,
+                                expectedBytes: item.expectedBytes,
+                                startingBytes: completedBytes
+                            ),
+                            fileManager: fileManager,
+                            onChunk: { bytes in
+                                reportProgress(bytes: bytes)
+                            }
+                        )
+                    }
+                    guard let nextCompletedBytes else {
+                        throw CPSLICloudStagingError.incompleteCopy
+                    }
                     completedBytes = nextCompletedBytes
                     try applyMetadata(item.metadata, to: destination, fileManager: fileManager)
                 }
@@ -534,6 +402,9 @@ nonisolated enum CPSLICloudStagingStorage {
             try applyMetadata(manifest.rootMetadata, to: destinationRoot, fileManager: fileManager)
 
             try Task.checkCancellation()
+            guard completedBytes == manifest.usage.bytes else {
+                throw CPSLICloudStagingError.incompleteCopy
+            }
             reportProgress(force: true)
             return CPSLICloudStagingUsage(bytes: completedBytes, items: completedItems)
         } catch {
@@ -559,6 +430,13 @@ nonisolated enum CPSLICloudStagingStorage {
         let relativeComponents: [String]
         let kind: ItemKind
         let metadata: [FileAttributeKey: Any]
+        let expectedBytes: Int64
+    }
+
+    private struct ManifestSeed {
+        let sourceURL: URL
+        let relativeComponents: [String]
+        let kind: ItemKind
     }
 
     private struct Manifest {
@@ -572,30 +450,33 @@ nonisolated enum CPSLICloudStagingStorage {
         let destination: URL
         let byteLimit: Int64
         let byteLimitError: CPSLICloudStagingError
+        let expectedBytes: Int64
         let startingBytes: Int64
     }
 
     private static func makeManifest(
         sourceRoot: URL,
         itemLimit: Int,
-        fileManager: FileManager
+        byteLimit: Int64,
+        byteLimitError: CPSLICloudStagingError,
+        isWritable: Bool,
+        materializeFile: @Sendable (URL) throws -> Void,
+        fileManager: FileManager,
+        progress: @Sendable (CPSLICloudImportProgress) -> Void
     ) throws -> Manifest {
         guard itemLimit >= 1 else {
             throw CPSLICloudStagingError.tooManyItems
         }
 
-        let rootMetadata = try copyableMetadata(
-            at: sourceRoot,
-            isDirectory: true,
-            fileManager: fileManager
-        )
-
         let keys: Set<URLResourceKey> = [
-            .fileSizeKey,
             .isDirectoryKey,
             .isRegularFileKey,
             .isSymbolicLinkKey,
         ]
+        let rootValues = try sourceRoot.resourceValues(forKeys: keys)
+        guard rootValues.isDirectory == true, rootValues.isSymbolicLink != true else {
+            throw CPSLICloudStagingError.unsupportedItem
+        }
         var enumerationError: Error?
         guard let enumerator = fileManager.enumerator(
             at: sourceRoot,
@@ -610,8 +491,7 @@ nonisolated enum CPSLICloudStagingStorage {
         }
 
         let rootComponents = sourceRoot.standardizedFileURL.pathComponents
-        var items: [ManifestItem] = []
-        var expectedBytes: Int64 = 0
+        var seeds: [ManifestSeed] = []
         var itemCount = 1
 
         while let sourceURL = enumerator.nextObject() as? URL {
@@ -630,12 +510,6 @@ nonisolated enum CPSLICloudStagingStorage {
                 kind = .directory
             } else if values.isRegularFile == true {
                 kind = .file
-                let fileSize = Int64(max(0, values.fileSize ?? 0))
-                let (nextBytes, overflow) = expectedBytes.addingReportingOverflow(fileSize)
-                guard !overflow else {
-                    throw CPSLICloudStagingError.folderTooLarge
-                }
-                expectedBytes = nextBytes
             } else {
                 throw CPSLICloudStagingError.unsupportedItem
             }
@@ -644,16 +518,11 @@ nonisolated enum CPSLICloudStagingStorage {
             guard components.starts(with: rootComponents), components.count > rootComponents.count else {
                 throw CPSLICloudStagingError.cannotEnumerateFolder
             }
-            items.append(
-                ManifestItem(
+            seeds.append(
+                ManifestSeed(
                     sourceURL: sourceURL,
                     relativeComponents: Array(components.dropFirst(rootComponents.count)),
-                    kind: kind,
-                    metadata: try copyableMetadata(
-                        at: sourceURL,
-                        isDirectory: kind == .directory,
-                        fileManager: fileManager
-                    )
+                    kind: kind
                 )
             )
         }
@@ -661,6 +530,71 @@ nonisolated enum CPSLICloudStagingStorage {
         if enumerationError != nil {
             throw CPSLICloudStagingError.cannotEnumerateFolder
         }
+
+        let fileCount = seeds.lazy.filter { $0.kind == .file }.count
+        var materializedFiles = 0
+        if fileCount > 0 {
+            progress(
+                CPSLICloudImportProgress(
+                    phase: .downloading,
+                    completedBytes: 0,
+                    totalBytes: 0,
+                    completedItems: 0,
+                    totalItems: fileCount
+                )
+            )
+        }
+
+        var items: [ManifestItem] = []
+        var expectedBytes: Int64 = 0
+        for seed in seeds {
+            try Task.checkCancellation()
+            var fileSize: Int64 = 0
+            if seed.kind == .file {
+                try materializeFile(seed.sourceURL)
+                try Task.checkCancellation()
+                let values = try seed.sourceURL.resourceValues(forKeys: [.fileSizeKey])
+                guard let sourceFileSize = values.fileSize else {
+                    throw CPSLICloudStagingError.cannotEnumerateFolder
+                }
+                fileSize = Int64(max(0, sourceFileSize))
+                let (nextBytes, overflow) = expectedBytes.addingReportingOverflow(fileSize)
+                guard !overflow, nextBytes <= byteLimit else {
+                    throw byteLimitError
+                }
+                expectedBytes = nextBytes
+                materializedFiles += 1
+                progress(
+                    CPSLICloudImportProgress(
+                        phase: .downloading,
+                        completedBytes: 0,
+                        totalBytes: 0,
+                        completedItems: materializedFiles,
+                        totalItems: fileCount
+                    )
+                )
+            }
+            items.append(
+                ManifestItem(
+                    sourceURL: seed.sourceURL,
+                    relativeComponents: seed.relativeComponents,
+                    kind: seed.kind,
+                    metadata: try copyableMetadata(
+                        at: seed.sourceURL,
+                        isDirectory: seed.kind == .directory,
+                        isWritable: isWritable,
+                        fileManager: fileManager
+                    ),
+                    expectedBytes: fileSize
+                )
+            )
+        }
+        let rootMetadata = try copyableMetadata(
+            at: sourceRoot,
+            isDirectory: true,
+            isWritable: isWritable,
+            fileManager: fileManager
+        )
         return Manifest(
             items: items,
             usage: CPSLICloudStagingUsage(bytes: expectedBytes, items: itemCount),
@@ -677,13 +611,16 @@ nonisolated enum CPSLICloudStagingStorage {
     private static func copyableMetadata(
         at url: URL,
         isDirectory: Bool,
+        isWritable: Bool,
         fileManager: FileManager
     ) throws -> [FileAttributeKey: Any] {
         let source = try fileManager.attributesOfItem(atPath: url.path)
         var metadata: [FileAttributeKey: Any] = [:]
         if let permissions = source[.posixPermissions] as? NSNumber {
-            let access = isDirectory ? 0o700 : 0
+            let access = isDirectory ? 0o700 : (isWritable ? 0o600 : 0o400)
             metadata[.posixPermissions] = permissions.intValue & 0o777 | access
+        } else if !isDirectory {
+            metadata[.posixPermissions] = isWritable ? 0o600 : 0o400
         }
         metadata[.modificationDate] = source[.modificationDate]
 #if canImport(Darwin)
@@ -763,6 +700,9 @@ nonisolated enum CPSLICloudStagingStorage {
             try output.write(contentsOf: data)
             completedBytes = nextBytes
             onChunk(completedBytes)
+        }
+        guard completedBytes - request.startingBytes == request.expectedBytes else {
+            throw CPSLICloudStagingError.incompleteCopy
         }
         return completedBytes
     }

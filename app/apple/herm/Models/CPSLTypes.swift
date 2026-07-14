@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct CPSLSandboxURLs {
     let root: URL
     let iCloudNamespace: URL
+    let iCloudMountStorage: URL
 }
 
 nonisolated enum CPSLVirtualPath {
@@ -38,15 +39,6 @@ enum CPSLFeatureAccessState: String, Equatable, Sendable {
     var isGranted: Bool {
         self == .granted
     }
-}
-
-nonisolated struct CPSLICloudMount: Identifiable, Equatable, Sendable {
-    let label: String
-    let slug: String
-    let hostURL: URL
-
-    var id: String { slug }
-    var virtualPath: String { "\(CPSLVirtualPath.iCloudRoot)/\(slug)" }
 }
 
 nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {

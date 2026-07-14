@@ -33,7 +33,7 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var isLocationOpen = false
     @Published private(set) var isLocationActivityActive = false
     @Published private(set) var iCloudMounts: [CPSLICloudMount] = []
-    @Published private(set) var isUpdatingICloudMounts = false
+    @Published private(set) var isUpdatingICloudMounts = true
     @Published private(set) var iCloudImportProgress: CPSLICloudImportProgress?
 
     var isBusy: Bool {
@@ -58,6 +58,7 @@ final class CPSLChatModel: ObservableObject {
     var typewriterTask: Task<Void, Never>?
     private var iCloudImportTask: Task<Void, Never>?
     private var activeICloudImportID: UUID?
+    private var iCloudMountChangeObserver: NSObjectProtocol?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
@@ -127,18 +128,18 @@ final class CPSLChatModel: ObservableObject {
             return basePrompt
         }
         let mountLines = iCloudMounts.map { mount in
-            "- `\(mount.virtualPath)`: read-only staged iCloud Drive snapshot"
+            "- `\(mount.virtualPath)`: \(mount.accessMode.promptDescription) persistent iCloud Drive copy"
         }.joined(separator: "\n")
         return basePrompt + """
 
 
         ## iCloud Mounts
 
-        The user selected staged iCloud Drive folders. They are available in CPSL:
+        The user selected iCloud Drive folders. Persistent staged copies are available in CPSL:
 
         \(mountLines)
 
-        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Write outputs to `/home/herm` or `/tmp`; iCloud mounts are staged snapshots and do not sync changes back to iCloud. Network access is disabled while these mounts are active.
+        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Do not modify read-only mounts. Read-write mounts may be modified when the task calls for it. These copies do not sync changes back to iCloud Drive. Network access is disabled while these mounts are active.
         """
     }
 
@@ -151,6 +152,15 @@ final class CPSLChatModel: ObservableObject {
             calendarActivityNotifier: calendarActivityNotifier,
             fileActivityNotifier: fileActivityNotifier
         )
+        iCloudMountChangeObserver = NotificationCenter.default.addObserver(
+            forName: CPSLICloudMountStore.didChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshICloudMountsAfterChange()
+            }
+        }
         fileActivityNotifier.setHandler { [weak self] _ in
             self?.markFileActivity()
         }
@@ -175,9 +185,6 @@ final class CPSLChatModel: ObservableObject {
         }
         webBrowser.webVisitOccurred = { [weak self] visit in
             self?.appendWebSearchVisit(visit)
-        }
-        Task {
-            await service.prepareICloudStaging()
         }
         Task {
             await bootstrap()
@@ -679,7 +686,10 @@ final class CPSLChatModel: ObservableObject {
         }
     }
 
-    func importICloudDirectory(_ url: URL) {
+    func importICloudDirectory(
+        _ url: URL,
+        accessMode: CPSLICloudMountAccessMode
+    ) {
         guard !isBusy else {
             fileBrowserError = "Wait for the current operation to finish before adding an iCloud folder."
             return
@@ -700,7 +710,10 @@ final class CPSLChatModel: ObservableObject {
                 }
             }
             do {
-                let mount = try await service.stageICloudDirectory(from: url) { [weak self] progress in
+                let mount = try await service.stageICloudDirectory(
+                    from: url,
+                    accessMode: accessMode
+                ) { [weak self] progress in
                     Task { @MainActor [weak self] in
                         self?.applyICloudImportProgress(progress, importID: importID)
                     }
@@ -725,6 +738,37 @@ final class CPSLChatModel: ObservableObject {
 
     deinit {
         iCloudImportTask?.cancel()
+        if let iCloudMountChangeObserver {
+            NotificationCenter.default.removeObserver(iCloudMountChangeObserver)
+        }
+    }
+
+    private func refreshICloudMountsAfterChange() async {
+        let updatedMounts = await service.activeICloudMounts()
+        let previousBrowserPath = browserPath
+        let previewPath = filePreview?.path
+        iCloudMounts = updatedMounts
+
+        if let previewPath,
+           previewPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/"),
+           CPSLICloudMountResolver.mount(containing: previewPath, in: updatedMounts) == nil {
+            filePreview = nil
+        }
+
+        guard previousBrowserPath == CPSLVirtualPath.iCloudRoot ||
+                previousBrowserPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/")
+        else {
+            return
+        }
+        if previousBrowserPath != CPSLVirtualPath.iCloudRoot,
+           CPSLICloudMountResolver.mount(
+               containing: previousBrowserPath,
+               in: updatedMounts
+           ) == nil {
+            loadBrowserPath(CPSLVirtualPath.iCloudRoot)
+        } else if isFileBrowserOpen {
+            loadBrowserPath(previousBrowserPath)
+        }
     }
 
     private func applyICloudImportProgress(
@@ -737,12 +781,16 @@ final class CPSLChatModel: ObservableObject {
         guard iCloudImportProgress?.phase != .cancelling else {
             return
         }
-        if let current = iCloudImportProgress, current.phase == .copying {
-            guard progress.phase == .copying,
-                progress.completedBytes >= current.completedBytes,
-                progress.completedItems >= current.completedItems
-            else {
-                return
+        if let current = iCloudImportProgress, current.phase == progress.phase {
+            switch progress.phase {
+            case .downloading, .copying:
+                guard progress.completedBytes >= current.completedBytes,
+                      progress.completedItems >= current.completedItems
+                else {
+                    return
+                }
+            case .preparing, .cancelling:
+                break
             }
         }
         iCloudImportProgress = progress
@@ -783,6 +831,10 @@ final class CPSLChatModel: ObservableObject {
         childEntriesByPath[path] ?? []
     }
 
+    func iCloudMount(containing path: String) -> CPSLICloudMount? {
+        CPSLICloudMountResolver.mount(containing: path, in: iCloudMounts)
+    }
+
     func isExpanded(_ entry: CPSLFileEntry) -> Bool {
         expandedFilePaths.contains(entry.path)
     }
@@ -793,10 +845,17 @@ final class CPSLChatModel: ObservableObject {
 
     private func bootstrap() async {
         do {
+            iCloudMounts = try await service.prepareICloudStaging()
+        } catch {
+            appendErrorMessage(title: "iCloud", body: error.localizedDescription)
+        }
+
+        do {
             try await service.prepareSandbox()
         } catch {
             appendErrorMessage(title: "Files", body: error.localizedDescription)
         }
+        isUpdatingICloudMounts = false
         do {
             let store = try await loadStore()
             conversations = try await store.loadSummaries()

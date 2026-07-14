@@ -52,9 +52,9 @@ private struct CPSLAgentConcurrencyUIChecks {
     private static func assertRunningLifecycleIsBalanced(chatModel: String) throws {
         try require(chatModel.contains("@Published private(set) var isRunning = false"),
                     "chat model should publish running state")
-        try require(chatModel.contains("private func runAgent(userText: String) async {\n        defer {\n            isRunning = false\n        }"),
+        try require(chatModel.contains("private func runAgent(prompt: CPSLAttachmentPrompt) async {\n        defer {\n            isRunning = false\n            activeRunTask = nil\n        }"),
                     "agent run should clear running state through a defer")
-        try require(chatModel.contains("Task { @MainActor in\n            defer {\n                isRunning = false\n            }"),
+        try require(chatModel.contains("Task { @MainActor in\n            defer {\n                isRunning = false\n                activeRunTask = nil\n            }"),
                     "direct command runs should clear running state through a MainActor defer")
     }
 

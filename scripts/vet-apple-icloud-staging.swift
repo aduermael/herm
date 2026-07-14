@@ -17,48 +17,74 @@ private struct CPSLICloudStagingChecks {
             try? FileManager.default.removeItem(at: testRoot)
         }
 
-        try checkStaleRootCleanup(in: testRoot)
         try checkBoundedCopy(in: testRoot)
+        try checkCoordinatedSnapshots(in: testRoot)
+        try checkMaterializationFailureCleanup(in: testRoot)
+        try checkChangedFileRejection(in: testRoot)
         try checkSymbolicLinkRejection(in: testRoot)
         try checkSpecialFileRejection(in: testRoot)
         try await checkCancellation(in: testRoot)
     }
 
-    private static func checkStaleRootCleanup(in testRoot: URL) throws {
-        let temporaryRoot = testRoot.appendingPathComponent("cleanup", isDirectory: true)
-        try FileManager.default.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+    private static func checkCoordinatedSnapshots(in testRoot: URL) throws {
+        let source = testRoot.appendingPathComponent("coordinated-source", isDirectory: true)
+        let nested = source.appendingPathComponent("nested", isDirectory: true)
+        let snapshots = testRoot.appendingPathComponent("coordinated-snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: snapshots, withIntermediateDirectories: true)
 
-        let nearMatch = temporaryRoot.appendingPathComponent("herm-icloud-not-a-uuid", isDirectory: true)
-        let unrelated = temporaryRoot.appendingPathComponent("unrelated", isDirectory: true)
-        let activeRoot = CPSLICloudStagingStorage.makeProcessRoot(in: temporaryRoot)
-        let activeLease = try CPSLICloudStagingProcessLease(
-            processRoot: activeRoot,
-            temporaryRoot: temporaryRoot
+        let firstSource = source.appendingPathComponent("first.txt")
+        let secondSource = nested.appendingPathComponent("second.txt")
+        let firstSnapshot = snapshots.appendingPathComponent("first.txt")
+        let secondSnapshot = snapshots.appendingPathComponent("second.txt")
+        try Data("old1".utf8).write(to: firstSource)
+        try Data("old2".utf8).write(to: secondSource)
+        try Data("new1".utf8).write(to: firstSnapshot)
+        try Data("new2".utf8).write(to: secondSnapshot)
+
+        let coordination = CoordinatedReadRecorder(
+            snapshotsBySourcePath: [
+                firstSource.path: firstSnapshot,
+                secondSource.path: secondSnapshot,
+            ]
         )
-        let staleRoot = temporaryRoot.appendingPathComponent(
-            "herm-icloud-\(UUID().uuidString)",
+        let destination = testRoot.appendingPathComponent(
+            "coordinated-destination",
             isDirectory: true
         )
-        let processRoot = CPSLICloudStagingStorage.makeProcessRoot(in: temporaryRoot)
-        let serviceRoot = CPSLICloudStagingStorage.makeServiceRoot(in: processRoot)
-        for url in [staleRoot, nearMatch, unrelated, processRoot] {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        }
-
-        let lease = try CPSLICloudStagingProcessLease(
-            processRoot: processRoot,
-            temporaryRoot: temporaryRoot
+        let usage = try CPSLICloudStagingStorage.stageDirectory(
+            CPSLICloudStagingRequest(
+                sourceRoot: source,
+                destinationRoot: destination,
+                permit: CPSLICloudStagingImportPermit(
+                    remainingUsage: CPSLICloudStagingUsage(bytes: 8, items: 4),
+                    availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 8
+                ),
+                coordinateFileRead: { sourceURL, accessor in
+                    try coordination.coordinate(sourceURL, accessor: accessor)
+                }
+            )
         )
-        try lease.prepareServiceRoot(serviceRoot)
-        try require(!FileManager.default.fileExists(atPath: staleRoot.path), "stale root was not removed")
-        try require(FileManager.default.fileExists(atPath: nearMatch.path), "near-match root was removed")
-        try require(FileManager.default.fileExists(atPath: unrelated.path), "unrelated root was removed")
-        try require(FileManager.default.fileExists(atPath: activeRoot.path), "active process root was removed")
-        try require(FileManager.default.fileExists(atPath: serviceRoot.path), "current service root is missing")
 
-        try lease.prepareServiceRoot(serviceRoot)
-        try require(FileManager.default.fileExists(atPath: serviceRoot.path), "cleanup was not idempotent")
-        withExtendedLifetime(activeLease) {}
+        try require(usage == CPSLICloudStagingUsage(bytes: 8, items: 4), "snapshot usage was wrong")
+        try require(
+            try Data(contentsOf: destination.appendingPathComponent("first.txt")) == Data("new1".utf8),
+            "top-level copy ignored the coordinated snapshot URL"
+        )
+        try require(
+            try Data(contentsOf: destination.appendingPathComponent("nested/second.txt")) ==
+                Data("new2".utf8),
+            "nested copy ignored the coordinated snapshot URL"
+        )
+        try require(
+            coordination.callCount(for: firstSource) == 1,
+            "top-level file was not coordinated exactly once"
+        )
+        try require(
+            coordination.callCount(for: secondSource) == 1,
+            "nested file was not coordinated exactly once"
+        )
+        try require(coordination.totalCallCount == 2, "non-file items were unexpectedly coordinated")
     }
 
     private static func checkBoundedCopy(in testRoot: URL) throws {
@@ -82,6 +108,7 @@ private struct CPSLICloudStagingChecks {
 
         let exactDestination = testRoot.appendingPathComponent("exact", isDirectory: true)
         let progress = ProgressRecorder()
+        let materialization = MaterializationRecorder()
         let usage = try CPSLICloudStagingStorage.stageDirectory(
             CPSLICloudStagingRequest(
                 sourceRoot: source,
@@ -89,14 +116,26 @@ private struct CPSLICloudStagingChecks {
                 permit: CPSLICloudStagingImportPermit(
                     remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 4),
                     availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7
-                )
+                ),
+                materializeFile: { url in
+                    try materialization.materialize(url)
+                }
             ),
             progress: { value in
                 progress.append(value)
             }
         )
         try require(usage == CPSLICloudStagingUsage(bytes: 7, items: 4), "exact-limit usage was wrong")
+        try require(progress.contains(.downloading), "download progress was not reported")
         try require(progress.last?.fractionCompleted == 1, "copy progress did not complete")
+        try require(
+            materialization.callCount(for: source.appendingPathComponent("a.bin")) == 2,
+            "top-level file was not materialized before manifest and copy"
+        )
+        try require(
+            materialization.callCount(for: nested.appendingPathComponent("b.bin")) == 2,
+            "nested file was not materialized before manifest and copy"
+        )
         try require(
             try Data(contentsOf: exactDestination.appendingPathComponent("nested/b.bin")) == Data([5, 6, 7]),
             "staged file contents changed"
@@ -121,20 +160,36 @@ private struct CPSLICloudStagingChecks {
             copiedRootPermissions.map { $0 & 0o700 == 0o700 } == true,
             "staged directory was not kept removable"
         )
+        try require(
+            try CPSLICloudStagingStorage.currentUsage(of: [exactDestination]) == usage,
+            "root usage did not count the root and descendants"
+        )
 
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: source.path)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: nested.path)
 
-        let processRoot = testRoot.appendingPathComponent("usage-process", isDirectory: true)
-        let serviceRoot = CPSLICloudStagingStorage.makeServiceRoot(in: processRoot)
-        try FileManager.default.createDirectory(at: serviceRoot, withIntermediateDirectories: true)
-        let orphan = serviceRoot.appendingPathComponent("orphan", isDirectory: true)
-        try FileManager.default.copyItem(at: exactDestination, to: orphan)
-        let processUsage = try CPSLICloudStagingStorage.currentUsage(in: processRoot)
-        try require(
-            processUsage == CPSLICloudStagingUsage(bytes: 7, items: 4),
-            "process-wide staging usage did not include orphaned data"
+        let writableDestination = testRoot.appendingPathComponent("writable", isDirectory: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o440], ofItemAtPath: sourceFile.path)
+        _ = try CPSLICloudStagingStorage.stageDirectory(
+            CPSLICloudStagingRequest(
+                sourceRoot: source,
+                destinationRoot: writableDestination,
+                permit: CPSLICloudStagingImportPermit(
+                    remainingUsage: CPSLICloudStagingUsage(bytes: 7, items: 4),
+                    availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 7
+                ),
+                isWritable: true
+            )
         )
+        let writableAttributes = try FileManager.default.attributesOfItem(
+            atPath: writableDestination.appendingPathComponent("a.bin").path
+        )
+        let writablePermissions = (writableAttributes[.posixPermissions] as? NSNumber)?.intValue
+        try require(
+            writablePermissions.map { $0 & 0o200 == 0o200 } == true,
+            "writable staging did not add owner write access"
+        )
+        try FileManager.default.removeItem(at: writableDestination)
 
         try expect(
             .folderTooLarge,
@@ -187,6 +242,67 @@ private struct CPSLICloudStagingChecks {
             !FileManager.default.fileExists(atPath: exactDestination.path),
             "restrictive staged directory could not be removed"
         )
+    }
+
+    private static func checkMaterializationFailureCleanup(in testRoot: URL) throws {
+        let source = testRoot.appendingPathComponent("materialization-source", isDirectory: true)
+        let destination = testRoot.appendingPathComponent("materialization-destination", isDirectory: true)
+        let file = source.appendingPathComponent("remote.bin")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: file)
+        let materialization = MaterializationRecorder { _, call in
+            if call == 2 {
+                throw CPSLICloudStagingError.downloadFailed
+            }
+        }
+
+        try expect(.downloadFailed, destination: destination) { destination in
+            _ = try CPSLICloudStagingStorage.stageDirectory(
+                CPSLICloudStagingRequest(
+                    sourceRoot: source,
+                    destinationRoot: destination,
+                    permit: CPSLICloudStagingImportPermit(
+                        remainingUsage: CPSLICloudStagingUsage(bytes: 3, items: 2),
+                        availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 3
+                    ),
+                    materializeFile: { url in
+                        try materialization.materialize(url)
+                    }
+                )
+            )
+        }
+        try require(
+            materialization.callCount(for: file) == 2,
+            "pre-copy materialization failure did not occur on the second check"
+        )
+    }
+
+    private static func checkChangedFileRejection(in testRoot: URL) throws {
+        let source = testRoot.appendingPathComponent("changed-source", isDirectory: true)
+        let destination = testRoot.appendingPathComponent("changed-destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: source.appendingPathComponent("changing.bin"))
+        let materialization = MaterializationRecorder { url, call in
+            if call == 2 {
+                try Data([9]).write(to: url)
+            }
+        }
+
+        try expect(.incompleteCopy, destination: destination) { destination in
+            _ = try CPSLICloudStagingStorage.stageDirectory(
+                CPSLICloudStagingRequest(
+                    sourceRoot: source,
+                    destinationRoot: destination,
+                    permit: CPSLICloudStagingImportPermit(
+                        remainingUsage: CPSLICloudStagingUsage(bytes: 3, items: 2),
+                        availableCapacityBytes: CPSLICloudStagingStorage.freeSpaceReserveBytes + 3
+                    ),
+                    materializeFile: { url in
+                        try materialization.materialize(url)
+                    }
+                )
+            )
+        }
     }
 
     private static func checkCancellation(in testRoot: URL) async throws {
@@ -248,6 +364,12 @@ private struct CPSLICloudStagingChecks {
                     )
                 )
             )
+        }
+        do {
+            _ = try CPSLICloudStagingStorage.currentUsage(of: [source])
+            throw CheckFailure("root usage accepted a symbolic link")
+        } catch let error as CPSLICloudStagingError {
+            try require(error == .unsupportedItem, "root usage returned the wrong symbolic-link error")
         }
     }
 
@@ -325,6 +447,70 @@ nonisolated private final class ProgressRecorder: @unchecked Sendable {
     func append(_ value: CPSLICloudImportProgress) {
         lock.withLock {
             values.append(value)
+        }
+    }
+
+    func contains(_ phase: CPSLICloudImportPhase) -> Bool {
+        lock.withLock {
+            values.contains { $0.phase == phase }
+        }
+    }
+}
+
+nonisolated private final class MaterializationRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private let onCall: @Sendable (URL, Int) throws -> Void
+    private var callsByPath: [String: Int] = [:]
+
+    init(onCall: @escaping @Sendable (URL, Int) throws -> Void = { _, _ in }) {
+        self.onCall = onCall
+    }
+
+    func materialize(_ url: URL) throws {
+        let call = lock.withLock {
+            let nextCall = callsByPath[url.path, default: 0] + 1
+            callsByPath[url.path] = nextCall
+            return nextCall
+        }
+        try onCall(url, call)
+    }
+
+    func callCount(for url: URL) -> Int {
+        lock.withLock {
+            callsByPath[url.path, default: 0]
+        }
+    }
+}
+
+nonisolated private final class CoordinatedReadRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private let snapshotsBySourcePath: [String: URL]
+    private var callsByPath: [String: Int] = [:]
+
+    init(snapshotsBySourcePath: [String: URL]) {
+        self.snapshotsBySourcePath = snapshotsBySourcePath
+    }
+
+    var totalCallCount: Int {
+        lock.withLock {
+            callsByPath.values.reduce(0, +)
+        }
+    }
+
+    func coordinate(_ sourceURL: URL, accessor: (URL) throws -> Void) throws {
+        let snapshot = try lock.withLock {
+            guard let snapshot = snapshotsBySourcePath[sourceURL.path] else {
+                throw CheckFailure("unexpected coordinated source: \(sourceURL.path)")
+            }
+            callsByPath[sourceURL.path, default: 0] += 1
+            return snapshot
+        }
+        try accessor(snapshot)
+    }
+
+    func callCount(for sourceURL: URL) -> Int {
+        lock.withLock {
+            callsByPath[sourceURL.path, default: 0]
         }
     }
 }

@@ -732,7 +732,7 @@ private struct CPSLICloudImportStatusView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.small) {
             HStack(spacing: CPSLTheme.medium) {
-                if progress.phase != .copying {
+                if progress.phase == .preparing || progress.phase == .cancelling {
                     ProgressView()
                         .controlSize(.small)
                 } else {
@@ -783,24 +783,27 @@ private struct CPSLICloudImportStatusView: View {
     }
 
     private var detailText: String {
-        if progress.phase == .cancelling {
+        switch progress.phase {
+        case .cancelling:
             return "Stopping import…"
+        case .preparing:
+            return "Preparing persistent copy…"
+        case .downloading:
+            return "Downloading \(progress.completedItems) of \(progress.totalItems) iCloud files"
+        case .copying:
+            if progress.totalBytes > 0 {
+                let completed = ByteCountFormatter.string(
+                    fromByteCount: progress.completedBytes,
+                    countStyle: .file
+                )
+                let total = ByteCountFormatter.string(
+                    fromByteCount: progress.totalBytes,
+                    countStyle: .file
+                )
+                return "\(completed) of \(total)"
+            }
+            return "\(progress.completedItems) of \(progress.totalItems) items"
         }
-        guard progress.phase == .copying else {
-            return "Preparing staged snapshot…"
-        }
-        if progress.totalBytes > 0 {
-            let completed = ByteCountFormatter.string(
-                fromByteCount: progress.completedBytes,
-                countStyle: .file
-            )
-            let total = ByteCountFormatter.string(
-                fromByteCount: progress.totalBytes,
-                countStyle: .file
-            )
-            return "\(completed) of \(total)"
-        }
-        return "\(progress.completedItems) of \(progress.totalItems) items"
     }
 }
 

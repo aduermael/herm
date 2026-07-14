@@ -1,8 +1,6 @@
 import Foundation
 import SwiftUI
-#if os(iOS)
 import UniformTypeIdentifiers
-#endif
 
 private enum CPSLFileBrowserPagePlacement: Equatable {
     case entering
@@ -172,13 +170,13 @@ private struct CPSLFileBrowserDisplayPage: Identifiable, Equatable {
 
 struct CPSLFileBrowserView: View {
     @ObservedObject var model: CPSLChatModel
-#if os(iOS)
     @State private var isICloudImporterPresented = false
     @State private var isICloudImporterPending = false
-#endif
+    @State private var isICloudAccessModePickerPresented = false
+    @State private var isICloudAccessModePickerPending = false
+    @State private var selectedICloudAccessMode: CPSLICloudMountAccessMode?
 
     var body: some View {
-#if os(iOS)
         browserPanel
             .fileImporter(
                 isPresented: $isICloudImporterPresented,
@@ -188,20 +186,39 @@ struct CPSLFileBrowserView: View {
                 switch result {
                 case .success(let urls):
                     if let url = urls.first {
-                        model.importICloudDirectory(url)
+                        model.importICloudDirectory(
+                            url,
+                            accessMode: selectedICloudAccessMode ?? .readOnly
+                        )
                     }
                 case .failure(let error):
                     model.reportICloudImportError(error)
                 }
+                selectedICloudAccessMode = nil
+            }
+            .confirmationDialog(
+                "iCloud Folder Access",
+                isPresented: $isICloudAccessModePickerPresented,
+                titleVisibility: .visible
+            ) {
+                Button("Read Only") {
+                    chooseICloudAccessMode(.readOnly)
+                }
+                Button("Read & Write") {
+                    chooseICloudAccessMode(.readWrite)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(
+                    "Herm keeps a persistent local copy. Read & Write changes that copy only; changes do not sync back to iCloud Drive."
+                )
             }
             .onChange(of: model.dictation.isActive) { _, isActive in
                 if !isActive {
+                    presentICloudAccessModePickerIfReady()
                     presentICloudImporterIfReady()
                 }
             }
-#else
-        browserPanel
-#endif
     }
 
     private var browserPanel: some View {
@@ -216,16 +233,25 @@ struct CPSLFileBrowserView: View {
     }
 
     private func connectICloud() {
-#if os(iOS)
-        isICloudImporterPending = true
+        isICloudAccessModePickerPending = true
         model.dictation.finish()
-        presentICloudImporterIfReady()
-#else
-        model.showComingSoon()
-#endif
+        presentICloudAccessModePickerIfReady()
     }
 
-#if os(iOS)
+    private func presentICloudAccessModePickerIfReady() {
+        guard isICloudAccessModePickerPending, !model.dictation.isActive else {
+            return
+        }
+        isICloudAccessModePickerPending = false
+        isICloudAccessModePickerPresented = true
+    }
+
+    private func chooseICloudAccessMode(_ accessMode: CPSLICloudMountAccessMode) {
+        selectedICloudAccessMode = accessMode
+        isICloudImporterPending = true
+        presentICloudImporterIfReady()
+    }
+
     private func presentICloudImporterIfReady() {
         guard isICloudImporterPending, !model.dictation.isActive else {
             return
@@ -233,7 +259,6 @@ struct CPSLFileBrowserView: View {
         isICloudImporterPending = false
         isICloudImporterPresented = true
     }
-#endif
 }
 
 private struct CPSLFileBrowserRouteStack: View {
@@ -459,9 +484,16 @@ private struct CPSLFileBrowserHeader: View {
             }
 
             if let preview = model.filePreview {
-                CPSLFilePreviewHeaderTitle(preview: preview)
+                CPSLFilePreviewHeaderTitle(
+                    preview: preview,
+                    accessMode: model.iCloudMount(containing: preview.path)?.accessMode
+                )
             } else {
-                CPSLFileBrowserHeaderTitle(path: model.browserPath, isRoot: model.isAtFileBrowserRoot)
+                CPSLFileBrowserHeaderTitle(
+                    path: model.browserPath,
+                    isRoot: model.isAtFileBrowserRoot,
+                    accessMode: model.iCloudMount(containing: model.browserPath)?.accessMode
+                )
             }
 
             if let preview = model.filePreview, preview.showsHeaderInfoButton {
@@ -560,16 +592,23 @@ private struct CPSLFilePreviewInfoHeader: View {
 
 private struct CPSLFilePreviewHeaderTitle: View {
     let preview: CPSLFilePreview
+    let accessMode: CPSLICloudMountAccessMode?
 
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
             CPSLFileIcon(systemName: iconName, color: iconColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(preview.name)
-                    .font(CPSLTheme.supportingMediumFont)
-                    .foregroundStyle(CPSLTheme.text)
-                    .lineLimit(1)
+                HStack(spacing: CPSLTheme.small) {
+                    Text(preview.name)
+                        .font(CPSLTheme.supportingMediumFont)
+                        .foregroundStyle(CPSLTheme.text)
+                        .lineLimit(1)
+
+                    if let accessMode {
+                        CPSLICloudMountAccessBadge(accessMode: accessMode)
+                    }
+                }
 
                 Text(preview.path)
                     .font(CPSLTheme.captionFont)
@@ -601,16 +640,23 @@ private extension CPSLFilePreview {
 private struct CPSLFileBrowserHeaderTitle: View {
     let path: String
     let isRoot: Bool
+    let accessMode: CPSLICloudMountAccessMode?
 
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
             CPSLFileIcon(systemName: iconName, color: iconColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(displayTitle)
-                    .font(CPSLTheme.supportingMediumFont)
-                    .foregroundStyle(CPSLTheme.text)
-                    .lineLimit(1)
+                HStack(spacing: CPSLTheme.small) {
+                    Text(displayTitle)
+                        .font(CPSLTheme.supportingMediumFont)
+                        .foregroundStyle(CPSLTheme.text)
+                        .lineLimit(1)
+
+                    if let accessMode {
+                        CPSLICloudMountAccessBadge(accessMode: accessMode)
+                    }
+                }
 
                 Text(displaySubtitle)
                     .font(CPSLTheme.captionFont)
@@ -668,6 +714,25 @@ private struct CPSLFileBrowserHeaderTitle: View {
             return CPSLTheme.IconPalette.cloud
         }
         return CPSLTheme.IconPalette.folder
+    }
+}
+
+private struct CPSLICloudMountAccessBadge: View {
+    let accessMode: CPSLICloudMountAccessMode
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: accessMode.systemImageName)
+            Text(accessMode.displayName)
+        }
+        .font(CPSLTheme.userFont(size: 10, weight: .semibold))
+        .foregroundStyle(accessMode == .readOnly ? CPSLTheme.secondaryText : CPSLTheme.success)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(CPSLTheme.elevated, in: Capsule())
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("\(accessMode.displayName) iCloud mount"))
     }
 }
 
@@ -946,6 +1011,7 @@ private struct CPSLFileBrowserRowView: View {
                     entry: entry,
                     depth: depth,
                     isExpanded: isExpanded,
+                    accessMode: iCloudMountAccessMode(for: entry),
                     onOpen: {
                         actions.openEntry(entry)
                     },
@@ -972,12 +1038,19 @@ private struct CPSLFileBrowserRowView: View {
         !actions.isBusy &&
             actions.iCloudMounts.contains { $0.virtualPath == entry.path }
     }
+
+    private func iCloudMountAccessMode(
+        for entry: CPSLFileEntry
+    ) -> CPSLICloudMountAccessMode? {
+        actions.iCloudMounts.first { $0.virtualPath == entry.path }?.accessMode
+    }
 }
 
 private struct CPSLFileRowView: View {
     let entry: CPSLFileEntry
     let depth: Int
     let isExpanded: Bool
+    let accessMode: CPSLICloudMountAccessMode?
     let onOpen: () -> Void
     let onToggleExpansion: () -> Void
     let onRemove: (() -> Void)?
@@ -999,6 +1072,10 @@ private struct CPSLFileRowView: View {
                         .font(CPSLTheme.rowTitleFont)
                         .lineLimit(1)
                         .foregroundStyle(CPSLTheme.text)
+
+                    if let accessMode {
+                        CPSLICloudMountAccessBadge(accessMode: accessMode)
+                    }
 
                     Spacer()
                 }
