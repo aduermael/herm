@@ -76,3 +76,42 @@ jobs:
 
       - name: Build and probe the Herm CPSL image
         run: RUN_PROBE=1 scripts/build-cpsl-image.sh --minimum
+
+  cpsl-macos:
+    name: CPSL macOS XCFramework
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      APPLE_PLATFORMS: macos
+      CONFIGURATION: Debug
+      CPSL_TARGET_DIR: ${{ github.workspace }}/.herm-cpsl/cargo-target
+      IOS_DEVICE_TARGETS: ""
+      IOS_SIMULATOR_TARGETS: ""
+      MACOS_TARGETS: aarch64-apple-darwin
+      OUT_DIR: ${{ github.workspace }}/.herm-cpsl/ci-apple
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install pinned Rust toolchain
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup target add aarch64-apple-darwin --toolchain "$toolchain"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            .herm-cpsl/cargo-target
+          key: cpsl-macos-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'external/cpsl/Cargo.lock') }}
+
+      - name: Build one macOS XCFramework slice
+        run: scripts/build-cpsl-apple-xcframework.sh --apple-app
+
+      - name: Verify XCFramework and PDFium outputs
+        run: |
+          test -f "$OUT_DIR/cpsl.xcframework/Info.plist"
+          test -f "$OUT_DIR/libs/pdfium/macos/lib/libpdfium.dylib"
