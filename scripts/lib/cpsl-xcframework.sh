@@ -619,23 +619,32 @@ cpsl_xcframework_architecture_keys() {
 	'
 }
 
+cpsl_xcframework_expected_architecture_keys() {
+	for target in "$@"; do
+		category=$(cpsl_apple_category_for_rust_target "$target") || return 1
+		arch=$(cpsl_apple_arch_for_rust_target "$target") || return 1
+		case "$category" in
+		ios_device)
+			printf 'ios::%s\n' "$arch"
+			;;
+		ios_simulator)
+			printf 'ios:simulator:%s\n' "$arch"
+			;;
+		macos)
+			printf 'macos::%s\n' "$arch"
+			;;
+		esac
+	done
+}
+
 cpsl_xcframework_matches_targets() {
 	info=$1
 	ios_device_targets=$2
 	ios_simulator_targets=$3
 	macos_targets=$4
 	actual=$(cpsl_xcframework_architecture_keys "$info" | LC_ALL=C sort -u) || return 1
-	expected=$(
-		for target in $ios_device_targets $ios_simulator_targets $macos_targets; do
-			category=$(cpsl_apple_category_for_rust_target "$target") || exit 1
-			arch=$(cpsl_apple_arch_for_rust_target "$target") || exit 1
-			case "$category" in
-			ios_device) printf 'ios::%s\n' "$arch" ;;
-			ios_simulator) printf 'ios:simulator:%s\n' "$arch" ;;
-			macos) printf 'macos::%s\n' "$arch" ;;
-			esac
-		done | LC_ALL=C sort -u
-	) || return 1
+	expected=$(cpsl_xcframework_expected_architecture_keys \
+		$ios_device_targets $ios_simulator_targets $macos_targets | LC_ALL=C sort -u) || return 1
 
 	[ "$actual" = "$expected" ]
 }
