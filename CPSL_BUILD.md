@@ -88,6 +88,9 @@ artifact directory at `libs/pdfium/lib/<platform library>`. If
 `PDFIUM_DYNAMIC_LIB_PATH` is set, that library is copied into the artifact;
 otherwise the script reuses CPSL's `core/scripts/download-pdfium.sh` helper.
 That helper may require `curl` and network access.
+Herm verifies downloaded PDFium archives against the SHA-256 checksums tracked
+for every supported target. Selecting an unrecognized PDFium version or target
+fails before extraction until its trusted checksum is added to the CPSL patch.
 Use the default profile unless you need a specific extra CPSL module.
 
 ## Output

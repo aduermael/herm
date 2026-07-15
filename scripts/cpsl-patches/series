@@ -1,1 +1,2 @@
 # Herm-specific CPSL patches, applied in order.
+verify-pdfium-checksums.patch
