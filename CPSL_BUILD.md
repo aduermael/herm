@@ -447,6 +447,10 @@ workflow file, and sample size to override the defaults; the public API limits
 one report to at most 100 runs. The initial measurement is recorded in
 [`docs/CPSL_BUILD_BASELINE.md`](docs/CPSL_BUILD_BASELINE.md).
 
+The initial Linux-only Bazel experiment is documented in
+[`docs/BAZEL_EXPERIMENT.md`](docs/BAZEL_EXPERIMENT.md). It is additive; Cargo
+and Go remain the supported build path while the experiment is evaluated.
+
 ## macOS From Linux
 
 The helper script intentionally builds only for the current host. A normal Linux

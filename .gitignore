@@ -12,6 +12,7 @@ tools/outline/outline
 tools/write-file/write-file
 tools/edit-file/edit-file
 *.exe
+/bazel-*
 
 # App data
 .herm/
