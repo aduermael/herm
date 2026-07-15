@@ -1,0 +1,75 @@
+diff --git a/core/scripts/download-pdfium.sh b/core/scripts/download-pdfium.sh
+--- a/core/scripts/download-pdfium.sh
++++ b/core/scripts/download-pdfium.sh
+@@ -65,6 +65,58 @@ TARGET="${TARGET:-$(detect_target)}"
+ ASSET="pdfium-${TARGET}.tgz"
+ CACHE_DIR="$HOME/.cache/pdfium/${PDFIUM_VERSION}/${TARGET}"
+ CACHE_FILE="$CACHE_DIR/$ASSET"
++
++expected_sha256() {
++  case "$PDFIUM_VERSION:$TARGET" in
++    7734:ios-catalyst-arm64)   echo "405445d9c3312bd700cd92851cc493677a0215087805f8bbe72e9372d5018944" ;;
++    7734:ios-catalyst-x64)     echo "a30956b5bf5ca5957dd1baa56869aca418940ce4839bb98751a4bf04b3d7475e" ;;
++    7734:ios-device-arm64)     echo "ec04c240b60550e8dafb1caf89af53a1894cdca4fa695ab552621e20b0128ef0" ;;
++    7734:ios-simulator-arm64)  echo "d542f98366878fd0365428de62660cadcd338bb62eaa3f6185cf9606e17715c4" ;;
++    7734:ios-simulator-x64)    echo "271a60299320e57b58903a438ce651dbc65d8f06c400614a4f83c52521ac89aa" ;;
++    7734:linux-arm)            echo "ce149a5977ed7d84468d74598822f38620fe79abc4c51a39ff1a53f3f31c2ad4" ;;
++    7734:linux-arm64)          echo "e44336e9d69d5035f83e747e97665a34c5129d3c3c5f0dd2f0bee4f08002b2f2" ;;
++    7734:linux-musl-arm64)     echo "e06cb395ac9110c6b5980fed26b8df7bcf728b900898102dae7d0bebd23dc2a6" ;;
++    7734:linux-musl-x64)       echo "c6ea67d512ab35c3e713048a564998af9409de21dab9896a03250dd532378610" ;;
++    7734:linux-musl-x86)       echo "3a271586bc863f19a84e013af4b06e61e5523ca9ddd196785fe5972cbf6a11c9" ;;
++    7734:linux-ppc64)          echo "5c8300eadd8390cbcf8e9a7a9987c017ace6cddc1e2e38df228148547ca00128" ;;
++    7734:linux-x64)            echo "b13dba6e6ad6b1aeeece11a73fbc89cee334eb26588780385b3c87bcef6107c8" ;;
++    7734:linux-x86)            echo "6b892d1317383bd3f96e42462654ba240cc9de66b86fb10cf94d8adf001016e0" ;;
++    7734:mac-arm64)            echo "98172644a602bf0e4e4a21a6d4c09f479419c55bd92f7060f075a03f2c79e831" ;;
++    7734:mac-univ)            echo "b3c0a9c862cf886d846c0670cb7d6c1e9e445a5bfb08407797b71ab22f85a690" ;;
++    7734:mac-x64)              echo "d7d33cf72653ab29f67f75c3b81ef6a315aa76e011a08dbfb849071871cc3be6" ;;
++    7734:win-arm64)            echo "b8e5f426ed63bf94ebb841344e0aed4e05a451b407e08679e85b9f9f5fcc240f" ;;
++    7734:win-x64)              echo "eceb47d85a2150fb3196f6bd0658a93f3beb13c0515be9d5547de532ca423c91" ;;
++    7734:win-x86)              echo "b4a02bdd1e0d8b12b319545e03a5c9ca8a9b97aef44a660c5f5ee2f6e2c59559" ;;
++    *)
++      echo "No trusted SHA-256 checksum for PDFium ${PDFIUM_VERSION} target ${TARGET}" >&2
++      exit 1
++      ;;
++  esac
++}
++
++sha256_file() {
++  if command -v sha256sum >/dev/null 2>&1; then
++    sha256sum "$1" | awk '{print $1}'
++  elif command -v shasum >/dev/null 2>&1; then
++    shasum -a 256 "$1" | awk '{print $1}'
++  else
++    echo "sha256sum or shasum is required to verify PDFium" >&2
++    exit 1
++  fi
++}
++
++verify_archive() {
++  local archive="$1" expected actual
++  expected="$PDFIUM_SHA256"
++  actual="$(sha256_file "$archive")"
++  if [[ "$actual" != "$expected" ]]; then
++    echo "SHA-256 mismatch for $archive" >&2
++    echo "  expected: $expected" >&2
++    echo "  actual:   $actual" >&2
++    exit 1
++  fi
++}
++PDFIUM_SHA256="$(expected_sha256)"
+ 
+ # Library filename per platform
+ case "$TARGET" in
+@@ -89,10 +141,12 @@ if [[ ! -f "$CACHE_FILE" ]]; then
+   echo "  URL: $URL"
+   mkdir -p "$CACHE_DIR"
+   curl -fSL --progress-bar "$URL" -o "$CACHE_FILE.tmp"
++  verify_archive "$CACHE_FILE.tmp"
+   mv "$CACHE_FILE.tmp" "$CACHE_FILE"
+   echo "  Cached: $CACHE_FILE"
+ else
+   echo "Using cached: $CACHE_FILE"
++  verify_archive "$CACHE_FILE"
+ fi
+ 
+ # Extract to output directory

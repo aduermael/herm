@@ -63,6 +63,7 @@ done
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
+. "$script_dir/lib/build-manifest.sh"
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
@@ -248,6 +249,26 @@ if [ "${RUN_PROBE:-0}" = 1 ]; then
 	CPSL_FFI_LIB="$out_dir/$lib_name" cargo test --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi --test probe -- --ignored
 fi
 
+manifest_path="$out_dir/build-manifest.txt"
+herm_manifest_init "$manifest_path"
+herm_manifest_add "$manifest_path" builder build-cpsl-image.sh
+herm_manifest_add "$manifest_path" profile "$profile"
+herm_manifest_add "$manifest_path" features "$([ "$profile" = all ] && printf '%s' all || printf '%s' ffi-minimal)"
+herm_manifest_add "$manifest_path" target "$os_name-$arch_name"
+herm_manifest_add "$manifest_path" herm_revision "$(herm_source_revision "$herm_root")"
+herm_manifest_add "$manifest_path" cpsl_revision "$(herm_source_revision "$cpsl_root")"
+herm_manifest_add "$manifest_path" rustc_version "$(rustc --version)"
+herm_manifest_add "$manifest_path" cargo_version "$(cargo --version)"
+herm_manifest_add "$manifest_path" go_version "$(go version)"
+herm_manifest_add "$manifest_path" cc_version "$(cc --version 2>/dev/null | sed -n '1p')"
+herm_manifest_add_file "$manifest_path" herm_sha256 "$out_dir/herm"
+herm_manifest_add_file "$manifest_path" cpsl_library_sha256 "$out_dir/$lib_name"
+herm_manifest_add_file "$manifest_path" cpsl_header_sha256 "$include_dir/cpsl.h"
+if [ "$profile" = all ]; then
+	herm_manifest_add "$manifest_path" pdfium_version "${PDFIUM_VERSION:-7734}"
+	herm_manifest_add_file "$manifest_path" pdfium_library_sha256 "$out_dir/libs/pdfium/lib/$pdfium_lib_name"
+fi
+
 printf '\nBuilt Herm CPSL image (%s) for %s/%s\n' "$profile" "$os_name" "$arch_name"
 printf '  image: %s\n' "$out_dir"
 printf '  herm: %s\n' "$out_dir/herm"
@@ -256,4 +277,5 @@ if [ "$profile" = all ]; then
 	printf '  pdfium: %s\n' "$out_dir/libs/pdfium/lib/$pdfium_lib_name"
 fi
 printf '  header: %s\n' "$include_dir/cpsl.h"
+printf '  manifest: %s\n' "$manifest_path"
 printf '\nRun:\n  $ cd %s\n  $ ./herm --cpsl %s\n' "$run_dir" "$lib_name"

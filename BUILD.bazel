@@ -1,0 +1,95 @@
+load("@gazelle//:def.bzl", "gazelle")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library")
+
+# gazelle:prefix herm
+# gazelle:exclude external
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "external/cpsl/Cargo.lock",
+    "external/cpsl/Cargo.toml",
+    "go.mod",
+    "go.sum",
+])
+
+gazelle(name = "gazelle")
+
+rust_library(
+    name = "conch_parser",
+    srcs = glob(["external/cpsl/vendor/conch-parser/src/**/*.rs"]),
+    crate_name = "conch_parser",
+    crate_root = "external/cpsl/vendor/conch-parser/src/lib.rs",
+    edition = "2015",
+    deps = ["@cpsl_crates//:void"],
+)
+
+rust_library(
+    name = "native_http",
+    srcs = glob(["external/cpsl/modules/native-http/src/**/*.rs"]),
+    crate_name = "native_http",
+    crate_root = "external/cpsl/modules/native-http/src/lib.rs",
+    edition = "2021",
+    deps = [
+        "@cpsl_crates//:reqwest",
+        "@cpsl_crates//:thiserror",
+        "@cpsl_crates//:url",
+    ],
+)
+
+rust_library(
+    name = "cpsl_core",
+    srcs = glob(["external/cpsl/core/src/**/*.rs"]),
+    crate_features = [
+        "mod-csv",
+        "mod-fs",
+        "mod-http",
+        "mod-json",
+        "mod-ripgrep",
+    ],
+    crate_name = "cpsl_core",
+    crate_root = "external/cpsl/core/src/lib.rs",
+    edition = "2021",
+    deps = [
+        ":conch_parser",
+        ":native_http",
+        "@cpsl_crates//:csv",
+        "@cpsl_crates//:globset",
+        "@cpsl_crates//:grep-matcher",
+        "@cpsl_crates//:grep-regex",
+        "@cpsl_crates//:grep-searcher",
+        "@cpsl_crates//:ignore",
+        "@cpsl_crates//:mlua",
+        "@cpsl_crates//:rand",
+        "@cpsl_crates//:rustpython-parser",
+        "@cpsl_crates//:serde_json",
+        "@cpsl_crates//:thiserror",
+    ],
+)
+
+rust_shared_library(
+    name = "cpsl_ffi",
+    srcs = glob(["external/cpsl/ffi/src/**/*.rs"]),
+    compile_data = ["external/cpsl/runtime/shrt.luau"],
+    crate_features = ["ffi-minimal"],
+    crate_name = "cpsl",
+    crate_root = "external/cpsl/ffi/src/lib.rs",
+    edition = "2021",
+    rustc_env = {"CARGO_PKG_VERSION": "0.1.0"},
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":cpsl_core",
+        "@cpsl_crates//:serde",
+        "@cpsl_crates//:serde_json",
+        "@cpsl_crates//:url",
+    ],
+)
+
+filegroup(
+    name = "linux_experiment",
+    srcs = [
+        ":cpsl_ffi",
+        "//cmd/herm",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+)

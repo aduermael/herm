@@ -12,6 +12,7 @@ tools/outline/outline
 tools/write-file/write-file
 tools/edit-file/edit-file
 *.exe
+/bazel-*
 
 # App data
 .herm/
@@ -20,6 +21,7 @@ tools/edit-file/edit-file
 .herm-cpsl/cargo-target/
 .herm-cpsl/.cpsl-xcframework-build.lock
 .herm-cpsl/pdfium/
+.herm-cpsl/benchmarks/
 .herm-apple/
 .agents/
 

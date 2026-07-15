@@ -31,3 +31,117 @@ jobs:
             (cd "$dir" && go test ./...)
             echo "::endgroup::"
           done
+
+  cpsl-linux:
+    name: CPSL Linux build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.herm-cpsl/cargo-target
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24"
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libssl-dev pkg-config
+
+      - name: Install pinned Rust toolchain
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            .herm-cpsl/cargo-target
+          key: cpsl-linux-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'external/cpsl/Cargo.lock') }}
+
+      - name: Apply Herm CPSL integration patches
+        run: scripts/apply-cpsl-patches.sh external/cpsl
+
+      - name: Test native HTTP policy
+        run: cargo test --manifest-path external/cpsl/Cargo.toml --locked -p native-http --lib
+
+      - name: Test CPSL FFI
+        run: cargo test --manifest-path external/cpsl/Cargo.toml --locked -p cpsl-ffi
+
+      - name: Build and probe the Herm CPSL image
+        run: RUN_PROBE=1 scripts/build-cpsl-image.sh --minimum
+
+  cpsl-macos:
+    name: CPSL Xcode dependency target
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Install pinned Rust toolchain
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal
+          rustup target add aarch64-apple-darwin --toolchain "$toolchain"
+
+      - name: Resolve Xcode cache key
+        id: xcode
+        run: echo "cache-key=$(xcodebuild -version | shasum -a 256 | awk '{ print $1 }')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            .herm-cpsl/cargo-target
+          key: cpsl-macos-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('rust-toolchain.toml', 'external/cpsl/Cargo.lock') }}
+
+      - name: Build Herm through Xcode
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project app/apple/herm.xcodeproj \
+            -scheme herm \
+            -configuration Debug \
+            -sdk macosx \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/HermDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/cpsl-xcode-first.log"
+
+      - name: Verify exact Debug arm64 outputs
+        run: |
+          out="$GITHUB_WORKSPACE/.herm-cpsl/artifacts/apple/Debug"
+          test -f "$out/cpsl.xcframework/Info.plist"
+          test -f "$out/cpsl.xcframework/macos-arm64/libcpsl.dylib"
+          test -f "$out/libs/pdfium/macos/lib/libpdfium.dylib"
+          test -f "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'cargo_profile=debug' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'cargo_incremental=1' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'ios_device_targets=' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'ios_simulator_targets=' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'macos_targets=aarch64-apple-darwin' "$out/.cpsl-apple-build.stamp"
+
+      - name: Verify the next Xcode build is a CPSL cache hit
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project app/apple/herm.xcodeproj \
+            -scheme herm \
+            -configuration Debug \
+            -sdk macosx \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/HermDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/cpsl-xcode-second.log"
+          grep -F 'Using existing CPSL XCFramework:' "$RUNNER_TEMP/cpsl-xcode-second.log"

@@ -35,7 +35,10 @@ Options:
 Environment:
   CPSL_ROOT                Existing CPSL checkout to use instead of external/cpsl.
   CPSL_WORK_DIR            Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
-  CPSL_TARGET_DIR          Cargo target directory. Defaults to CPSL_WORK_DIR/cargo-target.
+  CPSL_TARGET_DIR          Cargo target directory override. The default is a
+                           toolchain-keyed directory under CPSL_WORK_DIR/cargo-target.
+  CARGO_INCREMENTAL       Override Cargo incremental compilation with 0 or 1.
+                          Defaults to 1 for Debug and 0 for Release.
   OUT_DIR                  Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/apple,
                            or CPSL_WORK_DIR/artifacts/apple/CONFIGURATION for Xcode builds.
   CONFIGURATION            Xcode configuration. Debug uses Cargo debug; Release uses Cargo release.
@@ -78,6 +81,8 @@ script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/host-path.sh"
 . "$script_dir/lib/cpsl-xcframework.sh"
+. "$script_dir/lib/cpsl-apple-build-state.sh"
+. "$script_dir/lib/build-manifest.sh"
 herm_ensure_rust_path
 
 [ "$(uname -s)" = Darwin ] || die "Apple XCFramework builds require macOS with Xcode"
@@ -86,10 +91,11 @@ work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
 mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
 default_cpsl_root="$herm_root/external/cpsl"
-target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}
+target_dir=${CPSL_TARGET_DIR:-}
 cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+cargo_incremental=$(cpsl_apple_cargo_incremental_from_environment) || die "failed to resolve CPSL incremental compilation setting"
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
-ios_deployment_target=${IOS_DEPLOYMENT_TARGET:-17.0}
+ios_deployment_target=${IOS_DEPLOYMENT_TARGET:-${IPHONEOS_DEPLOYMENT_TARGET:-17.0}}
 macos_deployment_target=${MACOSX_DEPLOYMENT_TARGET:-14.0}
 lib_name=libcpsl.dylib
 pdfium_lib_name=libpdfium.dylib
@@ -120,6 +126,10 @@ xcode-select -p >/dev/null 2>&1 || die "Xcode Command Line Tools are required; r
 developer_dir=$(xcode-select -p)
 if ! xcodebuild -version >/dev/null 2>&1; then
 	die "selected developer directory is not full Xcode: $developer_dir; install full Xcode, open it once, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+fi
+if [ -z "$target_dir" ]; then
+	cache_namespace=$(cpsl_apple_cargo_cache_namespace) || die "failed to derive CPSL Cargo cache namespace"
+	target_dir="$work_dir/cargo-target/$cache_namespace"
 fi
 required_sdks=
 if [ "$include_ios_device" -eq 1 ]; then
@@ -189,8 +199,13 @@ sh "$herm_root/scripts/apply-cpsl-patches.sh" "$cpsl_root"
 [ -f "$cpsl_root/ffi/Cargo.toml" ] || die "missing CPSL FFI crate at $cpsl_root/ffi"
 [ -f "$cpsl_root/ffi/include/cpsl.h" ] || die "missing CPSL FFI header at $cpsl_root/ffi/include/cpsl.h"
 
+build_identity_before=$(cpsl_apple_build_stamp_expected \
+	"$herm_root" "$cpsl_root" "$profile" "$cargo_profile" "$cargo_incremental") || \
+	die "failed to compute CPSL Apple build identity"
+
 mkdir -p "$out_dir"
 out_dir=$(CDPATH= cd "$out_dir" && pwd -P)
+build_stamp_path=$(cpsl_apple_build_stamp_path "$out_dir")
 include_dir="$out_dir/include"
 slice_dir="$out_dir/slices"
 ios_device_dir="$slice_dir/ios-arm64"
@@ -199,6 +214,7 @@ macos_dir="$slice_dir/macos"
 xcframework_path="$out_dir/$xcframework_name"
 pdfium_dir="$out_dir/libs/pdfium"
 
+rm -f "$build_stamp_path" "$out_dir/.cpsl-source.stamp"
 rm -rf "$slice_dir" "$xcframework_path" "$pdfium_dir"
 mkdir -p "$include_dir"
 cp "$cpsl_root/ffi/include/cpsl.h" "$include_dir/cpsl.h"
@@ -255,6 +271,7 @@ build_target() {
 		"CXX_$target_env=$clangxx" \
 		"AR_$target_env=$ar" \
 		"CARGO_TARGET_${target_env_upper}_LINKER=$clang" \
+		"CARGO_INCREMENTAL=$cargo_incremental" \
 		"RUSTFLAGS=$rustflags" \
 		cargo "$@"
 
@@ -397,14 +414,37 @@ set -- "$@" -output "$xcframework_path"
 
 xcodebuild "$@"
 
-source_stamp_path=$(cpsl_xcframework_source_stamp_path "$out_dir")
-if source_revision=$(cpsl_xcframework_source_revision "$cpsl_root"); then
-	cpsl_xcframework_write_source_stamp_value "$source_stamp_path" "$cpsl_root" "$source_revision" "$cargo_profile"
-elif [ "${HERM_CPSL_FORCE_SUBMODULE:-0}" = 1 ]; then
-	die "failed to read CPSL submodule revision for source stamp: $cpsl_root"
-else
-	cpsl_xcframework_write_source_stamp_value "$source_stamp_path" "$cpsl_root" unknown "$cargo_profile"
+manifest_path="$out_dir/build-manifest.txt"
+herm_manifest_init "$manifest_path"
+herm_manifest_add "$manifest_path" builder build-cpsl-apple-xcframework.sh
+herm_manifest_add "$manifest_path" profile "$profile"
+herm_manifest_add "$manifest_path" features "$([ "$profile" = apple-app ] && printf '%s' embedded-agent || printf '%s' ffi-minimal)"
+herm_manifest_add "$manifest_path" cargo_profile "$cargo_profile"
+herm_manifest_add "$manifest_path" cargo_incremental "$cargo_incremental"
+herm_manifest_add "$manifest_path" targets "$CPSL_REQUEST_DESCRIPTION"
+herm_manifest_add "$manifest_path" herm_revision "$(herm_source_revision "$herm_root")"
+herm_manifest_add "$manifest_path" cpsl_revision "$(herm_source_revision "$cpsl_root")"
+herm_manifest_add "$manifest_path" rustc_version "$(rustc --version)"
+herm_manifest_add "$manifest_path" cargo_version "$(cargo --version)"
+herm_manifest_add "$manifest_path" xcode_version "$(xcodebuild -version)"
+herm_manifest_add "$manifest_path" clang_version "$(xcrun clang --version | sed -n '1p')"
+herm_manifest_add_file "$manifest_path" cpsl_header_sha256 "$include_dir/cpsl.h"
+herm_manifest_add_file "$manifest_path" ios_device_library_sha256 "$ios_device_dir/$lib_name"
+herm_manifest_add_file "$manifest_path" ios_simulator_library_sha256 "$ios_simulator_dir/$lib_name"
+herm_manifest_add_file "$manifest_path" macos_library_sha256 "$macos_dir/$lib_name"
+if [ "$profile" = apple-app ]; then
+	herm_manifest_add "$manifest_path" pdfium_version "${PDFIUM_VERSION:-7734}"
+	herm_manifest_add_file "$manifest_path" pdfium_ios_device_sha256 "$pdfium_dir/ios-arm64/lib/$pdfium_lib_name"
+	herm_manifest_add_file "$manifest_path" pdfium_ios_simulator_sha256 "$pdfium_dir/ios-simulator/lib/$pdfium_lib_name"
+	herm_manifest_add_file "$manifest_path" pdfium_macos_sha256 "$pdfium_dir/macos/lib/$pdfium_lib_name"
 fi
+
+build_identity_after=$(cpsl_apple_build_stamp_expected \
+	"$herm_root" "$cpsl_root" "$profile" "$cargo_profile" "$cargo_incremental") || \
+	die "failed to verify CPSL Apple build identity"
+[ "$build_identity_before" = "$build_identity_after" ] || \
+	die "CPSL Apple build inputs changed while the build was running; retry the build"
+cpsl_apple_build_stamp_write_value "$build_stamp_path" "$build_identity_after"
 
 if [ -z "${OUT_DIR:-}" ] && [ -z "${CPSL_WORK_DIR:-}" ] && [ -z "${CONFIGURATION:-}" ]; then
 	display_out=".herm-cpsl/artifacts/apple"
@@ -421,3 +461,4 @@ if [ "$profile" = apple-app ]; then
 	printf '  pdfium: %s/libs/pdfium\n' "$display_out"
 fi
 printf '  header: %s/include/cpsl.h\n' "$display_out"
+printf '  manifest: %s/build-manifest.txt\n' "$display_out"

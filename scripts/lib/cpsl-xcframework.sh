@@ -361,6 +361,28 @@ cpsl_apple_cargo_profile_from_environment() {
 	cpsl_apple_cargo_profile_from_configuration "${CONFIGURATION:-}"
 }
 
+cpsl_apple_cargo_incremental_from_environment() {
+	if [ "${CARGO_INCREMENTAL+x}" = x ]; then
+		cargo_incremental=$CARGO_INCREMENTAL
+	else
+		cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || return 1
+		case "$cargo_profile" in
+		debug) cargo_incremental=1 ;;
+		release) cargo_incremental=0 ;;
+		esac
+	fi
+
+	case "$cargo_incremental" in
+	0 | 1)
+		printf '%s\n' "$cargo_incremental"
+		;;
+	*)
+		printf '%s\n' "CARGO_INCREMENTAL must be 0 or 1, got: $cargo_incremental" >&2
+		return 1
+		;;
+	esac
+}
+
 cpsl_apple_default_artifact_dir() {
 	work_dir=$1
 
@@ -540,6 +562,113 @@ cpsl_xcframework_satisfies_targets() {
 	return 0
 }
 
+cpsl_xcframework_architecture_keys() {
+	info=$1
+
+	cpsl_xcframework_plist_tokens "$info" | awk '
+		/<dict>/ {
+			depth++
+			if (depth == 2) {
+				platform = ""
+				variant = ""
+				arch_count = 0
+				in_arches = 0
+			}
+			next
+		}
+		depth == 2 && /<key>SupportedPlatform<\/key>/ {
+			getline
+			value = $0
+			gsub(/.*<string>/, "", value)
+			gsub(/<\/string>.*/, "", value)
+			if (value == "macosx") value = "macos"
+			platform = value
+			next
+		}
+		depth == 2 && /<key>SupportedPlatformVariant<\/key>/ {
+			getline
+			variant = $0
+			gsub(/.*<string>/, "", variant)
+			gsub(/<\/string>.*/, "", variant)
+			next
+		}
+		depth == 2 && /<key>SupportedArchitectures<\/key>/ {
+			in_arches = 1
+			next
+		}
+		depth == 2 && in_arches && /<\/array>/ {
+			in_arches = 0
+			next
+		}
+		depth == 2 && in_arches && /<string>/ {
+			value = $0
+			gsub(/.*<string>/, "", value)
+			gsub(/<\/string>.*/, "", value)
+			arches[++arch_count] = value
+			next
+		}
+		/<\/dict>/ {
+			if (depth == 2 && platform != "") {
+				for (i = 1; i <= arch_count; i++) {
+					print platform ":" variant ":" arches[i]
+				}
+			}
+			depth--
+			next
+		}
+	'
+}
+
+cpsl_xcframework_expected_architecture_keys() {
+	for target in "$@"; do
+		category=$(cpsl_apple_category_for_rust_target "$target") || return 1
+		arch=$(cpsl_apple_arch_for_rust_target "$target") || return 1
+		case "$category" in
+		ios_device)
+			printf 'ios::%s\n' "$arch"
+			;;
+		ios_simulator)
+			printf 'ios:simulator:%s\n' "$arch"
+			;;
+		macos)
+			printf 'macos::%s\n' "$arch"
+			;;
+		esac
+	done
+}
+
+cpsl_xcframework_matches_targets() {
+	info=$1
+	ios_device_targets=$2
+	ios_simulator_targets=$3
+	macos_targets=$4
+	actual=$(cpsl_xcframework_architecture_keys "$info" | LC_ALL=C sort -u) || return 1
+	expected=$(cpsl_xcframework_expected_architecture_keys \
+		$ios_device_targets $ios_simulator_targets $macos_targets | LC_ALL=C sort -u) || return 1
+
+	[ "$actual" = "$expected" ]
+}
+
+cpsl_xcframework_binaries_satisfy_targets() {
+	xcframework_path=$1
+	ios_device_targets=$2
+	ios_simulator_targets=$3
+	macos_targets=$4
+	info=$(cpsl_xcframework_info_plist "$xcframework_path")
+
+	for target in $ios_device_targets $ios_simulator_targets $macos_targets; do
+		category=$(cpsl_apple_category_for_rust_target "$target") || return 1
+		arch=$(cpsl_apple_arch_for_rust_target "$target") || return 1
+		identifier=$(cpsl_xcframework_library_identifier_for_category "$info" "$category") || return 1
+		slice_dir="$xcframework_path/$identifier"
+		[ -f "$slice_dir/Headers/cpsl.h" ] || return 1
+		[ -f "$slice_dir/Headers/module.modulemap" ] || return 1
+		cpsl_pdfium_binary_has_arch "$slice_dir/libcpsl.dylib" "$arch" || return 1
+	done
+
+	return 0
+}
+
 cpsl_pdfium_slice_for_rust_target() {
 	target=$1
 
@@ -620,70 +749,6 @@ cpsl_pdfium_satisfies_targets() {
 	done
 
 	return 0
-}
-
-cpsl_xcframework_source_stamp_path() {
-	out_dir=$1
-	printf '%s/.cpsl-source.stamp' "$out_dir"
-}
-
-cpsl_xcframework_source_revision() {
-	source_root=$1
-
-	git -C "$source_root" rev-parse --verify HEAD 2>/dev/null || return 1
-}
-
-cpsl_xcframework_source_stamp_expected() {
-	source_root=$1
-	source_revision=$2
-	cargo_profile=${3:-}
-
-	source_path=$(CDPATH= cd "$source_root" && pwd -P) || return 1
-	printf 'source_path=%s\n' "$source_path"
-	printf 'source_revision=%s\n' "$source_revision"
-	if [ -n "$cargo_profile" ]; then
-		printf 'cargo_profile=%s\n' "$cargo_profile"
-	fi
-}
-
-cpsl_xcframework_write_source_stamp_value() {
-	stamp_path=$1
-	source_root=$2
-	source_revision=$3
-	cargo_profile=${4:-}
-
-	mkdir -p "$(dirname "$stamp_path")"
-	cpsl_xcframework_source_stamp_expected "$source_root" "$source_revision" "$cargo_profile" >"$stamp_path"
-}
-
-cpsl_xcframework_write_source_stamp() {
-	stamp_path=$1
-	source_root=$2
-	cargo_profile=${3:-}
-	source_revision=$(cpsl_xcframework_source_revision "$source_root") || return 1
-
-	cpsl_xcframework_write_source_stamp_value "$stamp_path" "$source_root" "$source_revision" "$cargo_profile"
-}
-
-cpsl_xcframework_source_stamp_matches_value() {
-	stamp_path=$1
-	source_root=$2
-	source_revision=$3
-	cargo_profile=${4:-}
-
-	[ -f "$stamp_path" ] || return 1
-	expected=$(cpsl_xcframework_source_stamp_expected "$source_root" "$source_revision" "$cargo_profile") || return 1
-	actual=$(cat "$stamp_path") || return 1
-	[ "$actual" = "$expected" ]
-}
-
-cpsl_xcframework_source_stamp_matches() {
-	stamp_path=$1
-	source_root=$2
-	cargo_profile=${3:-}
-	source_revision=$(cpsl_xcframework_source_revision "$source_root") || return 1
-
-	cpsl_xcframework_source_stamp_matches_value "$stamp_path" "$source_root" "$source_revision" "$cargo_profile"
 }
 
 cpsl_xcframework_has_ios_device() {
@@ -940,57 +1005,5 @@ cpsl_xcframework_restore_tracked_placeholder() {
 		[ -d "$link_path" ] && cpsl_xcframework_is_placeholder "$link_path"; then
 		return 0
 	fi
-	return 1
-}
-
-cpsl_xcframework_inputs_newer_than() {
-	info_plist=$1
-	herm_root=$2
-	cpsl_source_root=${3:-}
-
-	[ -f "$info_plist" ] || return 0
-
-	for path in \
-		"$herm_root/scripts/build-cpsl-apple-xcframework.sh" \
-		"$herm_root/scripts/lib/cpsl-xcframework.sh" \
-		"$herm_root/scripts/apply-cpsl-patches.sh"
-	do
-		[ -f "$path" ] || continue
-		if [ "$path" -nt "$info_plist" ]; then
-			return 0
-		fi
-	done
-
-	patch_dir="$herm_root/scripts/cpsl-patches"
-	series_file="$patch_dir/series"
-	if [ -d "$patch_dir" ]; then
-		[ -f "$series_file" ] || return 0
-		[ "$series_file" -nt "$info_plist" ] && return 0
-		while IFS= read -r name || [ -n "$name" ]; do
-			case "$name" in
-				''|'#'*) continue ;;
-			esac
-			case "$name" in
-				*[!A-Za-z0-9._-]*|.*|*..*) return 0 ;;
-				*.patch) ;;
-				*) return 0 ;;
-			esac
-			patch="$patch_dir/$name"
-			[ -f "$patch" ] || return 0
-			[ "$patch" -nt "$info_plist" ] && return 0
-		done <"$series_file"
-	fi
-
-	# The source stamp records the CPSL Git revision, but local submodule edits do
-	# not change that revision. Include source mtimes so Xcode does not relink an
-	# older dylib while exposing newer bundled skill documentation to the agent.
-	if [ -n "$cpsl_source_root" ] && [ -d "$cpsl_source_root" ]; then
-		if find "$cpsl_source_root" \
-			\( -name .git -o -name target \) -prune -o \
-			-type f -newer "$info_plist" -print | grep -q .; then
-			return 0
-		fi
-	fi
-
 	return 1
 }
