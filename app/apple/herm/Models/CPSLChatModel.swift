@@ -46,6 +46,10 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var iCloudMounts: [CPSLICloudMount] = []
     @Published private(set) var isUpdatingICloudMounts = true
     @Published private(set) var iCloudImportProgress: CPSLICloudImportProgress?
+    @Published private(set) var allTags: [CPSLTag] = []
+    @Published var searchText: String = ""
+    @Published private(set) var activeTagIDs: Set<String> = []
+    @Published private(set) var showingArchived = false
 
     var isBusy: Bool {
         isRunning || isUpdatingICloudMounts || isManagingFiles
@@ -233,6 +237,7 @@ final class CPSLChatModel: ObservableObject {
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
+        setArchivedScope(false)
     }
 
     func toggleDrawer() {
@@ -284,6 +289,91 @@ final class CPSLChatModel: ObservableObject {
         Task {
             await deleteStoredConversation(id: id)
         }
+    }
+
+    private func mutate(
+        errorTitle: String,
+        _ op: @escaping (CPSLConversationStore) async throws -> Void
+    ) {
+        Task {
+            guard let store = try? await loadStore() else { return }
+            do {
+                try await op(store)
+            } catch {
+                appendErrorMessage(title: errorTitle, body: error.localizedDescription)
+            }
+            await reloadConversations()
+        }
+    }
+
+    func setPinned(id: String, pinned: Bool) {
+        mutate(errorTitle: "Conversation") { try await $0.setPinned(conversationID: id, pinned: pinned) }
+    }
+
+    func renameConversation(id: String, title: String) {
+        mutate(errorTitle: "Rename") { try await $0.renameConversation(id: id, title: title) }
+    }
+
+    func archiveConversation(id: String) {
+        // Only block archiving the conversation that is actively running.
+        if isRunning, id == selectedConversationID { return }
+        Task {
+            do {
+                let store = try await loadStore()
+                try await store.setArchived(conversationID: id, archived: true)
+            } catch {
+                appendErrorMessage(title: "Conversation", body: error.localizedDescription)
+                return
+            }
+
+            let archivedActiveConversation = (id == selectedConversationID)
+            if archivedActiveConversation {
+                discardComposerAttachments(removingScope: nil)
+                selectedConversationID = nil
+                currentNodeID = nil
+                currentSystemPrompt = nil
+                messages = []
+            }
+            await reloadConversations()
+            // Select the most recent conversation only when this call deselected the active one.
+            if archivedActiveConversation, selectedConversationID == nil, let first = conversations.first {
+                await loadConversation(id: first.id)
+            }
+        }
+    }
+
+    func unarchiveConversation(id: String) {
+        mutate(errorTitle: "Conversation") { try await $0.setArchived(conversationID: id, archived: false) }
+    }
+
+    func assignTags(conversationID: String, tagIDs: Set<String>) {
+        mutate(errorTitle: "Tag") { try await $0.setTags(conversationID: conversationID, tagIDs: tagIDs) }
+    }
+
+    @discardableResult
+    func createTag(name: String, color: String) async -> CPSLTag? {
+        guard let store = try? await loadStore() else { return nil }
+        do {
+            let tag = try await store.createTag(name: name, color: color)
+            await reloadConversations()
+            return tag
+        } catch {
+            appendErrorMessage(title: "Tag", body: error.localizedDescription)
+            return nil
+        }
+    }
+
+    func renameTag(id: String, name: String) {
+        mutate(errorTitle: "Tag") { try await $0.renameTag(id: id, name: name) }
+    }
+
+    func deleteTag(id: String) {
+        mutate(errorTitle: "Tag") { try await $0.deleteTag(id: id) }
+    }
+
+    func tagIDs(for conversationID: String) async -> Set<String> {
+        guard let store = try? await loadStore() else { return [] }
+        return (try? await store.tagIDs(forConversation: conversationID)) ?? []
     }
 
 #if DEBUG
@@ -978,6 +1068,53 @@ final class CPSLChatModel: ObservableObject {
         loadingFilePaths.contains(path)
     }
 
+    var sectionGroups: [CPSLConversationSectionGroup] {
+        CPSLConversationGrouping.sections(
+            summaries: conversations,
+            searchText: searchText,
+            now: Date(),
+            calendar: .current
+        )
+    }
+
+    func setArchivedScope(_ on: Bool) {
+        guard showingArchived != on else { return }
+        showingArchived = on
+        Task { await reloadConversations() }
+    }
+
+    func toggleActiveTag(_ id: String) {
+        if activeTagIDs.contains(id) {
+            activeTagIDs.remove(id)
+        } else {
+            activeTagIDs.insert(id)
+        }
+        Task { await reloadConversations() }
+    }
+
+    func clearActiveTags() {
+        activeTagIDs = []
+        Task { await reloadConversations() }
+    }
+
+    private func reloadConversations() async {
+        guard let store = try? await loadStore() else { return }
+        let scope: CPSLArchiveScope = showingArchived ? .archived : .active
+        do {
+            conversations = try await store.fetchConversationSummaries(archiveScope: scope, tagIDs: activeTagIDs)
+            allTags = try await store.allTags()
+            // Reconcile: active tags deleted (locally or via iCloud) are dropped.
+            let validIDs = Set(allTags.map(\.id))
+            let reconciled = activeTagIDs.intersection(validIDs)
+            if reconciled != activeTagIDs {
+                activeTagIDs = reconciled
+                conversations = try await store.fetchConversationSummaries(archiveScope: scope, tagIDs: reconciled)
+            }
+        } catch {
+            appendErrorMessage(title: "Storage", body: error.localizedDescription)
+        }
+    }
+
     private func bootstrap() async {
         do {
             iCloudMounts = try await service.prepareICloudMounts()
@@ -992,14 +1129,9 @@ final class CPSLChatModel: ObservableObject {
             appendErrorMessage(title: "Files", body: error.localizedDescription)
         }
         isUpdatingICloudMounts = false
-        do {
-            let store = try await loadStore()
-            conversations = try await store.loadSummaries()
-            if selectedConversationID == nil, messages.isEmpty, let first = conversations.first {
-                await loadConversation(id: first.id)
-            }
-        } catch {
-            appendErrorMessage(title: "Storage", body: error.localizedDescription)
+        await reloadConversations()
+        if selectedConversationID == nil, messages.isEmpty, let first = conversations.first {
+            await loadConversation(id: first.id)
         }
     }
 
@@ -1048,7 +1180,7 @@ final class CPSLChatModel: ObservableObject {
             currentNodeID = conversation.summary.currentNodeID
             currentSystemPrompt = conversation.systemPrompt.isEmpty ? systemPrompt : conversation.systemPrompt
             messages = conversation.nodes.compactMap(\.chatMessage)
-            conversations = try await store.loadSummaries()
+            await reloadConversations()
             isDrawerOpen = false
             isFileBrowserOpen = false
             isCalendarOpen = false
@@ -1071,7 +1203,7 @@ final class CPSLChatModel: ObservableObject {
         do {
             try await store.deleteConversation(id: id)
             await service.removeAttachmentScope(conversationID: id)
-            conversations = try await store.loadSummaries()
+            await reloadConversations()
             if selectedConversationID == id {
                 selectedConversationID = nil
                 composerAttachments = []
@@ -1200,7 +1332,7 @@ final class CPSLChatModel: ObservableObject {
                 activeConversationID = conversationID
                 activeParentID = parentID
             }
-            conversations = try await store.loadSummaries()
+            await reloadConversations()
             try Task.checkCancellation()
 
             let config = try CPSLAgentConfig.load()
@@ -1225,7 +1357,7 @@ final class CPSLChatModel: ObservableObject {
             try Task.checkCancellation()
             parentID = providerLoopContext.parentID
             currentNodeID = parentID
-            conversations = try await store.loadSummaries()
+            await reloadConversations()
         } catch {
             let pendingContext = CPSLPendingConversationContext(
                 store: store,
@@ -1248,9 +1380,7 @@ final class CPSLChatModel: ObservableObject {
                     )
                 )
             }
-            if let summaries = try? await store.loadSummaries() {
-                conversations = summaries
-            }
+            await reloadConversations()
         }
 
         await finishTypewriter()

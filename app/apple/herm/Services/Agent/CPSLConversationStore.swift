@@ -39,21 +39,44 @@ actor CPSLConversationStore {
         sqlite3_close(database)
     }
 
-    func loadSummaries() throws -> [CPSLConversationSummary] {
-        try query(
+    func fetchConversationSummaries(
+        archiveScope: CPSLArchiveScope,
+        tagIDs: Set<String>
+    ) throws -> [CPSLConversationSummary] {
+        let archivedValue = archiveScope == .archived ? 1 : 0
+        var sql = """
+            SELECT c.id, c.title, c.current_node_id, c.model, c.created_at, c.updated_at, c.pinned, c.archived
+            FROM conversations c
             """
-            SELECT id, title, current_node_id, model, created_at, updated_at
-            FROM conversations
-            ORDER BY updated_at DESC
+        var bindings: [CPSLSQLiteBinding] = []
+
+        if !tagIDs.isEmpty {
+            let placeholders = Array(repeating: "?", count: tagIDs.count).joined(separator: ", ")
+            sql += """
+            \nJOIN conversation_tags ct ON ct.conversation_id = c.id
+            WHERE c.archived = ? AND ct.tag_id IN (\(placeholders))
+            GROUP BY c.id
+            HAVING COUNT(DISTINCT ct.tag_id) = ?
+            ORDER BY c.updated_at DESC
             """
-        ) { statement in
+            bindings.append(.int(archivedValue))
+            bindings.append(contentsOf: tagIDs.map { CPSLSQLiteBinding.text($0) })
+            bindings.append(.int(tagIDs.count))
+        } else {
+            sql += "\nWHERE c.archived = ?\nORDER BY c.updated_at DESC"
+            bindings.append(.int(archivedValue))
+        }
+
+        return try query(sql, bindings: bindings) { statement in
             CPSLConversationSummary(
                 id: columnString(statement, 0) ?? "",
                 title: columnString(statement, 1) ?? "Untitled",
                 currentNodeID: columnString(statement, 2),
                 model: columnString(statement, 3),
                 createdAt: columnDate(statement, 4),
-                updatedAt: columnDate(statement, 5)
+                updatedAt: columnDate(statement, 5),
+                pinned: columnBool(statement, 6),
+                archived: columnBool(statement, 7)
             )
         }
     }
@@ -75,7 +98,7 @@ actor CPSLConversationStore {
     func loadConversation(id: String) throws -> CPSLLoadedConversation? {
         let loadedHeaders = try query(
             """
-            SELECT id, title, current_node_id, model, system_prompt, created_at, updated_at
+            SELECT id, title, current_node_id, model, system_prompt, created_at, updated_at, pinned, archived
             FROM conversations
             WHERE id = ?
             LIMIT 1
@@ -89,7 +112,9 @@ actor CPSLConversationStore {
                     currentNodeID: columnString(statement, 2),
                     model: columnString(statement, 3),
                     createdAt: columnDate(statement, 5),
-                    updatedAt: columnDate(statement, 6)
+                    updatedAt: columnDate(statement, 6),
+                    pinned: columnBool(statement, 7),
+                    archived: columnBool(statement, 8)
                 ),
                 systemPrompt: columnString(statement, 4) ?? ""
             )
@@ -171,7 +196,9 @@ actor CPSLConversationStore {
             currentNodeID: userNodeID,
             model: model,
             createdAt: now,
-            updatedAt: now
+            updatedAt: now,
+            pinned: false,
+            archived: false
         )
         let node = CPSLStoredNode(
             id: userNodeID,
@@ -340,6 +367,112 @@ actor CPSLConversationStore {
         )
     }
 
+    func setPinned(conversationID: String, pinned: Bool) throws {
+        try execute(
+            "UPDATE conversations SET pinned = ? WHERE id = ?",
+            bindings: [.int(pinned ? 1 : 0), .text(conversationID)]
+        )
+    }
+
+    func setArchived(conversationID: String, archived: Bool) throws {
+        try execute(
+            "UPDATE conversations SET archived = ? WHERE id = ?",
+            bindings: [.int(archived ? 1 : 0), .text(conversationID)]
+        )
+    }
+
+    func renameConversation(id: String, title: String) throws {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CPSLConversationStoreError.invalidTitle
+        }
+        try execute(
+            "UPDATE conversations SET title = ?, title_is_custom = 1 WHERE id = ?",
+            bindings: [.text(trimmed), .text(id)]
+        )
+    }
+
+    static func normalizedTagName(_ raw: String) throws -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 40 else {
+            throw CPSLConversationStoreError.invalidTagName
+        }
+        return trimmed
+    }
+
+    func allTags() throws -> [CPSLTag] {
+        try query(
+            "SELECT id, name, color, created_at FROM tags ORDER BY name COLLATE NOCASE ASC"
+        ) { statement in
+            CPSLTag(
+                id: columnString(statement, 0) ?? "",
+                name: columnString(statement, 1) ?? "",
+                color: columnString(statement, 2) ?? "",
+                createdAt: columnDate(statement, 3)
+            )
+        }
+    }
+
+    private func tagNameExists(_ name: String, excludingID: String?) throws -> Bool {
+        let rows = try query(
+            "SELECT id FROM tags WHERE name = ? COLLATE NOCASE",
+            bindings: [.text(name)]
+        ) { statement in
+            columnString(statement, 0) ?? ""
+        }
+        return rows.contains { $0 != excludingID }
+    }
+
+    func createTag(name: String, color: String) throws -> CPSLTag {
+        let clean = try Self.normalizedTagName(name)
+        guard try !tagNameExists(clean, excludingID: nil) else {
+            throw CPSLConversationStoreError.duplicateTagName
+        }
+        let tag = CPSLTag(id: UUID().uuidString, name: clean, color: color, createdAt: Date())
+        try execute(
+            "INSERT INTO tags (id, name, color, created_at) VALUES (?, ?, ?, ?)",
+            bindings: [.text(tag.id), .text(tag.name), .text(tag.color), .date(tag.createdAt)]
+        )
+        return tag
+    }
+
+    func renameTag(id: String, name: String) throws {
+        let clean = try Self.normalizedTagName(name)
+        guard try !tagNameExists(clean, excludingID: id) else {
+            throw CPSLConversationStoreError.duplicateTagName
+        }
+        try execute("UPDATE tags SET name = ? WHERE id = ?", bindings: [.text(clean), .text(id)])
+    }
+
+    func deleteTag(id: String) throws {
+        try execute("DELETE FROM tags WHERE id = ?", bindings: [.text(id)])
+    }
+
+    func tagIDs(forConversation id: String) throws -> Set<String> {
+        let rows = try query(
+            "SELECT tag_id FROM conversation_tags WHERE conversation_id = ?",
+            bindings: [.text(id)]
+        ) { statement in
+            columnString(statement, 0) ?? ""
+        }
+        return Set(rows)
+    }
+
+    func setTags(conversationID: String, tagIDs: Set<String>) throws {
+        try withTransaction {
+            try execute(
+                "DELETE FROM conversation_tags WHERE conversation_id = ?",
+                bindings: [.text(conversationID)]
+            )
+            for tagID in tagIDs {
+                try execute(
+                    "INSERT INTO conversation_tags (conversation_id, tag_id) VALUES (?, ?)",
+                    bindings: [.text(conversationID), .text(tagID)]
+                )
+            }
+        }
+    }
+
     func providerMessages(conversationID: String) throws -> [CPSLOpenAIMessage] {
         try loadNodes(conversationID: conversationID).compactMap(\.providerMessage)
     }
@@ -390,9 +523,41 @@ actor CPSLConversationStore {
         try addColumnIfMissing(.init(table: "nodes", column: "model", definition: "TEXT"), database: database)
         try addColumnIfMissing(.init(table: "nodes", column: "provider_message_json", definition: "TEXT"), database: database)
         try backfillLegacyConversationPointers(database: database)
+
+        try addColumnIfMissing(.init(table: "conversations", column: "pinned", definition: "INTEGER NOT NULL DEFAULT 0"), database: database)
+        try addColumnIfMissing(.init(table: "conversations", column: "archived", definition: "INTEGER NOT NULL DEFAULT 0"), database: database)
+        try addColumnIfMissing(.init(table: "conversations", column: "title_is_custom", definition: "INTEGER NOT NULL DEFAULT 0"), database: database)
+
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS tags (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL,
+                created_at REAL NOT NULL
+            )
+            """,
+            database: database
+        )
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS conversation_tags (
+                conversation_id TEXT NOT NULL,
+                tag_id TEXT NOT NULL,
+                PRIMARY KEY (conversation_id, tag_id),
+                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+                FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
+            )
+            """,
+            database: database
+        )
+
         try execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique ON nodes(conversation_id, sequence)", database: database)
         try execute("CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)", database: database)
         try execute("CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at)", database: database)
+        try execute("CREATE INDEX IF NOT EXISTS idx_conversations_archived_updated ON conversations(archived, updated_at DESC)", database: database)
+        try execute("CREATE INDEX IF NOT EXISTS idx_conversations_pinned_updated ON conversations(pinned, updated_at DESC)", database: database)
+        try execute("CREATE INDEX IF NOT EXISTS idx_conversation_tags_tag ON conversation_tags(tag_id, conversation_id)", database: database)
     }
 
     private nonisolated static func backfillLegacyConversationPointers(database: OpaquePointer?) throws {
@@ -657,6 +822,20 @@ nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable, E
     let model: String?
     let createdAt: Date
     let updatedAt: Date
+    let pinned: Bool
+    let archived: Bool
+}
+
+nonisolated struct CPSLTag: Identifiable, Equatable, Sendable, Encodable {
+    let id: String
+    var name: String
+    var color: String
+    let createdAt: Date
+}
+
+nonisolated enum CPSLArchiveScope: Sendable, Equatable {
+    case active
+    case archived
 }
 
 nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Encodable {
@@ -736,6 +915,9 @@ nonisolated enum CPSLConversationStoreError: LocalizedError {
     case parentRequired
     case parentConversationMismatch
     case sqlite(String)
+    case invalidTagName
+    case duplicateTagName
+    case invalidTitle
 
     var errorDescription: String? {
         switch self {
@@ -749,6 +931,12 @@ nonisolated enum CPSLConversationStoreError: LocalizedError {
             return "Parent node does not belong to the conversation."
         case .sqlite(let message):
             return "SQLite error: \(message)"
+        case .invalidTagName:
+            return "Tag name is empty or too long."
+        case .duplicateTagName:
+            return "A tag with this name already exists."
+        case .invalidTitle:
+            return "Conversation title is empty."
         }
     }
 }
@@ -810,4 +998,8 @@ private nonisolated func columnString(_ statement: OpaquePointer?, _ index: Int3
 
 private nonisolated func columnDate(_ statement: OpaquePointer?, _ index: Int32) -> Date {
     Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
+}
+
+private nonisolated func columnBool(_ statement: OpaquePointer?, _ index: Int32) -> Bool {
+    sqlite3_column_int(statement, index) != 0
 }

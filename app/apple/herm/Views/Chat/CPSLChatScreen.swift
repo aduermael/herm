@@ -387,7 +387,7 @@ struct CPSLChatScreen: View {
                 CPSLConversationDrawerView(
                     model: model,
                     topInset: drawerTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
-                    bottomInset: CPSLTheme.medium
+                    bottomInset: proxy.safeAreaInsets.bottom + CPSLTheme.small
                 )
                 .ignoresSafeArea(.container, edges: .vertical)
                 .allowsHitTesting(isDrawerInteractionEnabled)
@@ -416,6 +416,8 @@ struct CPSLChatScreen: View {
                 .padding(.leading, CPSLTheme.medium)
                 .padding(.top, CPSLTheme.topChromeSafeAreaGap)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
+                .opacity(1 - drawerProgress)
+                .allowsHitTesting(!model.isDrawerOpen)
                 .zIndex(3)
             }
             .onAppear {
