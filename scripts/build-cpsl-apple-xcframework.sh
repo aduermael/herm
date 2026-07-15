@@ -78,6 +78,7 @@ script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/host-path.sh"
 . "$script_dir/lib/cpsl-xcframework.sh"
+. "$script_dir/lib/build-manifest.sh"
 herm_ensure_rust_path
 
 [ "$(uname -s)" = Darwin ] || die "Apple XCFramework builds require macOS with Xcode"
@@ -406,6 +407,30 @@ else
 	cpsl_xcframework_write_source_stamp_value "$source_stamp_path" "$cpsl_root" unknown "$cargo_profile"
 fi
 
+manifest_path="$out_dir/build-manifest.txt"
+herm_manifest_init "$manifest_path"
+herm_manifest_add "$manifest_path" builder build-cpsl-apple-xcframework.sh
+herm_manifest_add "$manifest_path" profile "$profile"
+herm_manifest_add "$manifest_path" features "$([ "$profile" = apple-app ] && printf '%s' embedded-agent || printf '%s' ffi-minimal)"
+herm_manifest_add "$manifest_path" cargo_profile "$cargo_profile"
+herm_manifest_add "$manifest_path" targets "$CPSL_REQUEST_DESCRIPTION"
+herm_manifest_add "$manifest_path" herm_revision "$(herm_source_revision "$herm_root")"
+herm_manifest_add "$manifest_path" cpsl_revision "$(herm_source_revision "$cpsl_root")"
+herm_manifest_add "$manifest_path" rustc_version "$(rustc --version)"
+herm_manifest_add "$manifest_path" cargo_version "$(cargo --version)"
+herm_manifest_add "$manifest_path" xcode_version "$(xcodebuild -version)"
+herm_manifest_add "$manifest_path" clang_version "$(xcrun clang --version | sed -n '1p')"
+herm_manifest_add_file "$manifest_path" cpsl_header_sha256 "$include_dir/cpsl.h"
+herm_manifest_add_file "$manifest_path" ios_device_library_sha256 "$ios_device_dir/$lib_name"
+herm_manifest_add_file "$manifest_path" ios_simulator_library_sha256 "$ios_simulator_dir/$lib_name"
+herm_manifest_add_file "$manifest_path" macos_library_sha256 "$macos_dir/$lib_name"
+if [ "$profile" = apple-app ]; then
+	herm_manifest_add "$manifest_path" pdfium_version "${PDFIUM_VERSION:-7734}"
+	herm_manifest_add_file "$manifest_path" pdfium_ios_device_sha256 "$pdfium_dir/ios-arm64/lib/$pdfium_lib_name"
+	herm_manifest_add_file "$manifest_path" pdfium_ios_simulator_sha256 "$pdfium_dir/ios-simulator/lib/$pdfium_lib_name"
+	herm_manifest_add_file "$manifest_path" pdfium_macos_sha256 "$pdfium_dir/macos/lib/$pdfium_lib_name"
+fi
+
 if [ -z "${OUT_DIR:-}" ] && [ -z "${CPSL_WORK_DIR:-}" ] && [ -z "${CONFIGURATION:-}" ]; then
 	display_out=".herm-cpsl/artifacts/apple"
 else
@@ -421,3 +446,4 @@ if [ "$profile" = apple-app ]; then
 	printf '  pdfium: %s/libs/pdfium\n' "$display_out"
 fi
 printf '  header: %s/include/cpsl.h\n' "$display_out"
+printf '  manifest: %s/build-manifest.txt\n' "$display_out"

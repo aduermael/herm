@@ -54,10 +54,10 @@ By default the script builds CPSL from Herm's submodule:
 external/cpsl
 ```
 
-The current submodule points at CPSL commit
-`4376c3bc49045177f8096688f9e350423a79b9b4`, which includes the HTTP policy and
-composed mount integration used by Herm. Override the source when testing a
-local CPSL checkout:
+The tracked CPSL revision includes the HTTP policy and composed mount
+integration used by Herm. The exact revision is recorded in each generated
+`build-manifest.txt`; inspect it before comparing or publishing artifacts.
+Override the source when testing a local CPSL checkout:
 
 ```sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
@@ -104,18 +104,24 @@ under Herm's ignored `.herm-cpsl` directory:
 .herm-cpsl/artifacts/linux-amd64/
   herm
   libcpsl.so
+  build-manifest.txt
   include/cpsl.h
   libs/pdfium/lib/libpdfium.so   # --all only
 
 .herm-cpsl/artifacts/macos-arm64/
   herm
   libcpsl.dylib
+  build-manifest.txt
   include/cpsl.h
   libs/pdfium/lib/libpdfium.dylib # --all only
 ```
 
 The exact output directory depends on the host OS and CPU. Override it with
 `OUT_DIR=/path/to/artifacts` if needed.
+
+`build-manifest.txt` records the build profile, target, source revisions,
+compiler versions, and SHA-256 hashes for the generated Herm, CPSL, header, and
+PDFium artifacts that are present.
 
 The script prints a ready-to-run command, for example:
 
@@ -151,6 +157,7 @@ XCFramework:
 ```text
 .herm-cpsl/artifacts/apple/
   cpsl.xcframework
+  build-manifest.txt
   include/cpsl.h
 ```
 
