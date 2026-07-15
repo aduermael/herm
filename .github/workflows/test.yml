@@ -31,3 +31,48 @@ jobs:
             (cd "$dir" && go test ./...)
             echo "::endgroup::"
           done
+
+  cpsl-linux:
+    name: CPSL Linux build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.herm-cpsl/cargo-target
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24"
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libssl-dev pkg-config
+
+      - name: Install pinned Rust toolchain
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            .herm-cpsl/cargo-target
+          key: cpsl-linux-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'external/cpsl/Cargo.lock') }}
+
+      - name: Apply Herm CPSL integration patches
+        run: scripts/apply-cpsl-patches.sh external/cpsl
+
+      - name: Test native HTTP policy
+        run: cargo test --manifest-path external/cpsl/Cargo.toml --locked -p native-http --lib
+
+      - name: Test CPSL FFI
+        run: cargo test --manifest-path external/cpsl/Cargo.toml --locked -p cpsl-ffi
+
+      - name: Build and probe the Herm CPSL image
+        run: RUN_PROBE=1 scripts/build-cpsl-image.sh --minimum
