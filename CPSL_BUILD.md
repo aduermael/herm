@@ -18,7 +18,8 @@ by accident.
 Common requirements:
 
 - Go 1.24 or newer
-- Rust and Cargo
+- Rust 1.95.0 and Cargo (automatically selected by `rust-toolchain.toml` when
+  Rust is installed with rustup)
 - Native C and C++ build tools (`cc` and `c++`)
 - Git, unless `CPSL_ROOT` points at an existing CPSL checkout
 - Herm submodules initialized with
