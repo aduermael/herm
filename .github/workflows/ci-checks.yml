@@ -52,6 +52,8 @@ jobs:
       - uses: actions/checkout@v5
       - name: Test CPSL XCFramework helpers
         run: scripts/test-cpsl-xcframework.sh
+      - name: Test CPSL Apple build pipeline with fake tools
+        run: scripts/test-cpsl-apple-build-integration.sh
       - name: Verify tracked CPSL XCFramework placeholder is not a symlink
         run: |
           set -eu

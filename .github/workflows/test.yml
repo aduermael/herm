@@ -78,17 +78,11 @@ jobs:
         run: RUN_PROBE=1 scripts/build-cpsl-image.sh --minimum
 
   cpsl-macos:
-    name: CPSL macOS XCFramework
-    runs-on: macos-15
+    name: CPSL Xcode dependency target
+    runs-on: macos-26
     timeout-minutes: 45
     env:
-      APPLE_PLATFORMS: macos
-      CONFIGURATION: Debug
-      CPSL_TARGET_DIR: ${{ github.workspace }}/.herm-cpsl/cargo-target
-      IOS_DEVICE_TARGETS: ""
-      IOS_SIMULATOR_TARGETS: ""
-      MACOS_TARGETS: aarch64-apple-darwin
-      OUT_DIR: ${{ github.workspace }}/.herm-cpsl/ci-apple
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
     steps:
       - uses: actions/checkout@v5
         with:
@@ -100,18 +94,54 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal
           rustup target add aarch64-apple-darwin --toolchain "$toolchain"
 
+      - name: Resolve Xcode cache key
+        id: xcode
+        run: echo "cache-key=$(xcodebuild -version | shasum -a 256 | awk '{ print $1 }')" >> "$GITHUB_OUTPUT"
+
       - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/git
             ~/.cargo/registry
             .herm-cpsl/cargo-target
-          key: cpsl-macos-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'external/cpsl/Cargo.lock') }}
+          key: cpsl-macos-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('rust-toolchain.toml', 'external/cpsl/Cargo.lock') }}
 
-      - name: Build one macOS XCFramework slice
-        run: scripts/build-cpsl-apple-xcframework.sh --apple-app
-
-      - name: Verify XCFramework and PDFium outputs
+      - name: Build Herm through Xcode
         run: |
-          test -f "$OUT_DIR/cpsl.xcframework/Info.plist"
-          test -f "$OUT_DIR/libs/pdfium/macos/lib/libpdfium.dylib"
+          set -o pipefail
+          xcodebuild \
+            -project app/apple/herm.xcodeproj \
+            -scheme herm \
+            -configuration Debug \
+            -sdk macosx \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/HermDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/cpsl-xcode-first.log"
+
+      - name: Verify exact Debug arm64 outputs
+        run: |
+          out="$GITHUB_WORKSPACE/.herm-cpsl/artifacts/apple/Debug"
+          test -f "$out/cpsl.xcframework/Info.plist"
+          test -f "$out/cpsl.xcframework/macos-arm64/libcpsl.dylib"
+          test -f "$out/libs/pdfium/macos/lib/libpdfium.dylib"
+          test -f "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'cargo_profile=debug' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'cargo_incremental=1' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'ios_device_targets=' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'ios_simulator_targets=' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'macos_targets=aarch64-apple-darwin' "$out/.cpsl-apple-build.stamp"
+
+      - name: Verify the next Xcode build is a CPSL cache hit
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project app/apple/herm.xcodeproj \
+            -scheme herm \
+            -configuration Debug \
+            -sdk macosx \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/HermDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build | tee "$RUNNER_TEMP/cpsl-xcode-second.log"
+          grep -F 'Using existing CPSL XCFramework:' "$RUNNER_TEMP/cpsl-xcode-second.log"

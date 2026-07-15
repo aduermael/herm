@@ -3,6 +3,7 @@ set -eu
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 . "$script_dir/lib/cpsl-xcframework.sh"
+. "$script_dir/lib/cpsl-apple-build-state.sh"
 
 fail() {
 	printf '%s\n' "error: $*" >&2
@@ -23,6 +24,14 @@ case "$build_phase" in
 *'alwaysOutOfDate = 1;'*) ;;
 *) fail "Build CPSL XCFramework phase must run on every Xcode build" ;;
 esac
+
+for launcher in "$script_dir/dev-apple-ios.sh" "$script_dir/dev-apple-macos.sh"; do
+	if grep -q '^export HERM_CPSL_REBUILD' "$launcher"; then
+		fail "launcher must not export HERM_CPSL_REBUILD into xcodebuild: $launcher"
+	fi
+	grep -q 'HERM_CPSL_REBUILD=1 PLATFORM_NAME=' "$launcher" || \
+		fail "launcher must scope forced CPSL rebuild to preflight: $launcher"
+done
 
 resolve_xcode_request() (
 	PLATFORM_NAME=$1
@@ -105,12 +114,28 @@ if cpsl_apple_cargo_profile_from_configuration Staging >/dev/null 2>&1; then
 	fail "unsupported configuration should be rejected"
 fi
 
-incremental=$(unset CARGO_INCREMENTAL; cpsl_apple_cargo_incremental_from_environment)
-assert_eq "default Cargo incremental setting" 0 "$incremental"
+incremental=$(unset CARGO_INCREMENTAL; CONFIGURATION=Debug cpsl_apple_cargo_incremental_from_environment)
+assert_eq "Debug Cargo incremental setting" 1 "$incremental"
+incremental=$(unset CARGO_INCREMENTAL; CONFIGURATION=Release cpsl_apple_cargo_incremental_from_environment)
+assert_eq "Release Cargo incremental setting" 0 "$incremental"
+incremental=$(unset CARGO_INCREMENTAL CONFIGURATION; cpsl_apple_cargo_incremental_from_environment)
+assert_eq "manual Cargo incremental setting" 0 "$incremental"
 incremental=$(CARGO_INCREMENTAL=1 cpsl_apple_cargo_incremental_from_environment)
 assert_eq "explicit Cargo incremental setting" 1 "$incremental"
 if CARGO_INCREMENTAL=invalid cpsl_apple_cargo_incremental_from_environment >/dev/null 2>&1; then
 	fail "invalid Cargo incremental setting should be rejected"
+fi
+
+cache_namespace=$(cpsl_apple_cargo_cache_namespace_content rustc-test cargo-test xcode-test)
+assert_eq "stable Cargo cache namespace" "$cache_namespace" \
+	"$(cpsl_apple_cargo_cache_namespace_content rustc-test cargo-test xcode-test)"
+changed_cache_namespace=$(cpsl_apple_cargo_cache_namespace_content rustc-new cargo-test xcode-test)
+if [ "$cache_namespace" = "$changed_cache_namespace" ]; then
+	fail "Cargo cache namespace should change with the Rust toolchain"
+fi
+changed_cache_namespace=$(cpsl_apple_cargo_cache_namespace_content rustc-test cargo-test xcode-new)
+if [ "$cache_namespace" = "$changed_cache_namespace" ]; then
+	fail "Cargo cache namespace should change with Xcode"
 fi
 
 artifact_dir=$(CONFIGURATION=Debug cpsl_apple_default_artifact_dir /tmp/cpsl-work)
@@ -122,6 +147,78 @@ assert_eq "manual artifact dir" /tmp/cpsl-work/artifacts/apple "$artifact_dir"
 
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cpsl-xcframework-test.XXXXXX")
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+
+identity_root="$tmp_dir/identity-root"
+identity_source="$identity_root/source"
+mkdir -p "$identity_root/scripts/lib" "$identity_root/scripts/cpsl-patches" "$identity_source"
+for identity_input in \
+	rust-toolchain.toml \
+	scripts/build-cpsl-apple-xcframework.sh \
+	scripts/apply-cpsl-patches.sh \
+	scripts/lib/build-manifest.sh \
+	scripts/lib/cpsl-apple-build-state.sh \
+	scripts/lib/cpsl-xcframework.sh \
+	scripts/lib/host-path.sh
+do
+	mkdir -p "$(dirname "$identity_root/$identity_input")"
+	printf '%s\n' "$identity_input" >"$identity_root/$identity_input"
+done
+printf '%s\n' 0001-test.patch >"$identity_root/scripts/cpsl-patches/series"
+printf '%s\n' patch-v1 >"$identity_root/scripts/cpsl-patches/0001-test.patch"
+printf '%s\n' source-v1 >"$identity_source/input.rs"
+APPLE_PLATFORMS=ios
+IOS_DEVICE_TARGETS=
+IOS_SIMULATOR_TARGETS=aarch64-apple-ios-sim
+MACOS_TARGETS=
+CONFIGURATION=Debug
+export APPLE_PLATFORMS IOS_DEVICE_TARGETS IOS_SIMULATOR_TARGETS MACOS_TARGETS CONFIGURATION
+identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+identity_stamp=$(cpsl_apple_build_stamp_path "$identity_root/out")
+cpsl_apple_build_stamp_write_value "$identity_stamp" "$identity"
+cpsl_apple_build_stamp_matches_value "$identity_stamp" "$identity" || \
+	fail "build identity should match unchanged inputs"
+touch "$identity_source/input.rs"
+unchanged_identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+cpsl_apple_build_stamp_matches_value "$identity_stamp" "$unchanged_identity" || \
+	fail "build identity should ignore mtime-only changes"
+printf '%s\n' unlisted >"$identity_root/scripts/cpsl-patches/local-only.patch"
+unchanged_identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+cpsl_apple_build_stamp_matches_value "$identity_stamp" "$unchanged_identity" || \
+	fail "build identity should ignore patches absent from the ordered series"
+IOS_SIMULATOR_TARGETS=x86_64-apple-ios
+changed_identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
+	fail "build identity should reject a different exact architecture"
+fi
+IOS_SIMULATOR_TARGETS=aarch64-apple-ios-sim
+changed_identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" minimum debug 1 rustc-test cargo-test xcode-test)
+if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
+	fail "build identity should reject a different CPSL feature profile"
+fi
+changed_identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-new cargo-test xcode-test)
+if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
+	fail "build identity should reject a different Rust toolchain"
+fi
+printf '%s\n' source-v2 >"$identity_source/input.rs"
+changed_identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
+	fail "build identity should reject changed CPSL source content"
+fi
+printf '%s\n' source-v1 >"$identity_source/input.rs"
+printf '%s\n' patch-v2 >"$identity_root/scripts/cpsl-patches/0001-test.patch"
+changed_identity=$(cpsl_apple_build_stamp_content \
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
+	fail "build identity should reject changed listed patch content"
+fi
+unset APPLE_PLATFORMS IOS_DEVICE_TARGETS IOS_SIMULATOR_TARGETS MACOS_TARGETS CONFIGURATION
 
 patch_fixture="$tmp_dir/patch-fixture"
 patch_scripts="$patch_fixture/scripts"
@@ -163,39 +260,6 @@ printf '%s\n' 'missing required policy' >"$patch_checkout/ffi/src/lib.rs"
 if sh "$patch_scripts/apply-cpsl-patches.sh" "$patch_checkout" >/dev/null 2>&1; then
 	fail "CPSL checkout without the PDF network policy should be rejected"
 fi
-
-freshness_root="$tmp_dir/freshness-root"
-freshness_patch_dir="$freshness_root/scripts/cpsl-patches"
-mkdir -p "$freshness_patch_dir" "$freshness_root/scripts/lib"
-freshness_series="$freshness_patch_dir/series"
-freshness_patch="$freshness_patch_dir/0001-test.patch"
-freshness_stray="$freshness_patch_dir/0002-local-copy 2.patch"
-freshness_info="$tmp_dir/FreshnessInfo.plist"
-printf '%s\n' 0001-test.patch >"$freshness_series"
-: >"$freshness_patch"
-: >"$freshness_stray"
-: >"$freshness_root/scripts/build-cpsl-apple-xcframework.sh"
-: >"$freshness_root/scripts/lib/cpsl-xcframework.sh"
-: >"$freshness_root/scripts/apply-cpsl-patches.sh"
-: >"$freshness_info"
-touch -t 202001010000 \
-	"$freshness_series" \
-	"$freshness_patch" \
-	"$freshness_root/scripts/build-cpsl-apple-xcframework.sh" \
-	"$freshness_root/scripts/lib/cpsl-xcframework.sh" \
-	"$freshness_root/scripts/apply-cpsl-patches.sh"
-touch -t 202101010000 "$freshness_info"
-touch -t 202201010000 "$freshness_stray"
-if cpsl_xcframework_inputs_newer_than "$freshness_info" "$freshness_root"; then
-	fail "unlisted patch should not invalidate the XCFramework cache"
-fi
-touch -t 202201010000 "$freshness_patch"
-cpsl_xcframework_inputs_newer_than "$freshness_info" "$freshness_root" || \
-	fail "listed patch should invalidate the XCFramework cache"
-touch -t 202001010000 "$freshness_patch"
-touch -t 202201010000 "$freshness_series"
-cpsl_xcframework_inputs_newer_than "$freshness_info" "$freshness_root" || \
-	fail "patch series change should invalidate the XCFramework cache"
 
 info="$tmp_dir/Info.plist"
 cat >"$info" <<'EOF'
@@ -241,6 +305,11 @@ fi
 if cpsl_xcframework_satisfies_targets "$info" "aarch64-apple-ios" "" ""; then
 	fail "Info.plist should not satisfy iOS device"
 fi
+cpsl_xcframework_matches_targets "$info" "" aarch64-apple-ios-sim x86_64-apple-darwin || \
+	fail "Info.plist should exactly match its simulator and macOS architectures"
+if cpsl_xcframework_matches_targets "$info" "" aarch64-apple-ios-sim ""; then
+	fail "exact target matching should reject an extra macOS slice"
+fi
 
 compact_info="$tmp_dir/CompactInfo.plist"
 cat >"$compact_info" <<'EOF'
@@ -255,26 +324,8 @@ cpsl_xcframework_is_full "$compact_info" || \
 	fail "compact Info.plist should satisfy full XCFramework checks"
 cpsl_xcframework_satisfies_targets "$compact_info" "aarch64-apple-ios" "aarch64-apple-ios-sim x86_64-apple-ios" "aarch64-apple-darwin x86_64-apple-darwin" || \
 	fail "compact Info.plist should satisfy all Apple targets"
-
-source_a="$tmp_dir/source-a"
-source_b="$tmp_dir/source-b"
-mkdir -p "$source_a" "$source_b"
-stamp="$tmp_dir/source.stamp"
-cpsl_xcframework_write_source_stamp_value "$stamp" "$source_a" rev-a
-cpsl_xcframework_source_stamp_matches_value "$stamp" "$source_a" rev-a || \
-	fail "source stamp should match same source and revision"
-if cpsl_xcframework_source_stamp_matches_value "$stamp" "$source_b" rev-a; then
-	fail "source stamp should reject different source path"
-fi
-if cpsl_xcframework_source_stamp_matches_value "$stamp" "$source_a" rev-b; then
-	fail "source stamp should reject different source revision"
-fi
-cpsl_xcframework_write_source_stamp_value "$stamp" "$source_a" rev-a debug
-cpsl_xcframework_source_stamp_matches_value "$stamp" "$source_a" rev-a debug || \
-	fail "source stamp should match same Cargo profile"
-if cpsl_xcframework_source_stamp_matches_value "$stamp" "$source_a" rev-a release; then
-	fail "source stamp should reject different Cargo profile"
-fi
+cpsl_xcframework_matches_targets "$compact_info" "aarch64-apple-ios" "aarch64-apple-ios-sim x86_64-apple-ios" "aarch64-apple-darwin x86_64-apple-darwin" || \
+	fail "compact Info.plist should exactly match all Apple targets"
 
 lipo_stub="$tmp_dir/lipo"
 cat >"$lipo_stub" <<'EOF'
@@ -302,6 +353,29 @@ if cpsl_pdfium_satisfies_targets "$pdfium_root" "" "x86_64-apple-ios" ""; then
 fi
 if cpsl_pdfium_satisfies_targets "$pdfium_root" "" "" "aarch64-apple-darwin"; then
 	fail "PDFium should reject missing macOS arm64"
+fi
+unset CPSL_LIPO
+
+binary_xcframework="$tmp_dir/binary-cpsl.xcframework"
+mkdir -p \
+	"$binary_xcframework/ios-arm64_x86_64-simulator/Headers" \
+	"$binary_xcframework/macos-arm64_x86_64/Headers"
+cp "$compact_info" "$binary_xcframework/Info.plist"
+for binary_slice in ios-arm64_x86_64-simulator macos-arm64_x86_64; do
+	printf '%s\n' header >"$binary_xcframework/$binary_slice/Headers/cpsl.h"
+	printf '%s\n' module >"$binary_xcframework/$binary_slice/Headers/module.modulemap"
+done
+printf '%s\n' arm64 >"$binary_xcframework/ios-arm64_x86_64-simulator/libcpsl.dylib"
+printf '%s\n' x86_64 >"$binary_xcframework/macos-arm64_x86_64/libcpsl.dylib"
+CPSL_LIPO=$lipo_stub
+export CPSL_LIPO
+cpsl_xcframework_binaries_satisfy_targets \
+	"$binary_xcframework" "" aarch64-apple-ios-sim x86_64-apple-darwin || \
+	fail "XCFramework binaries should satisfy matching requested architectures"
+printf '%s\n' x86_64 >"$binary_xcframework/ios-arm64_x86_64-simulator/libcpsl.dylib"
+if cpsl_xcframework_binaries_satisfy_targets \
+	"$binary_xcframework" "" aarch64-apple-ios-sim ""; then
+	fail "XCFramework binary validation should reject an advertised but missing architecture"
 fi
 unset CPSL_LIPO
 

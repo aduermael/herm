@@ -9,7 +9,7 @@ reads CPSL's existing Cargo manifests and lockfile, while `go_deps` reads the
 root Go module. The Rust targets intentionally select only `ffi-minimal` and
 the matching CPSL core features.
 
-After installing Bazel or Bazelisk, validate and build with:
+After installing Bazel or Bazelisk, reproduce the experiment with:
 
 ```sh
 bazel mod tidy
@@ -17,11 +17,31 @@ bazel build //:linux_experiment
 bazel build //:cpsl_ffi //cmd/herm:herm
 ```
 
-Compare the resulting clean and cached timings with
-[`CPSL_BUILD_BASELINE.md`](CPSL_BUILD_BASELINE.md). Do not add Apple or web
-targets until this Linux experiment builds reproducibly and demonstrates a
-useful cache improvement.
+Compare any resulting clean and cached timings with
+[`CPSL_BUILD_BASELINE.md`](CPSL_BUILD_BASELINE.md).
 
-`MODULE.bazel.lock` is intentionally absent from the initial scaffold because
-the repository did not have Bazel available when it was created. Commit the
-lockfile produced by the first successful `bazel mod tidy` validation.
+## Result and decision
+
+The experiment was run with Bazel 9.1.1 on 2026-07-15. `bazel mod tidy`
+completed but warned that CPSL path dependencies were non-hermetic and copied
+them into top-level `modules/` and `vendor/` directories. The subsequent
+`bazel build //:linux_experiment` failed during analysis because the generated
+Crate Universe repository did not declare the `void` dependency required by
+the patched `conch-parser` crate. No comparable Bazel timing was produced.
+
+Bazel is not the supported CPSL Apple build system. `rules_rust` can generate
+dependencies from Cargo and build a shared Rust library, and Bazel's strongest
+additional benefit would be a content-addressed remote cache. This repository
+does not currently have that cache infrastructure, while its measured warm
+Cargo build is one second and the Xcode path now uses a content-keyed no-op plus
+Cargo's Debug incremental compilation. Adopting Bazel today would duplicate the
+Cargo feature/dependency graph and still require custom Apple slice, PDFium,
+XCFramework, and Xcode integration logic.
+
+Revisit the decision only if cross-machine cache reuse becomes a concrete need.
+Before considering Apple integration, require the Linux target to build from a
+committed lockfile without non-hermetic path warnings and show a material clean
+or cached improvement over the Cargo baseline. Then prove all five Apple Rust
+triples and Debug/Release parity independently. See the official
+[`rules_rust` Crate Universe documentation](https://bazelbuild.github.io/rules_rust/crate_universe_bzlmod.html)
+and [Bazel remote-cache requirements](https://bazel.build/remote/caching).

@@ -163,10 +163,13 @@ XCFramework:
 
 Direct CLI builds use Cargo's release profile by default. When invoked from
 Xcode, the helper follows Xcode's `CONFIGURATION`: `Debug` uses Cargo's debug
-profile and `Release` uses Cargo's release profile. Apple builds disable Cargo
-incremental compilation by default because cached compiler state is not stable
-across Rust toolchain and Apple target changes. Set `CARGO_INCREMENTAL=1` only
-when deliberately testing incremental Rust builds.
+profile with incremental compilation, while `Release` uses Cargo's release
+profile without incremental compilation. This follows Cargo's normal profile
+defaults. The default Cargo target directory is also namespaced by the Rust,
+Cargo, and Xcode versions plus deployment/linker settings, so an Xcode or
+toolchain change cannot consume incompatible incremental state. Source edits
+continue to share that namespace and receive normal incremental recompilation.
+Set `CARGO_INCREMENTAL=0` or `1` only to override the profile behavior.
 
 Install Rust with [rustup](https://rustup.rs/), then add the Apple targets before
 building:
@@ -263,16 +266,15 @@ after every successful build. The ensure script itself is cheap when nothing
 changed:
 it reuses
 `.herm-cpsl/artifacts/apple/Debug/cpsl.xcframework` or
-`.herm-cpsl/artifacts/apple/Release/cpsl.xcframework` when it contains the
-platform and architectures selected by Xcode's `PLATFORM_NAME`/`SDK_NAME` and
-`ARCHS`, and staleness inputs are not newer than `Info.plist`. For Xcode
-auto-builds, reuse also requires the adjacent `.cpsl-source.stamp` to show that
-the artifact was built from Herm's `external/cpsl` submodule at the current
-revision and matching Cargo profile. It rebuilds when the artifact is missing,
-lacks the requested slice, was built from another CPSL checkout, revision, or
-Cargo profile, or is stale because the CPSL patch series or one of its listed
-patches, `scripts/build-cpsl-apple-xcframework.sh`,
-`scripts/lib/cpsl-xcframework.sh`, or `scripts/apply-cpsl-patches.sh` changed.
+`.herm-cpsl/artifacts/apple/Release/cpsl.xcframework` only when its adjacent
+`.cpsl-apple-build.stamp` exactly matches the current request. The content-based
+identity includes the selected platform and Rust target triples, Cargo profile
+and incremental mode, deployment targets, CPSL source revision plus local
+changes, the ordered patch inputs, build-script content, `RUSTFLAGS`, PDFium
+version, and Rust/Cargo/Xcode versions. It therefore rebuilds when any effective
+input changes even if file mtimes move backwards, and it does not reuse a
+universal artifact for a single-architecture request. A build is left unstamped
+and retried if its inputs change while compilation is running.
 
 Xcode keeps Debug and Release CPSL artifacts separate:
 
@@ -286,7 +288,7 @@ Xcode keeps Debug and Release CPSL artifacts separate:
   libs/pdfium/
 ```
 
-Xcode builds produce only the selected platform and architectures. For example,
+Xcode builds produce exactly the selected platform and architectures. For example,
 an Apple Silicon iPhone simulator build creates `aarch64-apple-ios-sim` and the
 simulator PDFium sidecar; it does not also build x86_64 simulator, iOS device,
 or macOS slices. A later build for another destination rebuilds the cached
@@ -356,11 +358,11 @@ early in the ensure script with a clear error before any Rust build starts.
 `scripts/dev-apple-macos.sh` and `scripts/dev-apple-ios.sh` call the same
 ensure script. Use `--skip-cpsl` to require an existing matching XCFramework
 without building, or `--rebuild-cpsl` to set `HERM_CPSL_REBUILD=1` before the
-ensure step. The `--full-cpsl` flag is deprecated; the ensure script builds the
-framework slices requested by its environment. These terminal launchers pass
-their selected `--configuration` into CPSL preflight, so a Debug launcher build
-uses the Debug CPSL artifact and a Release launcher build uses the Release CPSL
-artifact.
+ensure step. The `--full-cpsl` and `--universal-cpsl` flags are deprecated;
+the ensure script builds the exact destination and architectures selected for
+the Xcode build. These terminal launchers also pass their selected
+`--configuration` into CPSL preflight, so a Debug launcher build uses the Debug
+CPSL artifact and a Release launcher build uses the Release CPSL artifact.
 
 ## macOS App From Terminal
 
@@ -405,10 +407,10 @@ For a build-only check:
 scripts/dev-apple-macos.sh --build-only
 ```
 
-By default, the launcher ensures the full iOS+macOS CPSL XCFramework via the
-shared ensure script. Use `--universal-cpsl` when you want both arm64 and
-x86_64 macOS slices. Use `--project-signing` if you want Xcode's configured
-team/signing settings instead of local ad hoc signing.
+The launcher passes its macOS destination and host architecture through the
+same Xcode target resolver before starting `xcodebuild`, so the dependency
+target reuses that exact artifact. Use `--project-signing` if you want Xcode's
+configured team/signing settings instead of local ad hoc signing.
 
 ## Options
 
@@ -440,6 +442,19 @@ scripts/measure-cpsl-build.sh
 The command keeps the build and a tab-separated `benchmark.tsv` report under
 `.herm-cpsl/benchmarks/`. It does not clear or reuse the normal developer Cargo
 target directory. Use `--all` to measure the broad profile.
+
+The Linux CI exercises Apple request resolution and the complete ensure/build
+pipeline without invoking Xcode:
+
+```sh
+scripts/test-cpsl-xcframework.sh
+scripts/test-cpsl-apple-build-integration.sh
+```
+
+The integration test uses deterministic fake Apple tools to verify Debug and
+Release profile selection, incremental-mode propagation, warm no-ops, source
+staleness, corrupt-binary recovery, and exact architecture replacement. The
+macOS CI job separately builds the real Herm Xcode scheme twice.
 
 To report the observed success/failure ratio for recent GitHub Actions runs:
 
