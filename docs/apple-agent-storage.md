@@ -43,6 +43,11 @@ website file input; web content never receives or resolves a CPSL path itself.
 Browser downloads are saved under `/tmp/downloads` and reported back as virtual
 paths.
 
+Connected iCloud Drive folders are additional CPSL file mounts. They do not
+change the agent's HTTP policy, native browser availability, or document
+rendering capability. The agent is instructed to treat mounted content as
+personal data and access it only when the task calls for it.
+
 EventKit exposes an event URL and notes but no public file-attachment API. Herm
 therefore provides `calendar.attach(event_id, paths)` as an app-managed layer:
 it copies files under `/home/herm/calendar-attachments`, records their virtual

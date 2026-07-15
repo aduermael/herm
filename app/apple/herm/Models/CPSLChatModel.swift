@@ -25,6 +25,7 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var expandedFilePaths: Set<String> = []
     @Published private(set) var loadingFilePaths: Set<String> = []
     @Published private(set) var fileBrowserError: String?
+    @Published private(set) var isManagingFiles = false
     @Published private(set) var filePreview: CPSLFilePreview? {
         didSet {
             if filePreview == nil {
@@ -47,7 +48,7 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var iCloudImportProgress: CPSLICloudImportProgress?
 
     var isBusy: Bool {
-        isRunning || isUpdatingICloudMounts
+        isRunning || isUpdatingICloudMounts || isManagingFiles
     }
 
     let service: CPSLDebugService
@@ -73,11 +74,12 @@ final class CPSLChatModel: ObservableObject {
     private var filePreviewLoadTask: Task<Void, Never>?
     private var filePreviewLifetimeToken: AnyObject?
     private var retiredFilePreviewLifetimeTokens: [UUID: AnyObject] = [:]
+    private var attachmentThumbnailCache: [String: Data] = [:]
+    private var attachmentsWithoutThumbnails: Set<String> = []
     private var iCloudMountChangeObserver: NSObjectProtocol?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
-    private static let iCloudRestrictedSkillNames = Set(["beautiful-pdfs", "webbrowser"])
     var activeToolStatusNodeID: String?
     var activeToolStatusPayload: CPSLToolStatusPayload?
     var activeToolStatusStore: CPSLConversationStore?
@@ -108,7 +110,7 @@ final class CPSLChatModel: ObservableObject {
     Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Preparing document", "Checking export", or "Saving result". Do not mention code, sandbox details, paths, module names, tool names, API names, file extensions, HTTP, or implementation details in intent.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
     local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs.
-    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Do not use require or package-style imports for filesystem or document work.
+    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list.
     Treat help output as human-readable documentation. Call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
     Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed.
     Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
@@ -155,7 +157,7 @@ final class CPSLChatModel: ObservableObject {
 
         \(mountLines)
 
-        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Do not modify read-only mounts. Changes made in read-write mounts affect the original files; iCloud Drive uploads those changes asynchronously. Network access is disabled while these mounts are active.
+        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Do not modify read-only mounts. Changes made in read-write mounts affect the original files; iCloud Drive uploads those changes asynchronously.
         """
     }
 
@@ -654,6 +656,109 @@ final class CPSLChatModel: ObservableObject {
         filePreview = nil
     }
 
+    func isFileReadOnly(_ path: String) -> Bool {
+        iCloudMount(containing: path)?.accessMode == .readOnly
+    }
+
+    func isICloudMountRoot(_ path: String) -> Bool {
+        iCloudMounts.contains { $0.virtualPath == normalizedPath(path) }
+    }
+
+    func canMoveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) -> Bool {
+        let destination = normalizedPath(destinationPath)
+        guard !entries.isEmpty,
+              destination != CPSLVirtualPath.root,
+              destination != CPSLVirtualPath.iCloudRoot,
+              isBrowserPathAllowed(destination),
+              !isFileReadOnly(destination)
+        else {
+            return false
+        }
+
+        for entry in entries {
+            let source = normalizedPath(entry.path)
+            if isICloudMountRoot(source) ||
+                isFileReadOnly(source) ||
+                parentPath(of: source) == destination ||
+                source == destination ||
+                (entry.isDirectory && destination.hasPrefix("\(source)/")) {
+                return false
+            }
+        }
+        return true
+    }
+
+    func deleteFileEntries(_ entries: [CPSLFileEntry]) {
+        guard !entries.isEmpty, !isBusy else {
+            return
+        }
+        fileBrowserError = nil
+        isManagingFiles = true
+        Task { [weak self, service] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.isManagingFiles = false
+            }
+            let operationError: String?
+            do {
+                try await service.deleteFileEntries(entries)
+                operationError = nil
+            } catch {
+                operationError = "Files: \(error.localizedDescription)"
+            }
+            self.loadBrowserPath(self.browserPath)
+            self.fileBrowserError = operationError
+        }
+    }
+
+    func moveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) {
+        guard canMoveFileEntries(entries, toDirectory: destinationPath), !isBusy else {
+            return
+        }
+        fileBrowserError = nil
+        isManagingFiles = true
+        Task { [weak self, service] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.isManagingFiles = false
+            }
+            let operationError: String?
+            do {
+                try await service.moveFileEntries(entries, toDirectory: destinationPath)
+                operationError = nil
+            } catch {
+                operationError = "Files: \(error.localizedDescription)"
+            }
+            self.loadBrowserPath(self.browserPath)
+            self.fileBrowserError = operationError
+        }
+    }
+
+    func attachmentThumbnail(for attachment: CPSLAttachment) async -> Data? {
+        if let cached = attachmentThumbnailCache[attachment.id] {
+            return cached
+        }
+        guard !attachmentsWithoutThumbnails.contains(attachment.id) else {
+            return nil
+        }
+        guard let data = await service.attachmentThumbnail(for: attachment) else {
+            attachmentsWithoutThumbnails.insert(attachment.id)
+            return nil
+        }
+        attachmentThumbnailCache[attachment.id] = data
+        return data
+    }
+
     func markFileActivity() {
         markTransientActivity(.file)
     }
@@ -1103,14 +1208,7 @@ final class CPSLChatModel: ObservableObject {
             activeModel = config.model
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            // Stored prompts may advertise capabilities that are deliberately
-            // unavailable while personal mounts are connected. Use the live
-            // catalog for an isolated run instead of replaying stale skills.
-            let replayBasePrompt = iCloudMounts.isEmpty
-                ? currentSystemPrompt ?? promptForConversation
-                : systemPrompt(with: availableSkills.filter { skill in
-                    !Self.iCloudRestrictedSkillNames.contains(skill.name.lowercased())
-                })
+            let replayBasePrompt = currentSystemPrompt ?? promptForConversation
             let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,

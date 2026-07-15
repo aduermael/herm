@@ -299,7 +299,13 @@ require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodep
 require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'The following skills are available' app/apple/herm/Models/CPSLChatModel.swift
 require_match '\$0\.path' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'iCloudRestrictedSkillNames = Set\(\["beautiful-pdfs", "webbrowser"\]\)' app/apple/herm/Models/CPSLChatModel.swift
+reject_match 'iCloudRestrictedSkillNames|Network access is disabled while these mounts are active' \
+  app/apple/herm/Models/CPSLChatModel.swift
+require_match 'let callbackBox = CPSLWebBrowserCallbackBox\(service: webBrowser\)' \
+  app/apple/herm/Services/CPSLDebugService.swift
+require_match 'let allowedDomains = \["\*"\]' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'do not use require to load them' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'help\(\) is the authoritative module list' app/apple/herm/Skills/webbrowser/SKILL.md
 require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift

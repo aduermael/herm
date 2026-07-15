@@ -223,7 +223,8 @@ struct CPSLPromptComposerView: View {
             if !model.composerAttachments.isEmpty {
                 CPSLComposerAttachmentStrip(
                     attachments: model.composerAttachments,
-                    onRemove: model.removeComposerAttachment
+                    onRemove: model.removeComposerAttachment,
+                    loadThumbnail: model.attachmentThumbnail(for:)
                 )
                 .padding(.bottom, CPSLTheme.small)
             }
@@ -626,14 +627,16 @@ struct CPSLPromptComposerView: View {
 private struct CPSLComposerAttachmentStrip: View {
     let attachments: [CPSLAttachment]
     let onRemove: (CPSLAttachment) -> Void
+    let loadThumbnail: (CPSLAttachment) async -> Data?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: CPSLTheme.small) {
                 ForEach(attachments) { attachment in
                     CPSLAttachmentBadge(
-                        name: attachment.name,
-                        onRemove: { onRemove(attachment) }
+                        attachment: attachment,
+                        onRemove: { onRemove(attachment) },
+                        loadThumbnail: loadThumbnail
                     )
                 }
             }
