@@ -1583,11 +1583,7 @@ actor CPSLDebugService {
             return "Could not encode session config JSON"
         }
 
-        // A domain policy cannot constrain arbitrary JavaScript inside a WKWebView.
-        // Omit the browser capability entirely while personal mounts are active.
-        let callbackBox = (iCloudMountManager?.mounts.isEmpty ?? true)
-            ? CPSLWebBrowserCallbackBox(service: webBrowser)
-            : nil
+        let callbackBox = CPSLWebBrowserCallbackBox(service: webBrowser)
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
         let calendarActivityCallbackBox = CPSLCalendarActivityCallbackBox(notifier: calendarActivityNotifier)
         let locationCallbackBox = CPSLLocationCallbackBox(service: location)
@@ -1848,7 +1844,7 @@ actor CPSLDebugService {
             ])
         }
 
-        let allowedDomains: [String] = iCloudMounts.isEmpty ? ["*"] : []
+        let allowedDomains = ["*"]
         let config: [String: Any] = [
             "mounts": mounts,
             "initial_cwd": CPSLVirtualPath.initialDirectory,

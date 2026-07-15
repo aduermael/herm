@@ -17,6 +17,14 @@ WebKit state and may already be signed in. When the user explicitly asks for a
 specific action, use the normal website flow on their behalf before reporting
 that it cannot be completed.
 
+## Availability
+
+`help()` is the authoritative module list. When it lists `webbrowser`, use the
+global directly; do not call `require` or search the filesystem for browser
+code. If `help()` does not list `webbrowser` even though this skill is present,
+the host did not register the browser bridge. Report that runtime mismatch
+after one check instead of trying alternate imports.
+
 ## Background By Default
 
 - Use the browser in the background by default. Do not call `webbrowser.show()` just because you opened, searched, clicked, typed, or inspected a page.
