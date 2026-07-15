@@ -39,6 +39,9 @@ struct CPSLChatTimelineView: View {
                             },
                             openFilePath: { path in
                                 model.openFilePathFromTimeline(path)
+                            },
+                            loadAttachmentThumbnail: { attachment in
+                                await model.attachmentThumbnail(for: attachment)
                             }
                         )
                             .id(message.id)
@@ -287,6 +290,7 @@ private struct CPSLChatMessageView: View {
     let message: CPSLChatMessage
     let openBrowser: (String?) -> Void
     let openFilePath: (String) -> Void
+    let loadAttachmentThumbnail: (CPSLAttachment) async -> Data?
 
     var body: some View {
         HStack {
@@ -342,7 +346,8 @@ private struct CPSLChatMessageView: View {
             if !message.attachments.isEmpty {
                 CPSLMessageAttachmentList(
                     attachments: message.attachments,
-                    openFilePath: openFilePath
+                    openFilePath: openFilePath,
+                    loadThumbnail: loadAttachmentThumbnail
                 )
             }
         }
@@ -389,6 +394,7 @@ private struct CPSLChatMessageView: View {
 private struct CPSLMessageAttachmentList: View {
     let attachments: [CPSLAttachment]
     let openFilePath: (String) -> Void
+    let loadThumbnail: (CPSLAttachment) async -> Data?
 
     var body: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.small) {
@@ -396,7 +402,10 @@ private struct CPSLMessageAttachmentList: View {
                 Button {
                     openFilePath(attachment.path)
                 } label: {
-                    CPSLAttachmentBadge(name: attachment.name)
+                    CPSLAttachmentBadge(
+                        attachment: attachment,
+                        loadThumbnail: loadThumbnail
+                    )
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open attachment \(attachment.name)")

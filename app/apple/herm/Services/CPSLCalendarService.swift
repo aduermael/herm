@@ -1,18 +1,38 @@
 import Combine
 import Foundation
+#if canImport(CoreGraphics)
+import CoreGraphics
+#endif
 #if canImport(EventKit)
 import EventKit
 #endif
+
+struct CPSLCalendarColor: Equatable, Sendable {
+    let red: Double
+    let green: Double
+    let blue: Double
+    let alpha: Double
+}
 
 struct CPSLCalendarEvent: Identifiable, Equatable, Sendable {
     let id: String
     let title: String
     let calendarTitle: String
+    let calendarColor: CPSLCalendarColor?
     let startDate: Date
     let endDate: Date
     let isAllDay: Bool
     let location: String?
+    let notes: String?
+    let url: URL?
     let attachments: [CPSLCalendarAttachment]
+}
+
+struct CPSLCalendarDay: Identifiable, Equatable, Sendable {
+    var id: Date { date }
+
+    let date: Date
+    let events: [CPSLCalendarEvent]
 }
 
 struct CPSLCalendarAttachment: Identifiable, Equatable, Sendable {
@@ -28,6 +48,7 @@ final class CPSLCalendarService: ObservableObject {
     @Published private(set) var isRequestingAccess = false
     @Published private(set) var isLoadingEvents = false
     @Published private(set) var upcomingEvents: [CPSLCalendarEvent] = []
+    @Published private(set) var upcomingEventDays: [CPSLCalendarDay] = []
     @Published private(set) var eventError: String?
 
 #if canImport(EventKit)
@@ -79,6 +100,7 @@ final class CPSLCalendarService: ObservableObject {
         let access = await requestAccess()
         guard access == .granted else {
             upcomingEvents = []
+            upcomingEventDays = []
             eventError = "Calendar access is denied. Enable Calendar access for Herm in iOS Settings or macOS System Settings."
             return access
         }
@@ -98,15 +120,17 @@ final class CPSLCalendarService: ObservableObject {
             end: endDate,
             calendars: nil
         )
-        upcomingEvents = eventStore.events(matching: predicate)
+        let events = eventStore.events(matching: predicate)
             .sorted { lhs, rhs in
                 lhs.startDate < rhs.startDate
             }
             .prefix(12)
             .map(Self.event(from:))
-        upcomingEvents = Self.eventsWithUniqueIDs(upcomingEvents)
+        upcomingEvents = Self.eventsWithUniqueIDs(events)
+        upcomingEventDays = Self.groupedByDay(upcomingEvents)
 #else
         upcomingEvents = []
+        upcomingEventDays = []
         eventError = "Calendar is unavailable on this platform."
 #endif
         return access
@@ -128,10 +152,13 @@ final class CPSLCalendarService: ObservableObject {
             id: id,
             title: event.title?.cpslNilIfEmpty ?? "Untitled event",
             calendarTitle: event.calendar?.title ?? "Calendar",
+            calendarColor: Self.calendarColor(from: event.calendar),
             startDate: event.startDate,
             endDate: event.endDate,
             isAllDay: event.isAllDay,
             location: event.location?.cpslNilIfEmpty,
+            notes: Self.visibleNotes(from: event.notes),
+            url: event.url,
             attachments: Self.attachments(from: event.notes)
         )
     }
@@ -148,13 +175,71 @@ final class CPSLCalendarService: ObservableObject {
                 id: "\(event.id)|duplicate-\(count)",
                 title: event.title,
                 calendarTitle: event.calendarTitle,
+                calendarColor: event.calendarColor,
                 startDate: event.startDate,
                 endDate: event.endDate,
                 isAllDay: event.isAllDay,
                 location: event.location,
+                notes: event.notes,
+                url: event.url,
                 attachments: event.attachments
             )
         }
+    }
+
+    private static func groupedByDay(_ events: [CPSLCalendarEvent]) -> [CPSLCalendarDay] {
+        let calendar = Foundation.Calendar.autoupdatingCurrent
+        var groups: [CPSLCalendarDay] = []
+        for event in events {
+            let date = calendar.startOfDay(for: event.startDate)
+            if groups.last?.date == date {
+                let current = groups.removeLast()
+                groups.append(CPSLCalendarDay(date: date, events: current.events + [event]))
+            } else {
+                groups.append(CPSLCalendarDay(date: date, events: [event]))
+            }
+        }
+        return groups
+    }
+
+    private static func calendarColor(from calendar: EKCalendar?) -> CPSLCalendarColor? {
+#if canImport(CoreGraphics)
+        guard let sourceColor = calendar?.cgColor,
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let color = sourceColor.converted(
+                  to: colorSpace,
+                  intent: .defaultIntent,
+                  options: nil
+              ),
+              let components = color.components,
+              components.count >= 3
+        else {
+            return nil
+        }
+        return CPSLCalendarColor(
+            red: Double(components[0]),
+            green: Double(components[1]),
+            blue: Double(components[2]),
+            alpha: Double(color.alpha)
+        )
+#else
+        _ = calendar
+        return nil
+#endif
+    }
+
+    private static func visibleNotes(from notes: String?) -> String? {
+        guard var notes else {
+            return nil
+        }
+        if let startRange = notes.range(of: "[Herm attachments]"),
+           let endRange = notes.range(
+               of: "[/Herm attachments]",
+               range: startRange.upperBound..<notes.endIndex
+           ) {
+            notes.removeSubrange(startRange.lowerBound..<endRange.upperBound)
+        }
+        return notes.trimmingCharacters(in: .whitespacesAndNewlines).cpslNilIfEmpty
     }
 
     private static func attachments(from notes: String?) -> [CPSLCalendarAttachment] {

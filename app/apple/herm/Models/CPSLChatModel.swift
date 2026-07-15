@@ -25,6 +25,7 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var expandedFilePaths: Set<String> = []
     @Published private(set) var loadingFilePaths: Set<String> = []
     @Published private(set) var fileBrowserError: String?
+    @Published private(set) var isManagingFiles = false
     @Published private(set) var filePreview: CPSLFilePreview? {
         didSet {
             if filePreview == nil {
@@ -47,7 +48,7 @@ final class CPSLChatModel: ObservableObject {
     @Published private(set) var iCloudImportProgress: CPSLICloudImportProgress?
 
     var isBusy: Bool {
-        isRunning || isUpdatingICloudMounts
+        isRunning || isUpdatingICloudMounts || isManagingFiles
     }
 
     let service: CPSLDebugService
@@ -73,6 +74,8 @@ final class CPSLChatModel: ObservableObject {
     private var filePreviewLoadTask: Task<Void, Never>?
     private var filePreviewLifetimeToken: AnyObject?
     private var retiredFilePreviewLifetimeTokens: [UUID: AnyObject] = [:]
+    private var attachmentThumbnailCache: [String: Data] = [:]
+    private var attachmentsWithoutThumbnails: Set<String> = []
     private var iCloudMountChangeObserver: NSObjectProtocol?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
@@ -652,6 +655,109 @@ final class CPSLChatModel: ObservableObject {
 
     func closeFilePreview() {
         filePreview = nil
+    }
+
+    func isFileReadOnly(_ path: String) -> Bool {
+        iCloudMount(containing: path)?.accessMode == .readOnly
+    }
+
+    func isICloudMountRoot(_ path: String) -> Bool {
+        iCloudMounts.contains { $0.virtualPath == normalizedPath(path) }
+    }
+
+    func canMoveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) -> Bool {
+        let destination = normalizedPath(destinationPath)
+        guard !entries.isEmpty,
+              destination != CPSLVirtualPath.root,
+              destination != CPSLVirtualPath.iCloudRoot,
+              isBrowserPathAllowed(destination),
+              !isFileReadOnly(destination)
+        else {
+            return false
+        }
+
+        for entry in entries {
+            let source = normalizedPath(entry.path)
+            if isICloudMountRoot(source) ||
+                isFileReadOnly(source) ||
+                parentPath(of: source) == destination ||
+                source == destination ||
+                (entry.isDirectory && destination.hasPrefix("\(source)/")) {
+                return false
+            }
+        }
+        return true
+    }
+
+    func deleteFileEntries(_ entries: [CPSLFileEntry]) {
+        guard !entries.isEmpty, !isBusy else {
+            return
+        }
+        fileBrowserError = nil
+        isManagingFiles = true
+        Task { [weak self, service] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.isManagingFiles = false
+            }
+            let operationError: String?
+            do {
+                try await service.deleteFileEntries(entries)
+                operationError = nil
+            } catch {
+                operationError = "Files: \(error.localizedDescription)"
+            }
+            self.loadBrowserPath(self.browserPath)
+            self.fileBrowserError = operationError
+        }
+    }
+
+    func moveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) {
+        guard canMoveFileEntries(entries, toDirectory: destinationPath), !isBusy else {
+            return
+        }
+        fileBrowserError = nil
+        isManagingFiles = true
+        Task { [weak self, service] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.isManagingFiles = false
+            }
+            let operationError: String?
+            do {
+                try await service.moveFileEntries(entries, toDirectory: destinationPath)
+                operationError = nil
+            } catch {
+                operationError = "Files: \(error.localizedDescription)"
+            }
+            self.loadBrowserPath(self.browserPath)
+            self.fileBrowserError = operationError
+        }
+    }
+
+    func attachmentThumbnail(for attachment: CPSLAttachment) async -> Data? {
+        if let cached = attachmentThumbnailCache[attachment.id] {
+            return cached
+        }
+        guard !attachmentsWithoutThumbnails.contains(attachment.id) else {
+            return nil
+        }
+        guard let data = await service.attachmentThumbnail(for: attachment) else {
+            attachmentsWithoutThumbnails.insert(attachment.id)
+            return nil
+        }
+        attachmentThumbnailCache[attachment.id] = data
+        return data
     }
 
     func markFileActivity() {

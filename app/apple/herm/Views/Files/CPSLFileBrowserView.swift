@@ -168,6 +168,12 @@ private struct CPSLFileBrowserDisplayPage: Identifiable, Equatable {
     }
 }
 
+private enum CPSLFileBrowserInteractionMode: Equatable {
+    case browsing
+    case selecting(selectedCount: Int)
+    case moving(itemCount: Int)
+}
+
 struct CPSLFileBrowserView: View {
     @ObservedObject var model: CPSLChatModel
     @State private var isICloudImporterPresented = false
@@ -175,6 +181,11 @@ struct CPSLFileBrowserView: View {
     @State private var isICloudAccessModePickerPresented = false
     @State private var isICloudAccessModePickerPending = false
     @State private var selectedICloudDirectory: URL?
+    @State private var isSelectingFiles = false
+    @State private var selectedEntriesByPath: [String: CPSLFileEntry] = [:]
+    @State private var movingEntries: [CPSLFileEntry] = []
+    @State private var pendingDeletionEntries: [CPSLFileEntry] = []
+    @State private var isDeleteConfirmationPresented = false
 
     var body: some View {
         browserPanel
@@ -219,17 +230,119 @@ struct CPSLFileBrowserView: View {
                     presentICloudImporterIfReady()
                 }
             }
+            .onChange(of: model.browserPath) { _, _ in
+                guard movingEntries.isEmpty else {
+                    return
+                }
+                isSelectingFiles = false
+                selectedEntriesByPath.removeAll()
+            }
+            .confirmationDialog(
+                deleteConfirmationTitle,
+                isPresented: $isDeleteConfirmationPresented,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    let entries = pendingDeletionEntries
+                    pendingDeletionEntries = []
+                    model.deleteFileEntries(entries)
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeletionEntries = []
+                }
+            } message: {
+                Text("This permanently deletes the selected items from CPSL storage.")
+            }
     }
 
     private var browserPanel: some View {
         CPSLFileOverlayPanel {
-            CPSLFileBrowserHeader(model: model)
+            CPSLFileBrowserHeader(model: model, actions: actions)
         } content: {
             CPSLFileBrowserRouteStack(
                 model: model,
-                connectICloud: connectICloud
+                actions: actions
             )
         }
+    }
+
+    private var actions: CPSLFileBrowserActions {
+        CPSLFileBrowserActions(
+            model: model,
+            connectICloud: connectICloud,
+            isSelecting: isSelectingFiles,
+            selectedEntryPaths: Set(selectedEntriesByPath.keys),
+            movingEntries: movingEntries,
+            beginSelection: beginSelection,
+            cancelSelection: cancelSelection,
+            toggleSelection: toggleSelection,
+            beginMove: beginMove,
+            cancelMove: cancelMove,
+            completeMove: completeMove,
+            requestDelete: requestDelete
+        )
+    }
+
+    private var deleteConfirmationTitle: String {
+        pendingDeletionEntries.count == 1
+            ? "Delete this item?"
+            : "Delete \(pendingDeletionEntries.count) items?"
+    }
+
+    private func beginSelection() {
+        movingEntries = []
+        selectedEntriesByPath.removeAll()
+        isSelectingFiles = true
+    }
+
+    private func cancelSelection() {
+        isSelectingFiles = false
+        selectedEntriesByPath.removeAll()
+    }
+
+    private func toggleSelection(_ entry: CPSLFileEntry) {
+        if selectedEntriesByPath.removeValue(forKey: entry.path) == nil {
+            if selectedEntriesByPath.values.contains(where: {
+                $0.isDirectory && entry.path.hasPrefix("\($0.path)/")
+            }) {
+                return
+            }
+            if entry.isDirectory {
+                selectedEntriesByPath = selectedEntriesByPath.filter {
+                    !$0.key.hasPrefix("\(entry.path)/")
+                }
+            }
+            selectedEntriesByPath[entry.path] = entry
+        }
+    }
+
+    private func beginMove(_ entries: [CPSLFileEntry]) {
+        guard !entries.isEmpty else {
+            return
+        }
+        isSelectingFiles = false
+        selectedEntriesByPath.removeAll()
+        movingEntries = entries.sorted { $0.path < $1.path }
+    }
+
+    private func cancelMove() {
+        movingEntries = []
+    }
+
+    private func completeMove() {
+        let entries = movingEntries
+        movingEntries = []
+        model.moveFileEntries(entries, toDirectory: model.browserPath)
+    }
+
+    private func requestDelete(_ entries: [CPSLFileEntry]) {
+        guard !entries.isEmpty else {
+            return
+        }
+        isSelectingFiles = false
+        selectedEntriesByPath.removeAll()
+        pendingDeletionEntries = entries.sorted { $0.path < $1.path }
+        isDeleteConfirmationPresented = true
     }
 
     private func connectICloud() {
@@ -268,7 +381,7 @@ struct CPSLFileBrowserView: View {
 
 private struct CPSLFileBrowserRouteStack: View {
     @ObservedObject var model: CPSLChatModel
-    let connectICloud: () -> Void
+    let actions: CPSLFileBrowserActions
     @State private var pages: [CPSLFileBrowserDisplayPage] = []
     @State private var transitionGeneration = 0
 
@@ -298,7 +411,7 @@ private struct CPSLFileBrowserRouteStack: View {
                 ForEach(visiblePages) { page in
                     CPSLFileBrowserRouteContent(
                         route: page.route,
-                        actions: CPSLFileBrowserActions(model: model, connectICloud: connectICloud)
+                        actions: actions
                     )
                     .frame(
                         width: proxy.size.width,
@@ -438,6 +551,16 @@ private struct CPSLFileBrowserRouteContent: View {
 private struct CPSLFileBrowserActions {
     let model: CPSLChatModel
     let connectICloud: () -> Void
+    let isSelecting: Bool
+    let selectedEntryPaths: Set<String>
+    let movingEntries: [CPSLFileEntry]
+    let beginSelection: () -> Void
+    let cancelSelection: () -> Void
+    let toggleSelection: (CPSLFileEntry) -> Void
+    let beginMove: ([CPSLFileEntry]) -> Void
+    let cancelMove: () -> Void
+    let completeMove: () -> Void
+    let requestDelete: ([CPSLFileEntry]) -> Void
 
     var iCloudMounts: [CPSLICloudMount] {
         model.iCloudMounts
@@ -447,11 +570,38 @@ private struct CPSLFileBrowserActions {
         model.isBusy
     }
 
+    var mode: CPSLFileBrowserInteractionMode {
+        if !movingEntries.isEmpty {
+            return .moving(itemCount: movingEntries.count)
+        }
+        if isSelecting {
+            return .selecting(selectedCount: selectedEntryPaths.count)
+        }
+        return .browsing
+    }
+
+    var canEnterSelection: Bool {
+        model.filePreview == nil &&
+            model.browserEntries.contains { canModify($0) }
+    }
+
     func loadPath(_ path: String) {
         model.loadBrowserPath(path)
     }
 
     func openEntry(_ entry: CPSLFileEntry) {
+        if isSelecting {
+            guard canModify(entry) else {
+                return
+            }
+            toggleSelection(entry)
+            return
+        }
+        if !movingEntries.isEmpty {
+            guard entry.isDirectory else {
+                return
+            }
+        }
         model.openFileEntry(entry)
     }
 
@@ -459,9 +609,47 @@ private struct CPSLFileBrowserActions {
         model.toggleExpansion(for: entry)
     }
 
-    init(model: CPSLChatModel, connectICloud: @escaping () -> Void) {
-        self.model = model
-        self.connectICloud = connectICloud
+    func isSelected(_ entry: CPSLFileEntry) -> Bool {
+        selectedEntryPaths.contains(entry.path)
+    }
+
+    func isReadOnly(_ entry: CPSLFileEntry) -> Bool {
+        model.isFileReadOnly(entry.path)
+    }
+
+    func isICloudMountRoot(_ entry: CPSLFileEntry) -> Bool {
+        model.isICloudMountRoot(entry.path)
+    }
+
+    func canModify(_ entry: CPSLFileEntry) -> Bool {
+        !isBusy && !isReadOnly(entry) && !isICloudMountRoot(entry)
+    }
+
+    func canCompleteMove() -> Bool {
+        !isBusy && model.canMoveFileEntries(movingEntries, toDirectory: model.browserPath)
+    }
+
+    func moveSelectedEntries() {
+        beginMove(selectedEntries())
+    }
+
+    func deleteSelectedEntries() {
+        requestDelete(selectedEntries())
+    }
+
+    private func selectedEntries() -> [CPSLFileEntry] {
+        let entriesByPath = dictionaryOfVisibleEntries()
+        return selectedEntryPaths.compactMap { entriesByPath[$0] }
+    }
+
+    private func dictionaryOfVisibleEntries() -> [String: CPSLFileEntry] {
+        var result = Dictionary(uniqueKeysWithValues: model.browserEntries.map { ($0.path, $0) })
+        for entries in model.childEntriesByPath.values {
+            for entry in entries {
+                result[entry.path] = entry
+            }
+        }
+        return result
     }
 
     func removeICloudMount(_ entry: CPSLFileEntry) {
@@ -475,6 +663,7 @@ private struct CPSLFileBrowserActions {
 
 private struct CPSLFileBrowserHeader: View {
     @ObservedObject var model: CPSLChatModel
+    let actions: CPSLFileBrowserActions
 
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
@@ -501,8 +690,24 @@ private struct CPSLFileBrowserHeader: View {
                 )
             }
 
-            if let preview = model.filePreview, preview.showsHeaderInfoButton {
-                CPSLFilePreviewInfoButton(preview: preview)
+            switch actions.mode {
+            case .browsing:
+                if let preview = model.filePreview, preview.showsHeaderInfoButton {
+                    CPSLFilePreviewInfoButton(preview: preview)
+                } else if actions.canEnterSelection {
+                    Button("Select", action: actions.beginSelection)
+                        .font(CPSLTheme.controlFont)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(CPSLTheme.text)
+                        .padding(.horizontal, CPSLTheme.small)
+                }
+            case .selecting:
+                Button("Cancel", action: actions.cancelSelection)
+                    .font(CPSLTheme.controlFont)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CPSLTheme.text)
+            case .moving:
+                EmptyView()
             }
 
             CPSLFileOverlayIconButton(
@@ -716,7 +921,7 @@ private struct CPSLFileBrowserHeaderTitle: View {
             return CPSLTheme.IconPalette.temporary
         }
         if path == CPSLVirtualPath.iCloudRoot || path.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") {
-            return CPSLTheme.IconPalette.cloud
+            return CPSLTheme.IconPalette.primary
         }
         return CPSLTheme.IconPalette.folder
     }
@@ -741,35 +946,150 @@ private struct CPSLICloudMountAccessBadge: View {
     }
 }
 
+private struct CPSLFileReadOnlyBadge: View {
+    var body: some View {
+        Text("Read-only")
+            .font(CPSLTheme.userFont(size: 10, weight: .semibold))
+            .foregroundStyle(CPSLTheme.secondaryText)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(CPSLTheme.elevated, in: Capsule())
+            .fixedSize()
+    }
+}
+
 private struct CPSLFileBrowserPane: View {
     let snapshot: CPSLFileBrowserFolderSnapshot
     let actions: CPSLFileBrowserActions
 
     var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                if let error = snapshot.error {
-                    CPSLFileBrowserErrorView(message: error)
-                }
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if let error = snapshot.error {
+                        CPSLFileBrowserErrorView(message: error)
+                    }
 
-                if snapshot.isRoot {
-                    CPSLFileLocationsView(actions: actions)
-                } else if snapshot.isLoading && snapshot.rows.isEmpty {
-                    CPSLFileBrowserLoadingView()
-                } else if snapshot.rows.isEmpty && snapshot.error == nil {
-                    CPSLFileBrowserEmptyView()
-                } else {
-                    ForEach(snapshot.rows) { row in
-                        CPSLFileBrowserRowView(row: row, actions: actions)
+                    if snapshot.isRoot {
+                        CPSLFileLocationsView(actions: actions)
+                    } else {
+                        if snapshot.isLoading && snapshot.rows.isEmpty {
+                            CPSLFileBrowserLoadingView()
+                        } else if snapshot.rows.isEmpty && snapshot.error == nil {
+                            CPSLFileBrowserEmptyView()
+                        } else {
+                            ForEach(snapshot.rows) { row in
+                                CPSLFileBrowserRowView(row: row, actions: actions)
+                            }
+                        }
+
+                        if snapshot.path == CPSLVirtualPath.iCloudRoot,
+                           !actions.iCloudMounts.isEmpty,
+                           actions.mode == .browsing {
+                            CPSLAddICloudFolderRow(actions: actions)
+                        }
                     }
                 }
+                .padding(.vertical, CPSLTheme.small)
             }
-            .padding(.vertical, CPSLTheme.small)
+            .scrollDismissesKeyboard(.interactively)
+            .scrollBounceBehavior(.basedOnSize)
+
+            switch actions.mode {
+            case .browsing:
+                EmptyView()
+            case .selecting(let selectedCount):
+                CPSLFileSelectionActionBar(
+                    selectedCount: selectedCount,
+                    isBusy: actions.isBusy,
+                    onMove: actions.moveSelectedEntries,
+                    onDelete: actions.deleteSelectedEntries
+                )
+            case .moving(let itemCount):
+                CPSLFileMoveActionBar(
+                    itemCount: itemCount,
+                    canMoveHere: actions.canCompleteMove(),
+                    onCancel: actions.cancelMove,
+                    onMoveHere: actions.completeMove
+                )
+            }
         }
-        .scrollDismissesKeyboard(.interactively)
-        .scrollBounceBehavior(.basedOnSize)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(maxHeight: .infinity)
+    }
+}
+
+private struct CPSLFileSelectionActionBar: View {
+    let selectedCount: Int
+    let isBusy: Bool
+    let onMove: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            Text("\(selectedCount) selected")
+                .font(CPSLTheme.captionFont)
+                .foregroundStyle(CPSLTheme.secondaryText)
+
+            Spacer()
+
+            Button(action: onMove) {
+                Label("Move", systemImage: "folder")
+            }
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+        .font(CPSLTheme.controlFont)
+        .buttonStyle(.borderless)
+        .disabled(selectedCount == 0 || isBusy)
+        .padding(.horizontal, CPSLTheme.medium)
+        .frame(minHeight: CPSLTheme.controlSize + CPSLTheme.small)
+        .background(CPSLTheme.elevated)
+    }
+}
+
+private struct CPSLFileMoveActionBar: View {
+    let itemCount: Int
+    let canMoveHere: Bool
+    let onCancel: () -> Void
+    let onMoveHere: () -> Void
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.small) {
+            Text(itemCount == 1 ? "Move 1 item" : "Move \(itemCount) items")
+                .font(CPSLTheme.captionFont)
+                .foregroundStyle(CPSLTheme.secondaryText)
+
+            Spacer()
+
+            Button("Cancel", action: onCancel)
+            Button("Move Here", action: onMoveHere)
+                .disabled(!canMoveHere)
+        }
+        .font(CPSLTheme.controlFont)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, CPSLTheme.medium)
+        .frame(minHeight: CPSLTheme.controlSize + CPSLTheme.small)
+        .background(CPSLTheme.elevated)
+    }
+}
+
+private struct CPSLAddICloudFolderRow: View {
+    let actions: CPSLFileBrowserActions
+
+    var body: some View {
+        CPSLCloudConnectionRow(
+            title: "Add iCloud Folder",
+            actionTitle: "Add",
+            systemName: "icloud.fill",
+            color: CPSLTheme.IconPalette.cloud,
+            accessory: .singleIcon
+        ) {
+            actions.connectICloud()
+        }
+        .disabled(actions.isBusy)
+        .opacity(actions.isBusy ? 0.45 : 1)
     }
 }
 
@@ -810,30 +1130,36 @@ private struct CPSLFileLocationsView: View {
                     title: "iCloud",
                     detail: CPSLVirtualPath.iCloudRoot,
                     systemName: "icloud.fill",
-                    color: CPSLTheme.IconPalette.cloud
+                    color: CPSLTheme.IconPalette.primary
                 ) {
                     actions.loadPath(CPSLVirtualPath.iCloudRoot)
                 }
             }
 
-            CPSLCloudConnectionRow(
-                title: actions.iCloudMounts.isEmpty ? "iCloud" : "Add iCloud Folder",
-                systemName: "icloud.fill",
-                color: CPSLTheme.IconPalette.cloud,
-                accessory: .singleIcon
-            ) {
-                actions.connectICloud()
-            }
-            .disabled(actions.isBusy)
-            .opacity(actions.isBusy ? 0.45 : 1)
+            if actions.mode == .browsing {
+                if actions.iCloudMounts.isEmpty {
+                    CPSLCloudConnectionRow(
+                        title: "iCloud",
+                        actionTitle: "Add",
+                        systemName: "icloud.fill",
+                        color: CPSLTheme.IconPalette.cloud,
+                        accessory: .singleIcon
+                    ) {
+                        actions.connectICloud()
+                    }
+                    .disabled(actions.isBusy)
+                    .opacity(actions.isBusy ? 0.45 : 1)
+                }
 
-            CPSLCloudConnectionRow(
-                title: "Cloud Drives",
-                systemName: "externaldrive.fill",
-                color: CPSLTheme.IconPalette.drive,
-                accessory: .providerIcons
-            ) {
-                actions.showComingSoon("coming soon")
+                CPSLCloudConnectionRow(
+                    title: "Cloud Drives",
+                    actionTitle: "Connect",
+                    systemName: "externaldrive.fill",
+                    color: CPSLTheme.IconPalette.drive,
+                    accessory: .providerIcons
+                ) {
+                    actions.showComingSoon("coming soon")
+                }
             }
         }
     }
@@ -883,6 +1209,7 @@ private enum CPSLCloudAccessory {
 
 private struct CPSLCloudConnectionRow: View {
     let title: LocalizedStringKey
+    let actionTitle: LocalizedStringKey
     let systemName: String
     let color: Color
     let accessory: CPSLCloudAccessory
@@ -901,7 +1228,7 @@ private struct CPSLCloudConnectionRow: View {
 
             Spacer()
 
-            Button("Connect", action: action)
+            Button(actionTitle, action: action)
                 .font(CPSLTheme.controlFont)
                 .buttonStyle(.plain)
                 .foregroundStyle(CPSLTheme.text)
@@ -1017,11 +1344,21 @@ private struct CPSLFileBrowserRowView: View {
                     depth: depth,
                     isExpanded: isExpanded,
                     accessMode: iCloudMountAccessMode(for: entry),
+                    isReadOnly: actions.isReadOnly(entry),
+                    isSelected: actions.isSelected(entry),
+                    mode: actions.mode,
+                    canModify: actions.canModify(entry),
                     onOpen: {
                         actions.openEntry(entry)
                     },
                     onToggleExpansion: {
                         actions.toggleExpansion(entry)
+                    },
+                    onMove: {
+                        actions.beginMove([entry])
+                    },
+                    onDelete: {
+                        actions.requestDelete([entry])
                     },
                     onRemove: iCloudMountRemoval(for: entry)
                 )
@@ -1056,17 +1393,26 @@ private struct CPSLFileRowView: View {
     let depth: Int
     let isExpanded: Bool
     let accessMode: CPSLICloudMountAccessMode?
+    let isReadOnly: Bool
+    let isSelected: Bool
+    let mode: CPSLFileBrowserInteractionMode
+    let canModify: Bool
     let onOpen: () -> Void
     let onToggleExpansion: () -> Void
+    let onMove: () -> Void
+    let onDelete: () -> Void
     let onRemove: (() -> Void)?
 
     var body: some View {
         HStack(spacing: CPSLTheme.small) {
-            if entry.isDirectory {
+            if case .selecting = mode {
+                CPSLFileSelectionControl(isSelected: isSelected, isEnabled: canModify)
+            } else if entry.isDirectory {
                 CPSLFileDisclosureControl(
                     isExpanded: isExpanded,
                     onToggle: onToggleExpansion
                 )
+                .disabled(isMoving)
             }
 
             Button(action: onOpen) {
@@ -1080,6 +1426,8 @@ private struct CPSLFileRowView: View {
 
                     if let accessMode {
                         CPSLICloudMountAccessBadge(accessMode: accessMode)
+                    } else if isReadOnly {
+                        CPSLFileReadOnlyBadge()
                     }
 
                     Spacer()
@@ -1089,17 +1437,20 @@ private struct CPSLFileRowView: View {
             }
             .buttonStyle(.plain)
             .contentShape(Rectangle())
+            .disabled(isMoving && !entry.isDirectory)
 
-            if let onRemove {
+            if case .browsing = mode, let onRemove {
                 Button(action: onRemove) {
-                    Image(systemName: "trash")
+                    Image(systemName: "eject.fill")
                         .font(CPSLTheme.iconSmallFont)
                         .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(CPSLTheme.danger)
-                .accessibilityLabel(Text("Remove iCloud Folder"))
+                .foregroundStyle(CPSLTheme.secondaryText)
+                .accessibilityLabel(Text("Unmount iCloud Folder"))
+            } else if case .browsing = mode, canModify {
+                CPSLFileActionMenu(onMove: onMove, onDelete: onDelete)
             }
         }
         .padding(.leading, leadingPadding)
@@ -1109,7 +1460,17 @@ private struct CPSLFileRowView: View {
     }
 
     private var leadingPadding: CGFloat {
-        CPSLFileRowMetrics.leadingPadding(depth: depth, isDirectory: entry.isDirectory)
+        if case .selecting = mode {
+            return CPSLFileRowMetrics.leading + CGFloat(depth) * CPSLFileRowMetrics.indent
+        }
+        return CPSLFileRowMetrics.leadingPadding(depth: depth, isDirectory: entry.isDirectory)
+    }
+
+    private var isMoving: Bool {
+        if case .moving = mode {
+            return true
+        }
+        return false
     }
 
     private var iconName: String {
@@ -1124,6 +1485,47 @@ private struct CPSLFileRowView: View {
             return CPSLTheme.IconPalette.folder
         }
         return entry.previewCategory.iconColor
+    }
+}
+
+private struct CPSLFileSelectionControl: View {
+    let isSelected: Bool
+    let isEnabled: Bool
+
+    var body: some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(CPSLTheme.iconMediumFont)
+            .foregroundStyle(isEnabled ? CPSLTheme.mauve : CPSLTheme.mutedText)
+            .frame(
+                width: CPSLFileRowMetrics.disclosureWidth,
+                height: CPSLFileRowMetrics.height
+            )
+            .opacity(isEnabled ? 1 : 0.45)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct CPSLFileActionMenu: View {
+    let onMove: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Menu {
+            Button(action: onMove) {
+                Label("Move…", systemImage: "folder")
+            }
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(CPSLTheme.iconSmallFont)
+                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.secondaryText)
+        .accessibilityLabel("File actions")
     }
 }
 

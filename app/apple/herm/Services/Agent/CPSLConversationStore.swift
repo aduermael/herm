@@ -640,10 +640,7 @@ actor CPSLConversationStore {
             .split(whereSeparator: \.isNewline)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard singleLine.count > 44 else {
-            return singleLine.isEmpty ? "Untitled" : singleLine
-        }
-        return "\(singleLine.prefix(41))..."
+        return singleLine.isEmpty ? "Untitled" : singleLine
     }
 }
 

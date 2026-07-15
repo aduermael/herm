@@ -48,6 +48,35 @@ private nonisolated final class CPSLLocationCallbackBox: @unchecked Sendable {
     }
 }
 
+private nonisolated enum CPSLFileMutationError: LocalizedError {
+    case destinationContainsSource
+    case destinationExists
+    case destinationUnavailable
+    case duplicateName
+    case overlappingSelection
+    case protectedLocation
+    case readOnly
+
+    var errorDescription: String? {
+        switch self {
+        case .destinationContainsSource:
+            return "A folder cannot be moved inside itself."
+        case .destinationExists:
+            return "An item with the same name already exists in that folder."
+        case .destinationUnavailable:
+            return "Choose a folder inside Home, Attachments, Temporary, or a writable iCloud folder."
+        case .duplicateName:
+            return "The selected items include duplicate names."
+        case .overlappingSelection:
+            return "Select either a folder or items inside it, not both."
+        case .protectedLocation:
+            return "This location cannot be moved or deleted."
+        case .readOnly:
+            return "This iCloud folder is read-only in Herm."
+        }
+    }
+}
+
 private nonisolated final class CPSLVisionCallbackBox: @unchecked Sendable {
     let client: CPSLVisionClient?
     let configurationError: String?
@@ -757,6 +786,123 @@ actor CPSLDebugService {
         }
     }
 
+    func deleteFileEntries(_ entries: [CPSLFileEntry]) throws {
+        guard !entries.isEmpty else {
+            return
+        }
+
+        let sandboxURLs = try ensureSandboxURLs()
+        self.sandboxURLs = sandboxURLs
+        let paths = entries.map { Self.normalizedVirtualPath($0.path) }
+        try paths.forEach(validateFileMutationSource)
+        try validateNonoverlappingSelection(entries)
+        let mountUseLease = try iCloudWriteUseLease(forVirtualPaths: paths)
+        defer { mountUseLease?.release() }
+
+        let urls = try paths.map { path in
+            let url = try hostURL(forVirtualPath: path, sandboxURLs: sandboxURLs)
+            guard isBrowserHostURLAllowed(url, sandboxURLs: sandboxURLs) else {
+                throw CPSLFileAccessError.outsideFilesystem
+            }
+            return (path, url)
+        }
+
+        for (path, url) in urls {
+            try FileManager.default.removeItem(at: url)
+            fileActivityNotifier.notify(CPSLFileActivity(path: path, operation: "delete"))
+        }
+    }
+
+    func moveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) throws {
+        guard !entries.isEmpty else {
+            return
+        }
+
+        let sandboxURLs = try ensureSandboxURLs()
+        self.sandboxURLs = sandboxURLs
+        let normalizedDestination = Self.normalizedVirtualPath(destinationPath)
+        try validateFileMutationDestination(normalizedDestination)
+
+        let sourcePaths = entries.map { Self.normalizedVirtualPath($0.path) }
+        try sourcePaths.forEach(validateFileMutationSource)
+        try validateNonoverlappingSelection(entries)
+        let sourceNames = sourcePaths.map { URL(fileURLWithPath: $0).lastPathComponent }
+        guard Set(sourceNames.map { $0.lowercased() }).count == sourceNames.count else {
+            throw CPSLFileMutationError.duplicateName
+        }
+
+        for entry in entries where entry.isDirectory {
+            let sourcePath = Self.normalizedVirtualPath(entry.path)
+            if normalizedDestination == sourcePath ||
+                normalizedDestination.hasPrefix("\(sourcePath)/") {
+                throw CPSLFileMutationError.destinationContainsSource
+            }
+        }
+
+        let mountUseLease = try iCloudWriteUseLease(
+            forVirtualPaths: sourcePaths + [normalizedDestination]
+        )
+        defer { mountUseLease?.release() }
+
+        let destinationURL = try hostURL(
+            forVirtualPath: normalizedDestination,
+            sandboxURLs: sandboxURLs
+        )
+        guard isBrowserHostURLAllowed(destinationURL, sandboxURLs: sandboxURLs) else {
+            throw CPSLFileAccessError.outsideFilesystem
+        }
+        let destinationValues = try destinationURL.resourceValues(forKeys: [.isDirectoryKey])
+        guard destinationValues.isDirectory == true else {
+            throw CPSLFileMutationError.destinationUnavailable
+        }
+
+        let fileManager = FileManager.default
+        let moves = try zip(sourcePaths, sourceNames).map { sourcePath, sourceName in
+            let sourceURL = try hostURL(
+                forVirtualPath: sourcePath,
+                sandboxURLs: sandboxURLs
+            )
+            guard isBrowserHostURLAllowed(sourceURL, sandboxURLs: sandboxURLs) else {
+                throw CPSLFileAccessError.outsideFilesystem
+            }
+            let targetURL = destinationURL.appendingPathComponent(sourceName)
+            guard !fileManager.fileExists(atPath: targetURL.path) else {
+                throw CPSLFileMutationError.destinationExists
+            }
+            return (sourcePath, sourceURL, targetURL)
+        }
+
+        for (sourcePath, sourceURL, targetURL) in moves {
+            try fileManager.moveItem(at: sourceURL, to: targetURL)
+            fileActivityNotifier.notify(
+                CPSLFileActivity(path: sourcePath, operation: "move")
+            )
+        }
+    }
+
+    func attachmentThumbnail(for attachment: CPSLAttachment) async -> Data? {
+        do {
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            let normalizedPath = Self.normalizedVirtualPath(attachment.path)
+            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
+            defer { mountUseLease?.release() }
+            if mountUseLease != nil {
+                try await ensureICloudMountManager().materializeFile(at: normalizedPath)
+            }
+            let url = try hostURL(forVirtualPath: normalizedPath, sandboxURLs: sandboxURLs)
+            guard isBrowserHostURLAllowed(url, sandboxURLs: sandboxURLs) else {
+                return nil
+            }
+            return Self.thumbnailData(for: url, maximumPixelSize: 96)
+        } catch {
+            return nil
+        }
+    }
+
     func previewFile(_ entry: CPSLFileEntry) async -> CPSLFilePreviewLoadResult {
         guard !entry.isDirectory else {
             return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
@@ -913,6 +1059,47 @@ actor CPSLDebugService {
             }
         }
         return nil
+    }
+
+    private nonisolated static func thumbnailData(
+        for url: URL,
+        maximumPixelSize: Int
+    ) -> Data? {
+#if canImport(ImageIO) && canImport(UniformTypeIdentifiers)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else {
+            return nil
+        }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, thumbnail, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return data as Data
+#else
+        _ = url
+        _ = maximumPixelSize
+        return nil
+#endif
     }
 
     private nonisolated static func metadata(
@@ -1439,6 +1626,89 @@ actor CPSLDebugService {
             throw CPSLICloudMountError.sessionBusy
         }
         return lease
+    }
+
+    private func iCloudWriteUseLease(
+        forVirtualPaths virtualPaths: [String]
+    ) throws -> CPSLICloudMountUseLease? {
+        let iCloudPaths = virtualPaths
+            .map { Self.normalizedVirtualPath($0) }
+            .filter { $0.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") }
+        guard !iCloudPaths.isEmpty else {
+            return nil
+        }
+
+        let manager = try ensureICloudMountManager()
+        for path in iCloudPaths {
+            guard let mount = CPSLICloudMountResolver.mount(
+                containing: path,
+                in: manager.mounts
+            ) else {
+                throw CPSLICloudMountError.mountNotFound
+            }
+            guard mount.accessMode == .readWrite else {
+                throw CPSLFileMutationError.readOnly
+            }
+        }
+        guard let lease = try manager.beginSessionUse() else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        return lease
+    }
+
+    private func validateFileMutationSource(_ virtualPath: String) throws {
+        let normalized = Self.normalizedVirtualPath(virtualPath)
+        guard Self.isFileMutationPathAllowed(normalized) else {
+            throw CPSLFileMutationError.destinationUnavailable
+        }
+        let isMountRoot: Bool
+        if normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") {
+            isMountRoot = try ensureICloudMountManager().mounts.contains {
+                $0.virtualPath == normalized
+            }
+        } else {
+            isMountRoot = false
+        }
+        guard normalized != CPSLVirtualPath.home,
+              normalized != CPSLVirtualPath.attachments,
+              normalized != CPSLVirtualPath.temporary,
+              normalized != CPSLVirtualPath.iCloudRoot,
+              !isMountRoot
+        else {
+            throw CPSLFileMutationError.protectedLocation
+        }
+    }
+
+    private func validateFileMutationDestination(_ virtualPath: String) throws {
+        let normalized = Self.normalizedVirtualPath(virtualPath)
+        guard Self.isFileMutationPathAllowed(normalized),
+              normalized != CPSLVirtualPath.root,
+              normalized != CPSLVirtualPath.iCloudRoot
+        else {
+            throw CPSLFileMutationError.destinationUnavailable
+        }
+    }
+
+    private func validateNonoverlappingSelection(_ entries: [CPSLFileEntry]) throws {
+        let directoryPaths = entries
+            .filter(\.isDirectory)
+            .map { Self.normalizedVirtualPath($0.path) }
+        let allPaths = entries.map { Self.normalizedVirtualPath($0.path) }
+        for directoryPath in directoryPaths where allPaths.contains(where: {
+            $0 != directoryPath && $0.hasPrefix("\(directoryPath)/")
+        }) {
+            throw CPSLFileMutationError.overlappingSelection
+        }
+    }
+
+    private nonisolated static func isFileMutationPathAllowed(_ virtualPath: String) -> Bool {
+        virtualPath == CPSLVirtualPath.home ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.home)/") ||
+            virtualPath == CPSLVirtualPath.attachments ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.attachments)/") ||
+            virtualPath == CPSLVirtualPath.temporary ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.temporary)/") ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/")
     }
 
     private func ensureSandboxURLs() throws -> CPSLSandboxURLs {

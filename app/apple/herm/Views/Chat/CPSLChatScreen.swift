@@ -390,7 +390,7 @@ struct CPSLChatScreen: View {
                     bottomInset: CPSLTheme.medium
                 )
                 .ignoresSafeArea(.container, edges: .vertical)
-                .allowsHitTesting(isDrawerVisible)
+                .allowsHitTesting(isDrawerInteractionEnabled)
                 .offset(x: drawerOffset(width: proxy.size.width))
 
                 CPSLMainContentStage(
@@ -404,6 +404,12 @@ struct CPSLChatScreen: View {
                 .allowsHitTesting(!isDrawerVisible)
                 .zIndex(1)
 
+                CPSLDrawerGestureCapture(
+                    isOpen: model.isDrawerOpen,
+                    drawerGesture: drawerDragGesture(width: proxy.size.width)
+                )
+                .zIndex(2)
+
                 CPSLDrawerToggleButton(isOpen: model.isDrawerOpen) {
                     toggleDrawer()
                 }
@@ -411,9 +417,7 @@ struct CPSLChatScreen: View {
                 .padding(.top, CPSLTheme.topChromeSafeAreaGap)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
                 .zIndex(3)
-
             }
-            .simultaneousGesture(drawerDragGesture(width: proxy.size.width))
             .onAppear {
                 drawerProgress = drawerTargetProgress
                 isDrawerMotionActive = false
@@ -475,6 +479,12 @@ struct CPSLChatScreen: View {
         isDrawerVisible
     }
 
+    private var isDrawerInteractionEnabled: Bool {
+        model.isDrawerOpen &&
+            !isDrawerMotionActive &&
+            activeDrawerDragStartProgress == nil
+    }
+
     private func drawerTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
         topSafeAreaInset + CPSLTheme.topChromeSafeAreaGap
     }
@@ -502,10 +512,7 @@ struct CPSLChatScreen: View {
         guard width > 0 else {
             return
         }
-        guard let startProgress = activeDrawerDragStartProgress
-            ?? drawerDragStartProgress(value, width: width) else {
-            return
-        }
+        let startProgress = activeDrawerDragStartProgress ?? drawerProgress
 
         activeDrawerDragStartProgress = startProgress
         drawerProgress = clampedDrawerProgress(startProgress + value.translation.width / width)
@@ -516,10 +523,7 @@ struct CPSLChatScreen: View {
             activeDrawerDragStartProgress = nil
             return
         }
-        guard let startProgress = activeDrawerDragStartProgress
-            ?? drawerDragStartProgress(value, width: width) else {
-            return
-        }
+        let startProgress = activeDrawerDragStartProgress ?? drawerProgress
 
         let predictedProgress = clampedDrawerProgress(
             startProgress + value.predictedEndTranslation.width / width
@@ -533,14 +537,6 @@ struct CPSLChatScreen: View {
         if wasOpen == shouldOpen {
             animateDrawerProgress(to: shouldOpen ? 1 : 0)
         }
-    }
-
-    private func drawerDragStartProgress(_ value: DragGesture.Value, width: CGFloat) -> CGFloat? {
-        if model.isDrawerOpen {
-            return value.startLocation.x >= width - CPSLTheme.drawerGestureEdgeWidth ? drawerProgress : nil
-        }
-
-        return value.startLocation.x <= CPSLTheme.drawerGestureEdgeWidth ? drawerProgress : nil
     }
 
     private func clampedDrawerProgress(_ progress: CGFloat) -> CGFloat {
@@ -562,6 +558,28 @@ struct CPSLChatScreen: View {
                 return
             }
             isDrawerMotionActive = false
+        }
+    }
+}
+
+private struct CPSLDrawerGestureCapture<DrawerGesture: Gesture>: View {
+    let isOpen: Bool
+    let drawerGesture: DrawerGesture
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if isOpen {
+                Spacer(minLength: 0)
+            }
+
+            Color.clear
+                .contentShape(Rectangle())
+                .frame(width: CPSLTheme.drawerGestureEdgeWidth)
+                .gesture(drawerGesture)
+
+            if !isOpen {
+                Spacer(minLength: 0)
+            }
         }
     }
 }
