@@ -423,6 +423,30 @@ that the CPSL worker can load the library, create a session, and run a simple
 Luau eval. With `--all`, the normal probe also checks `doc.pdfInfo()` and
 structural `doc.read()` against CPSL's PDF fixture.
 
+## Build measurements
+
+Run an isolated cold build followed by a warm build with the same Cargo target
+directory:
+
+```sh
+scripts/measure-cpsl-build.sh
+```
+
+The command keeps the build and a tab-separated `benchmark.tsv` report under
+`.herm-cpsl/benchmarks/`. It does not clear or reuse the normal developer Cargo
+target directory. Use `--all` to measure the broad profile.
+
+To report the observed success/failure ratio for recent GitHub Actions runs:
+
+```sh
+scripts/measure-ci-reliability.sh
+```
+
+This reports failures, not confirmed infrastructure flakes. Pass a repository,
+workflow file, and sample size to override the defaults; the public API limits
+one report to at most 100 runs. The initial measurement is recorded in
+[`docs/CPSL_BUILD_BASELINE.md`](docs/CPSL_BUILD_BASELINE.md).
+
 ## macOS From Linux
 
 The helper script intentionally builds only for the current host. A normal Linux

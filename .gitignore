@@ -20,6 +20,7 @@ tools/edit-file/edit-file
 .herm-cpsl/cargo-target/
 .herm-cpsl/.cpsl-xcframework-build.lock
 .herm-cpsl/pdfium/
+.herm-cpsl/benchmarks/
 .herm-apple/
 .agents/
 
