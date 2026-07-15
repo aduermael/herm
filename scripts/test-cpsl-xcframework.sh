@@ -17,6 +17,13 @@ assert_eq() {
 	[ "$want" = "$got" ] || fail "$name: expected '$want', got '$got'"
 }
 
+project_file="$script_dir/../app/apple/herm.xcodeproj/project.pbxproj"
+build_phase=$(sed -n '/85A100072FEA000000000007 \/\* Build CPSL XCFramework \*\/ = {/,/^\t\t};/p' "$project_file")
+case "$build_phase" in
+*'alwaysOutOfDate = 1;'*) ;;
+*) fail "Build CPSL XCFramework phase must run on every Xcode build" ;;
+esac
+
 resolve_xcode_request() (
 	PLATFORM_NAME=$1
 	SDK_NAME=$2
