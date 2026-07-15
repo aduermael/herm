@@ -22,6 +22,13 @@
 			remoteGlobalIDString = 850B3BFE2FE8390F00A21FCA;
 			remoteInfo = "Build CPSL XCFramework";
 		};
+		F1E22F9C3002D2D100D9F1DD /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 85D75D2B2FE62B6F0095BAB2 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 85D75D322FE62B6F0095BAB2;
+			remoteInfo = herm;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -45,6 +52,7 @@
 		85A100002FEA000000000001 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = herm/Generated/CPSLEnvConstants.swift; sourceTree = SOURCE_ROOT; };
 		85D75D332FE62B6F0095BAB2 /* herm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = herm.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F1E22F983002D2D100D9F1DD /* hermTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = hermTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -75,6 +83,11 @@
 			path = herm;
 			sourceTree = "<group>";
 		};
+		F1E22F993002D2D100D9F1DD /* hermTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = hermTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,6 +97,13 @@
 			files = (
 				850B3BFA2FE8390E00A21FC8 /* cpsl.xcframework in Frameworks */,
 				85A100012FEA000000000001 /* libsqlite3.tbd in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F1E22F953002D2D100D9F1DD /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -120,6 +140,7 @@
 			children = (
 				85D75D352FE62B6F0095BAB2 /* herm */,
 				850B3C082FE8390F00A21FDF /* BuildSupport */,
+				F1E22F993002D2D100D9F1DD /* hermTests */,
 				850B3BF82FE8390E00A21FC8 /* Frameworks */,
 				85D75D342FE62B6F0095BAB2 /* Products */,
 				10B2D4362FF5768800E04BA4 /* Generated Sources */,
@@ -131,6 +152,7 @@
 			children = (
 				850B3C042FE8390F00A21FDB /* libBuildCPSL.a */,
 				85D75D332FE62B6F0095BAB2 /* herm.app */,
+				F1E22F983002D2D100D9F1DD /* hermTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -181,6 +203,29 @@
 			productReference = 85D75D332FE62B6F0095BAB2 /* herm.app */;
 			productType = "com.apple.product-type.application";
 		};
+		F1E22F973002D2D100D9F1DD /* hermTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F1E22F9E3002D2D100D9F1DD /* Build configuration list for PBXNativeTarget "hermTests" */;
+			buildPhases = (
+				F1E22F943002D2D100D9F1DD /* Sources */,
+				F1E22F953002D2D100D9F1DD /* Frameworks */,
+				F1E22F963002D2D100D9F1DD /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F1E22F9D3002D2D100D9F1DD /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				F1E22F993002D2D100D9F1DD /* hermTests */,
+			);
+			name = hermTests;
+			packageProductDependencies = (
+			);
+			productName = hermTests;
+			productReference = F1E22F983002D2D100D9F1DD /* hermTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -188,7 +233,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2650;
+				LastSwiftUpdateCheck = 2660;
 				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					850B3BFE2FE8390F00A21FCA = {
@@ -196,6 +241,10 @@
 					};
 					85D75D322FE62B6F0095BAB2 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					F1E22F973002D2D100D9F1DD = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 85D75D322FE62B6F0095BAB2;
 					};
 				};
 			};
@@ -215,12 +264,20 @@
 			targets = (
 				850B3BFE2FE8390F00A21FCA /* Build CPSL XCFramework */,
 				85D75D322FE62B6F0095BAB2 /* herm */,
+				F1E22F973002D2D100D9F1DD /* hermTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		85D75D312FE62B6F0095BAB2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F1E22F963002D2D100D9F1DD /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -331,6 +388,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F1E22F943002D2D100D9F1DD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -338,6 +402,11 @@
 			isa = PBXTargetDependency;
 			target = 850B3BFE2FE8390F00A21FCA /* Build CPSL XCFramework */;
 			targetProxy = 850B3C002FE8390F00A21FCC /* PBXContainerItemProxy */;
+		};
+		F1E22F9D3002D2D100D9F1DD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 85D75D322FE62B6F0095BAB2 /* herm */;
+			targetProxy = F1E22F9C3002D2D100D9F1DD /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -601,6 +670,73 @@
 			};
 			name = Release;
 		};
+		F1E22F9F3002D2D100D9F1DD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9JFN8QQG65;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.herm.app.hermTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/herm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/herm";
+				XROS_DEPLOYMENT_TARGET = 26.5;
+			};
+			name = Debug;
+		};
+		F1E22FA03002D2D100D9F1DD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9JFN8QQG65;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
+				MACOSX_DEPLOYMENT_TARGET = 26.5;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.herm.app.hermTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2,7";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/herm.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/herm";
+				VALIDATE_PRODUCT = YES;
+				XROS_DEPLOYMENT_TARGET = 26.5;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -627,6 +763,15 @@
 			buildConfigurations = (
 				85D75D3F2FE62B6F0095BAB2 /* Debug */,
 				85D75D402FE62B6F0095BAB2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F1E22F9E3002D2D100D9F1DD /* Build configuration list for PBXNativeTarget "hermTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F1E22F9F3002D2D100D9F1DD /* Debug */,
+				F1E22FA03002D2D100D9F1DD /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
