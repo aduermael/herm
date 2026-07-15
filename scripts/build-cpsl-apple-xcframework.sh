@@ -36,6 +36,7 @@ Environment:
   CPSL_ROOT                Existing CPSL checkout to use instead of external/cpsl.
   CPSL_WORK_DIR            Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
   CPSL_TARGET_DIR          Cargo target directory. Defaults to CPSL_WORK_DIR/cargo-target.
+  CARGO_INCREMENTAL       Enable Cargo incremental compilation with 1. Defaults to 0.
   OUT_DIR                  Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/apple,
                            or CPSL_WORK_DIR/artifacts/apple/CONFIGURATION for Xcode builds.
   CONFIGURATION            Xcode configuration. Debug uses Cargo debug; Release uses Cargo release.
@@ -89,6 +90,7 @@ work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
 default_cpsl_root="$herm_root/external/cpsl"
 target_dir=${CPSL_TARGET_DIR:-"$work_dir/cargo-target"}
 cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+cargo_incremental=$(cpsl_apple_cargo_incremental_from_environment) || die "failed to resolve CPSL incremental compilation setting"
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 ios_deployment_target=${IOS_DEPLOYMENT_TARGET:-17.0}
 macos_deployment_target=${MACOSX_DEPLOYMENT_TARGET:-14.0}
@@ -256,6 +258,7 @@ build_target() {
 		"CXX_$target_env=$clangxx" \
 		"AR_$target_env=$ar" \
 		"CARGO_TARGET_${target_env_upper}_LINKER=$clang" \
+		"CARGO_INCREMENTAL=$cargo_incremental" \
 		"RUSTFLAGS=$rustflags" \
 		cargo "$@"
 
@@ -413,6 +416,7 @@ herm_manifest_add "$manifest_path" builder build-cpsl-apple-xcframework.sh
 herm_manifest_add "$manifest_path" profile "$profile"
 herm_manifest_add "$manifest_path" features "$([ "$profile" = apple-app ] && printf '%s' embedded-agent || printf '%s' ffi-minimal)"
 herm_manifest_add "$manifest_path" cargo_profile "$cargo_profile"
+herm_manifest_add "$manifest_path" cargo_incremental "$cargo_incremental"
 herm_manifest_add "$manifest_path" targets "$CPSL_REQUEST_DESCRIPTION"
 herm_manifest_add "$manifest_path" herm_revision "$(herm_source_revision "$herm_root")"
 herm_manifest_add "$manifest_path" cpsl_revision "$(herm_source_revision "$cpsl_root")"

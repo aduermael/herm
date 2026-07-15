@@ -98,6 +98,14 @@ if cpsl_apple_cargo_profile_from_configuration Staging >/dev/null 2>&1; then
 	fail "unsupported configuration should be rejected"
 fi
 
+incremental=$(unset CARGO_INCREMENTAL; cpsl_apple_cargo_incremental_from_environment)
+assert_eq "default Cargo incremental setting" 0 "$incremental"
+incremental=$(CARGO_INCREMENTAL=1 cpsl_apple_cargo_incremental_from_environment)
+assert_eq "explicit Cargo incremental setting" 1 "$incremental"
+if CARGO_INCREMENTAL=invalid cpsl_apple_cargo_incremental_from_environment >/dev/null 2>&1; then
+	fail "invalid Cargo incremental setting should be rejected"
+fi
+
 artifact_dir=$(CONFIGURATION=Debug cpsl_apple_default_artifact_dir /tmp/cpsl-work)
 assert_eq "debug artifact dir" /tmp/cpsl-work/artifacts/apple/Debug "$artifact_dir"
 artifact_dir=$(CONFIGURATION=Release cpsl_apple_default_artifact_dir /tmp/cpsl-work)

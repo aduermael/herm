@@ -163,7 +163,10 @@ XCFramework:
 
 Direct CLI builds use Cargo's release profile by default. When invoked from
 Xcode, the helper follows Xcode's `CONFIGURATION`: `Debug` uses Cargo's debug
-profile and `Release` uses Cargo's release profile.
+profile and `Release` uses Cargo's release profile. Apple builds disable Cargo
+incremental compilation by default because cached compiler state is not stable
+across Rust toolchain and Apple target changes. Set `CARGO_INCREMENTAL=1` only
+when deliberately testing incremental Rust builds.
 
 Install Rust with [rustup](https://rustup.rs/), then add the Apple targets before
 building:

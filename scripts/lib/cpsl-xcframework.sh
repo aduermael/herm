@@ -361,6 +361,20 @@ cpsl_apple_cargo_profile_from_environment() {
 	cpsl_apple_cargo_profile_from_configuration "${CONFIGURATION:-}"
 }
 
+cpsl_apple_cargo_incremental_from_environment() {
+	cargo_incremental=${CARGO_INCREMENTAL:-0}
+
+	case "$cargo_incremental" in
+	0 | 1)
+		printf '%s\n' "$cargo_incremental"
+		;;
+	*)
+		printf '%s\n' "CARGO_INCREMENTAL must be 0 or 1, got: $cargo_incremental" >&2
+		return 1
+		;;
+	esac
+}
+
 cpsl_apple_default_artifact_dir() {
 	work_dir=$1
 
