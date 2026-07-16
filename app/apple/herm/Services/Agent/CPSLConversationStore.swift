@@ -854,12 +854,19 @@ nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Encodable 
         guard role.isVisible else {
             return nil
         }
+        let presentationBody: String
+        if role == .toolStatus,
+           let payload = CPSLToolStatusPayload.decode(from: body) {
+            presentationBody = payload.presentationEncodedBody()
+        } else {
+            presentationBody = body
+        }
         let providerParts: (displayText: String, attachments: [CPSLAttachment]) = role == .user
             ? CPSLAttachmentPrompt.parse(providerMessage?.content)
             : (displayText: "", attachments: [])
         let bodyParts: (displayText: String, attachments: [CPSLAttachment]) = role == .user
-            ? CPSLAttachmentPrompt.parse(body)
-            : (displayText: body, attachments: [])
+            ? CPSLAttachmentPrompt.parse(presentationBody)
+            : (displayText: presentationBody, attachments: [])
         let attachments = providerParts.attachments.isEmpty
             ? bodyParts.attachments
             : providerParts.attachments
@@ -867,7 +874,7 @@ nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Encodable 
             id: UUID(uuidString: id) ?? UUID(),
             role: role,
             title: title,
-            body: bodyParts.attachments.isEmpty ? body : bodyParts.displayText,
+            body: bodyParts.attachments.isEmpty ? presentationBody : bodyParts.displayText,
             attachments: attachments
         )
     }

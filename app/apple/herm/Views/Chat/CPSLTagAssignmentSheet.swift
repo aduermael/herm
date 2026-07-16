@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CPSLTagAssignmentSheet: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let conversationID: String
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<String> = []

@@ -3,7 +3,7 @@ import Accelerate
 import Foundation
 import Observation
 
-enum CPSLDictationState {
+enum CPSLDictationState: Equatable, Sendable {
     /// No startup or audio-session cleanup remains in flight.
     case idle
     /// Permissions and model checks; capture hasn't started.

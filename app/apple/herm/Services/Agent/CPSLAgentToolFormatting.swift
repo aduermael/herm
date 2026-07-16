@@ -29,7 +29,7 @@ nonisolated enum CPSLAgentToolFormatting {
     static func agentInput(from arguments: String) -> CPSLAgentToolInput? {
         guard let data = arguments.data(using: .utf8),
                 let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                Set(object.keys).isSubset(of: ["task", "mode"]),
+                Set(object.keys).isSubset(of: ["task", "mode", "intent"]),
                 let task = object["task"] as? String,
                 !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
@@ -43,7 +43,9 @@ nonisolated enum CPSLAgentToolFormatting {
 
         return CPSLAgentToolInput(
             task: task.trimmingCharacters(in: .whitespacesAndNewlines),
-            mode: subAgentMode
+            mode: subAgentMode,
+            intent: sanitizedStatusSentence(from: object["intent"] as? String)
+                ?? sanitizedStatusSentence(from: task)
         )
     }
 
@@ -64,11 +66,9 @@ nonisolated enum CPSLAgentToolFormatting {
             return input.intent ?? inferredSandboxIntent(from: input.source)
         case agentName:
             guard let input = agentInput(from: toolCall.function.arguments) else {
-                return "Checking with a helper"
+                return defaultStatusSummary
             }
-            return input.mode == .explore
-                ? "Asking a helper to inspect this"
-                : "Asking a helper to work on this"
+            return input.intent ?? defaultStatusSummary
         default:
             return defaultStatusSummary
         }
@@ -87,6 +87,25 @@ nonisolated enum CPSLAgentToolFormatting {
 
     static func statusSentence(from assistantText: String, fallback: String = defaultStatusSummary) -> String {
         sanitizedStatusSentence(from: assistantText) ?? fallback
+    }
+
+    static func uniqueThought(
+        from assistantText: String,
+        toolCalls: [CPSLOpenAIToolCall]
+    ) -> String? {
+        let summaries = toolCalls.map {
+            statusSummary(for: $0, assistantText: assistantText)
+        }
+        let uniqueLines = assistantText
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { line in
+                !line.isEmpty && !summaries.contains { isEquivalentStatus(line, $0) }
+            }
+        guard !uniqueLines.isEmpty else {
+            return nil
+        }
+        return uniqueLines.joined(separator: "\n")
     }
 
     static func promptPathLiteral(_ path: String) -> String {
@@ -152,6 +171,34 @@ nonisolated enum CPSLAgentToolFormatting {
             line = "\(line.prefix(157))..."
         }
         return line
+    }
+
+    private static func isEquivalentStatus(_ lhs: String, _ rhs: String) -> Bool {
+        let leftWords = normalizedStatusWords(lhs)
+        let rightWords = normalizedStatusWords(rhs)
+        guard !leftWords.isEmpty, !rightWords.isEmpty else {
+            return false
+        }
+        let overlap = leftWords.intersection(rightWords).count
+        return Double(overlap) / Double(min(leftWords.count, rightWords.count)) >= 0.75
+    }
+
+    private static func normalizedStatusWords(_ text: String) -> Set<String> {
+        let stopWords: Set<String> = [
+            "a", "am", "an", "and", "i", "ill", "im", "let", "me", "next", "now", "the", "this", "to", "will"
+        ]
+        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }
+        return Set(words.compactMap { rawWord in
+            var word = String(rawWord)
+            if word.count > 5, word.hasSuffix("ing") {
+                word.removeLast(3)
+            } else if word.count > 4, word.hasSuffix("ed") {
+                word.removeLast(2)
+            } else if word.count > 3, word.hasSuffix("s") {
+                word.removeLast()
+            }
+            return stopWords.contains(word) ? nil : word
+        })
     }
 
     private static func inferredSandboxIntent(from source: String) -> String {
@@ -295,6 +342,7 @@ nonisolated enum CPSLSubAgentMode: String, Codable, Equatable, Sendable {
 nonisolated struct CPSLAgentToolInput: Equatable, Sendable {
     let task: String
     let mode: CPSLSubAgentMode
+    let intent: String?
 }
 
 nonisolated struct CPSLSandboxToolInput: Equatable, Sendable {
@@ -353,6 +401,24 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
+    func presentationEncodedBody() -> String {
+        var presentation = self
+#if DEBUG
+        presentation.invocations = Array(presentation.invocations.suffix(4))
+#else
+        presentation.invocations = []
+#endif
+        presentation.webVisits = Array(presentation.webVisits.suffix(12))
+        return presentation.encodedBody()
+    }
+
+    func encodedBodies() -> CPSLToolStatusEncodedBodies {
+        CPSLToolStatusEncodedBodies(
+            persisted: encodedBody(),
+            presentation: presentationEncodedBody()
+        )
+    }
+
     private enum CodingKeys: String, CodingKey {
         case state
         case summary
@@ -367,6 +433,11 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
         invocations = try container.decodeIfPresent([CPSLToolStatusInvocation].self, forKey: .invocations) ?? []
         webVisits = try container.decodeIfPresent([CPSLWebSearchVisit].self, forKey: .webVisits) ?? []
     }
+}
+
+nonisolated struct CPSLToolStatusEncodedBodies: Sendable {
+    let persisted: String
+    let presentation: String
 }
 
 nonisolated struct CPSLAgentToolOutput: Equatable, Sendable {

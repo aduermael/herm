@@ -34,6 +34,7 @@ after one check instead of trying alternate imports.
 ## Sub-Agent First For Research
 
 - For broad web research, multi-page comparison, repeated search result triage, or anything likely to produce a lot of page text, delegate the browsing task to an `agent` sub-agent in explore mode.
+- Delegate broad research once. Give the helper a concrete output shape and ask it to return the best verified findings it has before its final turn; do not redo the same research in the main agent unless the helper reports a specific missing fact.
 - Keep the main conversation context focused on the user's request, the sub-agent task, and the concise result. Do not stream raw search result pages, long page dumps, or every visited URL into the main context unless the user asks for that detail.
 - Use the main agent directly only for small, targeted browsing where one or two page inspections are enough.
 
@@ -59,6 +60,13 @@ after one check instead of trying alternate imports.
 - `webbrowser.type()` uses `{backend="auto"}` by default. Background pages remain attached to an offscreen native host. macOS uses AppKit key events. iOS uses a scene-associated window that cannot become key, temporarily sets `inputmode="none"`, and attempts WebKit's `UIKeyInput` responder without activating the software keyboard. If WebKit cannot expose that responder before committing text, it falls back once to a whole-string DOM edit. Read `result.typing.backendUsed`, `nativeAttempted`, `committedCharacterCount`, `fallbackReason`, `interruptionReason`, and host diagnostics instead of assuming which path ran. Use `{speed=4.0}` if you need to be explicit.
 
 ## Search And Browse
+
+Reuse one browser for a research pass. Navigate that browser to each query or
+result instead of creating a browser per query; create another only when two
+independent login states or simultaneous pages are genuinely required. For a
+normal comparison, gather enough evidence in at most three sandbox invocations,
+then synthesize. More browsing is appropriate only when a named fact is still
+missing or sources conflict.
 
 ```lua
 local opened = webbrowser.open("https://www.google.com/search?q=site%3Aexample.com+query")

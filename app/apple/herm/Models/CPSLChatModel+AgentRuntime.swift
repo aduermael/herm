@@ -45,6 +45,12 @@ extension CPSLChatModel {
             await finishTypewriter()
             if !completion.toolCalls.isEmpty {
                 discardStreamingAssistantIfNeeded()
+                try await appendUniqueThoughtIfNeeded(
+                    completion.text,
+                    toolCalls: completion.toolCalls,
+                    model: completion.model,
+                    context: &context
+                )
             }
 
             if !completion.text.isEmpty && completion.toolCalls.isEmpty {
@@ -314,17 +320,58 @@ extension CPSLChatModel {
         activeToolStatusNodeID = nodeID
         activeToolStatusPayload = effectivePayload
         activeToolStatusStore = store
-        let body = effectivePayload.encodedBody()
-        try await store.updateNodeBody(id: nodeID, body: body)
+        activeToolStatusRevision += 1
+        let revision = activeToolStatusRevision
+        let payloadForEncoding = effectivePayload
+        let encodedBodies = await Task.detached(priority: .utility) {
+            payloadForEncoding.encodedBodies()
+        }.value
+        guard activeToolStatusNodeID == nodeID,
+              activeToolStatusRevision == revision
+        else {
+            return
+        }
+        try await store.updateNodeBody(id: nodeID, body: encodedBodies.persisted)
         guard let messageID = UUID(uuidString: nodeID),
                 let index = messages.firstIndex(where: { $0.id == messageID })
         else {
             return
         }
-        messages[index].body = body
+        messages[index].body = encodedBodies.presentation
+    }
+
+    private func appendUniqueThoughtIfNeeded(
+        _ assistantText: String,
+        toolCalls: [CPSLOpenAIToolCall],
+        model: String,
+        context: inout CPSLProviderLoopContext
+    ) async throws {
+        guard let thought = CPSLAgentToolFormatting.uniqueThought(
+            from: assistantText,
+            toolCalls: toolCalls
+        ) else {
+            return
+        }
+        let node = try await context.store.appendNode(
+            conversationID: context.conversationID,
+            parentID: context.parentID,
+            draft: CPSLNodeAppendDraft(
+                role: .thought,
+                title: nil,
+                body: thought,
+                model: model,
+                providerMessage: nil
+            )
+        )
+        context.parentID = node.id
+        context.onParentIDChange(node.id)
+        if let message = node.chatMessage {
+            messages.append(message)
+        }
     }
 
     private func clearActiveToolStatus() {
+        activeToolStatusRevision += 1
         activeToolStatusNodeID = nil
         activeToolStatusPayload = nil
         activeToolStatusStore = nil
@@ -693,9 +740,14 @@ extension CPSLChatModel {
                 turnsUsed = turn + 1
                 let isFinalTurn = turn == maxTurns - 1
                 let sandboxDirectory = await service.currentDirectory()
-                let turnGuidance = isFinalTurn
-                    ? "Budget: turn \(turn + 1)/\(maxTurns). FINAL, produce summary, no tools."
-                    : "Budget: turn \(turn + 1)/\(maxTurns)."
+                let turnGuidance: String
+                if isFinalTurn {
+                    turnGuidance = "Budget: turn \(turn + 1)/\(maxTurns). FINAL: return the best usable result now; no tools."
+                } else if turn >= maxTurns - 3 {
+                    turnGuidance = "Budget: turn \(turn + 1)/\(maxTurns). Synthesize usable findings now; use another tool only for an essential missing fact."
+                } else {
+                    turnGuidance = "Budget: turn \(turn + 1)/\(maxTurns)."
+                }
                 let requestMessages = [
                     CPSLOpenAIMessage.system(
                         subAgentSystemPrompt
@@ -802,6 +854,7 @@ extension CPSLChatModel {
         let basePrompt = """
         You are a Herm sub-agent running inside the same iOS/macOS app.
         Complete the assigned task, then return a concise result. Do not ask questions.
+        Start collecting useful findings immediately and preserve them in your response. Do not spend the whole budget on discovery. For browser research, reuse one browser across queries and return the best verified result you have before the final turn.
         Mode: \(mode.rawValue). Turn budget: \(maxTurns). Agent depth: \(context.agentDepth)/\(context.config.maxAgentDepth).
         CPSL is your execution environment: a Unix-like local environment with Luau as the command interface instead of Bash. Luau is the only supported execution language.
         Use /home/herm as the default home for durable user-created files and /tmp for temporary files. User-added files remain available under /attachments/<conversation-id>. Other Unix-style directories under / remain available when the task calls for them.
@@ -888,18 +941,18 @@ private nonisolated enum CPSLAgentRequestPreparationBuilder {
         toolResultClearThreshold: Double,
         recentToolResultsToKeep: Int
     ) -> [CPSLOpenAIMessage] {
-        guard let contextWindowTokens = config.contextWindowTokens,
-                contextWindowTokens > 0
-        else {
-            return messages
-        }
-
         let estimatedTokens = estimatedTokenCount(
             systemPrompt: systemPrompt,
             messages: messages,
             estimatedBytesPerToken: estimatedBytesPerToken
         )
-        let threshold = Int(Double(contextWindowTokens) * toolResultClearThreshold)
+        let replayThreshold = min(config.maxOutputTokens, Int.max / 4) * 4
+        let contextThreshold = config.contextWindowTokens.flatMap { contextWindowTokens in
+            contextWindowTokens > 0
+                ? Int(Double(contextWindowTokens) * toolResultClearThreshold)
+                : nil
+        }
+        let threshold = min(contextThreshold ?? replayThreshold, replayThreshold)
         guard estimatedTokens >= threshold else {
             return messages
         }
@@ -975,8 +1028,11 @@ private nonisolated enum CPSLAgentRequestPreparationBuilder {
         _ preparation: CPSLRequestPreparation,
         estimatedTokens: Int
     ) -> String {
-        let remainingIterations = max(0, preparation.maxIterations - preparation.iteration)
-        var lines = ["Session: approximately \(estimatedTokens) replay tokens in the current request."]
+        let currentIteration = preparation.iteration + 1
+        var lines = [
+            "Session: approximately \(estimatedTokens) replay tokens in the current request.",
+            "Tool round: \(currentIteration)/\(preparation.maxIterations)."
+        ]
         lines.append(
             "Current CPSL directory: \(CPSLAgentToolFormatting.promptPathLiteral(preparation.sandboxDirectory))."
         )
@@ -984,11 +1040,10 @@ private nonisolated enum CPSLAgentRequestPreparationBuilder {
             let percent = Int((Double(estimatedTokens) * 100 / Double(contextWindowTokens)).rounded())
             lines.append("Context: approximately \(percent)% full (\(estimatedTokens)/\(contextWindowTokens) tokens).")
         }
-        let remainingFraction = Double(remainingIterations) / Double(preparation.maxIterations)
-        if remainingFraction < 0.25 {
-            lines.append("Tool budget: \(remainingIterations) of \(preparation.maxIterations) rounds remain; wrap up efficiently.")
-        } else if remainingFraction < 0.50 {
-            lines.append("Tool budget: past halfway with \(remainingIterations) of \(preparation.maxIterations) rounds remaining.")
+        if currentIteration >= 12 {
+            lines.append("Use the evidence already gathered and finish now unless one essential action is still missing.")
+        } else if currentIteration >= 8 {
+            lines.append("Avoid repeating discovery. Start synthesizing the result and use more tools only for specific gaps.")
         }
         return preparation.systemPrompt
             + "\n\n<system-reminder>\n"

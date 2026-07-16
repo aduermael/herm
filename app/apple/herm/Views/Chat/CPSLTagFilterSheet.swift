@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct CPSLTagFilterSheet: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @Environment(\.dismiss) private var dismiss
     @State private var renaming: CPSLTag?
     @State private var renameText = ""

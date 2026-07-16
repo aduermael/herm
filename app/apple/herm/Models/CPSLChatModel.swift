@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 private enum CPSLTransientActivity {
     case file
@@ -8,25 +8,26 @@ private enum CPSLTransientActivity {
 }
 
 @MainActor
-final class CPSLChatModel: ObservableObject {
-    @Published var promptText = ""
-    @Published private(set) var composerAttachments: [CPSLAttachment] = []
-    @Published private(set) var isImportingAttachment = false
-    @Published var comingSoonMessage: String?
-    @Published var messages: [CPSLChatMessage] = []
-    @Published private(set) var conversations: [CPSLConversationSummary] = []
-    @Published private(set) var selectedConversationID: String?
-    @Published private(set) var isRunning = false
-    @Published private(set) var isDrawerOpen = false
-    @Published private(set) var isFileBrowserOpen = false
-    @Published private(set) var browserPath = "/"
-    @Published private(set) var browserEntries: [CPSLFileEntry] = []
-    @Published private(set) var childEntriesByPath: [String: [CPSLFileEntry]] = [:]
-    @Published private(set) var expandedFilePaths: Set<String> = []
-    @Published private(set) var loadingFilePaths: Set<String> = []
-    @Published private(set) var fileBrowserError: String?
-    @Published private(set) var isManagingFiles = false
-    @Published private(set) var filePreview: CPSLFilePreview? {
+@Observable
+final class CPSLChatModel {
+    var promptText = ""
+    private(set) var composerAttachments: [CPSLAttachment] = []
+    private(set) var isImportingAttachment = false
+    var comingSoonMessage: String?
+    var messages: [CPSLChatMessage] = []
+    private(set) var conversations: [CPSLConversationSummary] = []
+    private(set) var selectedConversationID: String?
+    private(set) var isRunning = false
+    private(set) var isDrawerOpen = false
+    private(set) var isFileBrowserOpen = false
+    private(set) var browserPath = "/"
+    private(set) var browserEntries: [CPSLFileEntry] = []
+    private(set) var childEntriesByPath: [String: [CPSLFileEntry]] = [:]
+    private(set) var expandedFilePaths: Set<String> = []
+    private(set) var loadingFilePaths: Set<String> = []
+    private(set) var fileBrowserError: String?
+    private(set) var isManagingFiles = false
+    private(set) var filePreview: CPSLFilePreview? {
         didSet {
             if filePreview == nil {
                 activeFileNavigationRequestID = nil
@@ -37,19 +38,19 @@ final class CPSLChatModel: ObservableObject {
             }
         }
     }
-    @Published private(set) var isWebBrowserOpen = false
-    @Published private(set) var isFileActivityActive = false
-    @Published private(set) var isCalendarOpen = false
-    @Published private(set) var isCalendarActivityActive = false
-    @Published private(set) var isLocationOpen = false
-    @Published private(set) var isLocationActivityActive = false
-    @Published private(set) var iCloudMounts: [CPSLICloudMount] = []
-    @Published private(set) var isUpdatingICloudMounts = true
-    @Published private(set) var iCloudImportProgress: CPSLICloudImportProgress?
-    @Published private(set) var allTags: [CPSLTag] = []
-    @Published var searchText: String = ""
-    @Published private(set) var activeTagIDs: Set<String> = []
-    @Published private(set) var showingArchived = false
+    private(set) var isWebBrowserOpen = false
+    private(set) var isFileActivityActive = false
+    private(set) var isCalendarOpen = false
+    private(set) var isCalendarActivityActive = false
+    private(set) var isLocationOpen = false
+    private(set) var isLocationActivityActive = false
+    private(set) var iCloudMounts: [CPSLICloudMount] = []
+    private(set) var isUpdatingICloudMounts = true
+    private(set) var iCloudImportProgress: CPSLICloudImportProgress?
+    private(set) var allTags: [CPSLTag] = []
+    var searchText: String = ""
+    private(set) var activeTagIDs: Set<String> = []
+    private(set) var showingArchived = false
 
     var isBusy: Bool {
         isRunning || isUpdatingICloudMounts || isManagingFiles
@@ -62,36 +63,37 @@ final class CPSLChatModel: ObservableObject {
     let dictation = CPSLDictationService()
     private let fileActivityNotifier = CPSLFileActivityNotifier()
     private let calendarActivityNotifier = CPSLCalendarActivityNotifier()
-    private var store: CPSLConversationStore?
-    private var storeLoadTask: Task<CPSLConversationStore, Error>?
-    private var activeRunTask: Task<Void, Never>?
-    var currentNodeID: String?
-    private var currentSystemPrompt: String?
+    @ObservationIgnored private var store: CPSLConversationStore?
+    @ObservationIgnored private var storeLoadTask: Task<CPSLConversationStore, Error>?
+    @ObservationIgnored private var activeRunTask: Task<Void, Never>?
+    @ObservationIgnored var currentNodeID: String?
+    @ObservationIgnored private var currentSystemPrompt: String?
     var streamingAssistantMessageID: UUID?
-    var isSuppressingAssistantStream = false
-    var typewriterBuffer = ""
-    var typewriterTask: Task<Void, Never>?
-    private var iCloudImportTask: Task<Void, Never>?
-    private var activeICloudImportID: UUID?
-    private var activeFileNavigationRequestID: UUID?
-    private var activeFilePreviewRequestID: UUID?
-    private var filePreviewLoadTask: Task<Void, Never>?
-    private var filePreviewLifetimeToken: AnyObject?
-    private var retiredFilePreviewLifetimeTokens: [UUID: AnyObject] = [:]
-    private var attachmentThumbnailCache: [String: Data] = [:]
-    private var attachmentsWithoutThumbnails: Set<String> = []
-    private var iCloudMountChangeObserver: NSObjectProtocol?
+    @ObservationIgnored var isSuppressingAssistantStream = false
+    @ObservationIgnored var typewriterBuffer = ""
+    @ObservationIgnored var typewriterTask: Task<Void, Never>?
+    @ObservationIgnored private var iCloudImportTask: Task<Void, Never>?
+    @ObservationIgnored private var activeICloudImportID: UUID?
+    @ObservationIgnored private var activeFileNavigationRequestID: UUID?
+    @ObservationIgnored private var activeFilePreviewRequestID: UUID?
+    @ObservationIgnored private var filePreviewLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var filePreviewLifetimeToken: AnyObject?
+    @ObservationIgnored private var retiredFilePreviewLifetimeTokens: [UUID: AnyObject] = [:]
+    @ObservationIgnored private var attachmentThumbnailCache: [String: Data] = [:]
+    @ObservationIgnored private var attachmentsWithoutThumbnails: Set<String> = []
+    @ObservationIgnored private var iCloudMountChangeObserver: NSObjectProtocol?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
     var activeToolStatusNodeID: String?
-    var activeToolStatusPayload: CPSLToolStatusPayload?
-    var activeToolStatusStore: CPSLConversationStore?
-    private var fileActivityClearTask: Task<Void, Never>?
-    private var calendarActivityClearTask: Task<Void, Never>?
-    private var locationActivityClearTask: Task<Void, Never>?
-    private var draftConversationID = UUID().uuidString
-    private var attachmentImportCount = 0
+    @ObservationIgnored var activeToolStatusPayload: CPSLToolStatusPayload?
+    @ObservationIgnored var activeToolStatusStore: CPSLConversationStore?
+    @ObservationIgnored var activeToolStatusRevision = 0
+    @ObservationIgnored private var fileActivityClearTask: Task<Void, Never>?
+    @ObservationIgnored private var calendarActivityClearTask: Task<Void, Never>?
+    @ObservationIgnored private var locationActivityClearTask: Task<Void, Never>?
+    @ObservationIgnored private var draftConversationID = UUID().uuidString
+    @ObservationIgnored private var attachmentImportCount = 0
     private let activityPulseDuration: TimeInterval = 1.6
     private static let filePreviewRetirementNanoseconds: UInt64 = 300_000_000
 
@@ -112,10 +114,11 @@ final class CPSLChatModel: ObservableObject {
     For tasks involving a website or online service—including account actions, private messages, posts, forms, and file uploads or downloads—the webbrowser skill is relevant and you must read it before deciding how to proceed. The native browser uses persistent WebKit state, so the user may already be signed in. When the user explicitly requests a specific action, try to complete it through the site's normal browser interface on their behalf. Keep ordinary browser work in the background; hand the browser to the user only when authentication, consent, CAPTCHA, payment, or subjective confirmation requires them.
     Use authenticated websites only through their normal browser flow. Do not unhide, relabel, restyle, or inject page controls to manufacture an interaction target. Do not replace normal browser typing with stacked JavaScript input, paste, or synthetic keyboard-event strategies. After a consequential action is confirmed, do not repeat it or send a corrective follow-up unless the user explicitly asks; report every side effect accurately. Never extract, print, copy, or reuse authentication tokens, cookies, or other session secrets from browser storage or page JavaScript, and never use those secrets to call a site's private API.
     Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Preparing document", "Checking export", or "Saving result". Do not mention code, sandbox details, paths, module names, tool names, API names, file extensions, HTTP, or implementation details in intent.
+    Every agent call must also include intent: a short user-facing description of its expected work. Describe the action itself; never mention a helper, agent, delegation, tool, code, paths, or implementation details.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
-    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs.
+    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures. Use signatures documented by a relevant loaded skill directly. Call help() or a module's help function only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
     Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list.
-    Treat help output as human-readable documentation. Call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
+    Treat help output as human-readable documentation. When help is actually needed, call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
     Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed.
     Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
     If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available through CPSL.
@@ -381,7 +384,9 @@ final class CPSLChatModel: ObservableObject {
         let conversationID = selectedConversationID
         do {
             let json = try await conversationDebugJSON(conversationID: conversationID)
-            return try Self.writeConversationJSONTraceFile(json, conversationID: conversationID)
+            return try await Task.detached(priority: .utility) {
+                try Self.writeConversationJSONTraceFile(json, conversationID: conversationID)
+            }.value
         } catch {
             appendErrorMessage(title: "Debug", body: error.localizedDescription)
             return nil
@@ -1179,7 +1184,10 @@ final class CPSLChatModel: ObservableObject {
             selectedConversationID = conversation.summary.id
             currentNodeID = conversation.summary.currentNodeID
             currentSystemPrompt = conversation.systemPrompt.isEmpty ? systemPrompt : conversation.systemPrompt
-            messages = conversation.nodes.compactMap(\.chatMessage)
+            let nodes = conversation.nodes
+            messages = await Task.detached(priority: .userInitiated) {
+                nodes.compactMap(\.chatMessage)
+            }.value
             await reloadConversations()
             isDrawerOpen = false
             isFileBrowserOpen = false
@@ -1555,13 +1563,24 @@ final class CPSLChatModel: ObservableObject {
         }
         payload.webVisits.append(visit)
         activeToolStatusPayload = payload
-        let body = payload.encodedBody()
-        if let messageID = UUID(uuidString: nodeID),
-           let index = messages.firstIndex(where: { $0.id == messageID }) {
-            messages[index].body = body
-        }
-        Task {
-            try? await store.updateNodeBody(id: nodeID, body: body)
+        activeToolStatusRevision += 1
+        let revision = activeToolStatusRevision
+        let payloadForEncoding = payload
+        Task { [weak self] in
+            let encodedBodies = await Task.detached(priority: .utility) {
+                payloadForEncoding.encodedBodies()
+            }.value
+            guard let self,
+                  self.activeToolStatusNodeID == nodeID,
+                  self.activeToolStatusRevision == revision
+            else {
+                return
+            }
+            if let messageID = UUID(uuidString: nodeID),
+               let index = self.messages.firstIndex(where: { $0.id == messageID }) {
+                self.messages[index].body = encodedBodies.presentation
+            }
+            try? await store.updateNodeBody(id: nodeID, body: encodedBodies.persisted)
         }
     }
 

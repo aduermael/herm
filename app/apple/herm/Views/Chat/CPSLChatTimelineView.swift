@@ -7,7 +7,7 @@ import UIKit
 #endif
 
 struct CPSLChatTimelineView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let topInset: CGFloat
     let bottomInset: CGFloat
     let isScrollGeometryPaused: Bool
@@ -24,6 +24,10 @@ struct CPSLChatTimelineView: View {
     }
 
     var body: some View {
+        let foldedThoughtIDs = Self.foldedThoughtIDs(
+            in: model.messages,
+            hasActiveToolStatus: model.activeToolStatusNodeID != nil
+        )
         ZStack {
             if !hasTimelineContent {
                 CPSLEmptyChatView()
@@ -34,6 +38,8 @@ struct CPSLChatTimelineView: View {
                     ForEach(model.messages) { message in
                         CPSLChatMessageView(
                             message: message,
+                            isThoughtFolded: foldedThoughtIDs.contains(message.id),
+                            isStreaming: message.id == model.streamingAssistantMessageID,
                             openBrowser: { browserID in
                                 model.openWebBrowserFromTimeline(browserID: browserID)
                             },
@@ -96,6 +102,24 @@ struct CPSLChatTimelineView: View {
                 }
             )
         }
+    }
+
+    private static func foldedThoughtIDs(
+        in messages: [CPSLChatMessage],
+        hasActiveToolStatus: Bool
+    ) -> Set<UUID> {
+        var result = Set<UUID>()
+        if messages.count > 1 {
+            for index in messages.indices.dropLast() where messages[index].role == .thought {
+                if messages[messages.index(after: index)].role != .thought {
+                    result.insert(messages[index].id)
+                }
+            }
+        }
+        if hasActiveToolStatus, let last = messages.last, last.role == .thought {
+            result.insert(last.id)
+        }
+        return result
     }
 
     private func scrollToBottom(animated: Bool) {
@@ -288,6 +312,8 @@ private struct CPSLEmptyChatView: View {
 
 private struct CPSLChatMessageView: View {
     let message: CPSLChatMessage
+    let isThoughtFolded: Bool
+    let isStreaming: Bool
     let openBrowser: (String?) -> Void
     let openFilePath: (String) -> Void
     let loadAttachmentThumbnail: (CPSLAttachment) async -> Data?
@@ -355,7 +381,9 @@ private struct CPSLChatMessageView: View {
 
     @ViewBuilder
     private var messageBody: some View {
-        if message.role == .command {
+        if message.role == .thought {
+            CPSLThoughtBody(text: message.body, isFolded: isThoughtFolded)
+        } else if message.role == .command {
             CPSLCommandBlockBody(
                 text: message.body,
                 foreground: message.role.foreground,
@@ -376,6 +404,7 @@ private struct CPSLChatMessageView: View {
                 text: message.body,
                 foreground: message.role.foreground,
                 fillsAvailableWidth: message.role.isFullWidth,
+                isStreaming: isStreaming,
                 openFilePath: openFilePath
             )
         } else {
@@ -388,6 +417,51 @@ private struct CPSLChatMessageView: View {
                 openFilePath: openFilePath
             )
         }
+    }
+}
+
+private struct CPSLThoughtBody: View {
+    let text: String
+    let isFolded: Bool
+    @State private var isExpanded: Bool
+
+    init(text: String, isFolded: Bool) {
+        self.text = text
+        self.isFolded = isFolded
+        _isExpanded = State(initialValue: !isFolded)
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            CPSLSelectableText(
+                text,
+                style: .supporting,
+                foreground: CPSLTheme.secondaryText,
+                fillsAvailableWidth: true,
+                parsesInlineMarkdown: true
+            )
+            .padding(.top, CPSLTheme.small / 2)
+        } label: {
+            HStack(spacing: CPSLTheme.small) {
+                Image(systemName: "sparkles")
+                    .font(CPSLTheme.iconSmallFont)
+                    .foregroundStyle(CPSLTheme.mauve)
+                Text(isExpanded ? "Thought" : preview)
+                    .font(CPSLTheme.supportingMediumFont)
+                    .foregroundStyle(CPSLTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onChange(of: isFolded) { _, folded in
+            isExpanded = !folded
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var preview: String {
+        text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
     }
 }
 
@@ -696,6 +770,7 @@ private struct CPSLMarkdownMessageBody: View {
     let text: String
     let foreground: Color
     let fillsAvailableWidth: Bool
+    let isStreaming: Bool
     let openFilePath: (String) -> Void
 
     var body: some View {
@@ -708,7 +783,7 @@ private struct CPSLMarkdownMessageBody: View {
                 foreground: foreground,
                 fillsAvailableWidth: fillsAvailableWidth,
                 lineSpacing: CPSLTheme.bodyLineSpacing,
-                parsesBlockMarkdown: true,
+                parsesBlockMarkdown: !isStreaming,
                 openFilePath: openFilePath
             )
         }

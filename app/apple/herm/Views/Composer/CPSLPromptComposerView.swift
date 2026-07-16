@@ -162,7 +162,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
 #endif
 
 struct CPSLPromptComposerView: View {
-    @ObservedObject var model: CPSLChatModel
+    @Bindable var model: CPSLChatModel
     let dismissKeyboardRequest: Int
     let isCompact: Bool
     let dismissKeyboard: () -> Void

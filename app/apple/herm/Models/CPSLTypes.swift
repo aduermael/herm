@@ -44,6 +44,7 @@ enum CPSLFeatureAccessState: String, Equatable, Sendable {
 
 nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     case assistant
+    case thought
     case user
     case command
     case output
@@ -56,7 +57,7 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     }
 
     var isFullWidth: Bool {
-        self == .assistant || self == .command || self == .toolStatus
+        self == .assistant || self == .thought || self == .command || self == .toolStatus
     }
 
     var usesMonospaceBody: Bool {
@@ -68,11 +69,11 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     }
 
     var isFramed: Bool {
-        self != .assistant
+        self != .assistant && self != .thought
     }
 
     var displaysTitle: Bool {
-        self != .assistant
+        self != .assistant && self != .thought
     }
 
     var isVisible: Bool {
@@ -83,6 +84,8 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     var fill: Color {
         switch self {
         case .assistant:
+            return .clear
+        case .thought:
             return .clear
         case .user:
             return CPSLTheme.elevated

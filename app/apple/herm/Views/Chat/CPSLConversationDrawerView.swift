@@ -10,7 +10,7 @@ enum CPSLConversationDrawerLayout {
 }
 
 struct CPSLConversationDrawerView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let topInset: CGFloat
     let bottomInset: CGFloat
 
@@ -28,7 +28,7 @@ struct CPSLConversationDrawerView: View {
 }
 
 private struct CPSLConversationDrawerContent: View {
-    @ObservedObject var model: CPSLChatModel
+    @Bindable var model: CPSLChatModel
     let width: CGFloat
     let topInset: CGFloat
     let bottomInset: CGFloat
@@ -270,7 +270,7 @@ private struct CPSLDrawerToolbar: View {
 }
 
 private struct CPSLConversationListView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @Binding var tagSheetConversationID: String?
     @Binding var renamingConversation: CPSLConversationSummary?
 
