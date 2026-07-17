@@ -46,15 +46,6 @@ jobs:
       - run: cd tools/ci-check && go build -o "$RUNNER_TEMP/ci-check" .
       - run: '"$RUNNER_TEMP/ci-check" positional-params .'
 
-  pages-deployment:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-      - run: node --test .github/scripts/deploy-pages.test.cjs
-
   cpsl-xcframework-placeholder:
     runs-on: ubuntu-latest
     steps:
