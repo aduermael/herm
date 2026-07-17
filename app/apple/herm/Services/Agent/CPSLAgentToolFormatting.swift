@@ -256,6 +256,10 @@ nonisolated enum CPSLAgentToolFormatting {
     }
 
     static func displayBody(_ output: CPSLAgentToolOutput) -> String {
+        truncatedText(completeBody(output))
+    }
+
+    static func completeBody(_ output: CPSLAgentToolOutput) -> String {
         var sections: [String] = []
         appendTrimmed(output.stdout, to: &sections)
         appendTrimmed(output.stderr, to: &sections)
@@ -269,7 +273,7 @@ nonisolated enum CPSLAgentToolFormatting {
         if sections.isEmpty {
             sections.append(output.exitCode.map { "exit \($0)" } ?? "done")
         }
-        return truncatedText(sections.joined(separator: "\n\n"))
+        return sections.joined(separator: "\n\n")
     }
 
     static func truncatedText(_ text: String) -> String {
@@ -356,6 +360,15 @@ nonisolated enum CPSLToolStatusState: String, Codable, Equatable, Sendable {
     case failed
 }
 
+nonisolated struct CPSLToolTraceInvocation: Identifiable, Codable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let summary: String
+    let input: String
+    let output: String
+    let isError: Bool
+}
+
 nonisolated struct CPSLToolStatusInvocation: Identifiable, Codable, Equatable, Sendable {
     let id: String
     let name: String
@@ -363,6 +376,15 @@ nonisolated struct CPSLToolStatusInvocation: Identifiable, Codable, Equatable, S
     let input: String
     let output: String
     let isError: Bool
+
+    init(traceInvocation: CPSLToolTraceInvocation) {
+        id = traceInvocation.id
+        name = traceInvocation.name
+        summary = traceInvocation.summary
+        input = CPSLAgentToolFormatting.truncatedText(traceInvocation.input)
+        output = CPSLAgentToolFormatting.truncatedText(traceInvocation.output)
+        isError = traceInvocation.isError
+    }
 }
 
 nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
@@ -374,7 +396,7 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
     init(
         state: CPSLToolStatusState,
         summary: String,
-        invocations: [CPSLToolStatusInvocation],
+        invocations: [CPSLToolStatusInvocation] = [],
         webVisits: [CPSLWebSearchVisit] = []
     ) {
         self.state = state
@@ -384,7 +406,7 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
     }
 
     static func running(summary: String = "Preparing tools") -> CPSLToolStatusPayload {
-        CPSLToolStatusPayload(state: .running, summary: summary, invocations: [])
+        CPSLToolStatusPayload(state: .running, summary: summary)
     }
 
     static func decode(from body: String) -> CPSLToolStatusPayload? {
@@ -401,24 +423,6 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
         return String(decoding: data, as: UTF8.self)
     }
 
-    func presentationEncodedBody() -> String {
-        var presentation = self
-#if DEBUG
-        presentation.invocations = Array(presentation.invocations.suffix(4))
-#else
-        presentation.invocations = []
-#endif
-        presentation.webVisits = Array(presentation.webVisits.suffix(12))
-        return presentation.encodedBody()
-    }
-
-    func encodedBodies() -> CPSLToolStatusEncodedBodies {
-        CPSLToolStatusEncodedBodies(
-            persisted: encodedBody(),
-            presentation: presentationEncodedBody()
-        )
-    }
-
     private enum CodingKeys: String, CodingKey {
         case state
         case summary
@@ -430,14 +434,12 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         state = try container.decode(CPSLToolStatusState.self, forKey: .state)
         summary = try container.decode(String.self, forKey: .summary)
-        invocations = try container.decodeIfPresent([CPSLToolStatusInvocation].self, forKey: .invocations) ?? []
+        invocations = try container.decodeIfPresent(
+            [CPSLToolStatusInvocation].self,
+            forKey: .invocations
+        ) ?? []
         webVisits = try container.decodeIfPresent([CPSLWebSearchVisit].self, forKey: .webVisits) ?? []
     }
-}
-
-nonisolated struct CPSLToolStatusEncodedBodies: Sendable {
-    let persisted: String
-    let presentation: String
 }
 
 nonisolated struct CPSLAgentToolOutput: Equatable, Sendable {
@@ -454,5 +456,5 @@ nonisolated struct CPSLToolExecutionResult {
     let providerContent: String
     let displayBody: String
     let isError: Bool
-    let debugInvocation: CPSLToolStatusInvocation
+    let traceInvocation: CPSLToolTraceInvocation
 }

@@ -69,7 +69,7 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     }
 
     var isFramed: Bool {
-        self != .assistant && self != .thought
+        self != .assistant
     }
 
     var displaysTitle: Bool {
@@ -86,7 +86,7 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
         case .assistant:
             return .clear
         case .thought:
-            return .clear
+            return CPSLTheme.surface
         case .user:
             return CPSLTheme.elevated
         case .command:

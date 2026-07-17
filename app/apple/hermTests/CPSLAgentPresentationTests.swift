@@ -66,18 +66,18 @@ struct CPSLAgentPresentationTests {
         #expect(CPSLAgentToolFormatting.summary(for: agentCall) == "Compare the candidate venues")
     }
 
-    @Test func presentationProjectionDoesNotAlterPersistedDiagnostics() {
-        let invocations = (0..<6).map { index in
-            CPSLToolStatusInvocation(
-                id: "invocation-\(index)",
-                name: "tool",
-                summary: "Invocation \(index)",
-                input: "input-\(index)",
-                output: "output-\(index)",
+    @Test func statusPayloadRoundTripsPresentationState() {
+        let invocation = CPSLToolStatusInvocation(
+            traceInvocation: CPSLToolTraceInvocation(
+                id: "call-1",
+                name: "local_sandbox_exec",
+                summary: "Building report",
+                input: "print('hello')",
+                output: "done",
                 isError: false
             )
-        }
-        let visits = (0..<14).map { index in
+        )
+        let visits = (0..<2).map { index in
             CPSLWebSearchVisit(
                 id: "visit-\(index)",
                 browserID: "browser-\(index)",
@@ -90,23 +90,18 @@ struct CPSLAgentPresentationTests {
         let payload = CPSLToolStatusPayload(
             state: .succeeded,
             summary: "Finished",
-            invocations: invocations,
+            invocations: [invocation],
             webVisits: visits
         )
 
-        let persisted = CPSLToolStatusPayload.decode(from: payload.encodedBody())
-        let presentation = CPSLToolStatusPayload.decode(from: payload.presentationEncodedBody())
+        let decoded = CPSLToolStatusPayload.decode(from: payload.encodedBody())
+        #expect(decoded == payload)
+    }
 
-        #expect(persisted?.invocations.count == 6)
-        #expect(persisted?.webVisits.count == 14)
-#if DEBUG
-        #expect(presentation?.invocations.map(\.id) == [
-            "invocation-2", "invocation-3", "invocation-4", "invocation-5",
-        ])
-#else
-        #expect(presentation?.invocations.isEmpty == true)
-#endif
-        #expect(presentation?.webVisits.first?.id == "visit-2")
-        #expect(presentation?.webVisits.count == 12)
+    @Test func statusPayloadWithoutInvocationExcerptsStillDecodes() {
+        let legacyBody = #"{"state":"succeeded","summary":"Finished","webVisits":[]}"#
+
+        let decoded = CPSLToolStatusPayload.decode(from: legacyBody)
+        #expect(decoded?.invocations.isEmpty == true)
     }
 }

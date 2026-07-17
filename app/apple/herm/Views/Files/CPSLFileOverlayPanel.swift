@@ -85,9 +85,12 @@ struct CPSLFileOverlayPanel<Header: View, Content: View>: View {
             tint: CPSLTheme.command,
             strokeOpacity: 0.07
         )
-        .cpslAnimatedPastelRainbowBorder(
-            in: RoundedRectangle(cornerRadius: CPSLTheme.paneRadius, style: .continuous)
-        )
+        .overlay {
+            // Keep full-size PDF, web, and calendar surfaces out of a 30 fps overlay redraw.
+            RoundedRectangle(cornerRadius: CPSLTheme.paneRadius, style: .continuous)
+                .strokeBorder(CPSLPastelRainbow.gradient(at: .zero), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
     }
 }
 

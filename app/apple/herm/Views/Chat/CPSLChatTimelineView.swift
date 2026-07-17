@@ -24,83 +24,86 @@ struct CPSLChatTimelineView: View {
     }
 
     var body: some View {
-        let foldedThoughtIDs = Self.foldedThoughtIDs(
-            in: model.messages,
-            hasActiveToolStatus: model.activeToolStatusNodeID != nil
-        )
-        ZStack {
-            if !hasTimelineContent {
-                CPSLEmptyChatView()
-            }
-
-            ScrollView {
-                LazyVStack(spacing: CPSLTheme.messageVerticalSpacing) {
-                    ForEach(model.messages) { message in
-                        CPSLChatMessageView(
-                            message: message,
-                            isThoughtFolded: foldedThoughtIDs.contains(message.id),
-                            isStreaming: message.id == model.streamingAssistantMessageID,
-                            openBrowser: { browserID in
-                                model.openWebBrowserFromTimeline(browserID: browserID)
-                            },
-                            openFilePath: { path in
-                                model.openFilePathFromTimeline(path)
-                            },
-                            loadAttachmentThumbnail: { attachment in
-                                await model.attachmentThumbnail(for: attachment)
-                            }
-                        )
-                            .id(message.id)
-                    }
-
-                    if model.isRunning {
-                        CPSLAgentWorkingIndicatorView()
-                            .id("agent-working-indicator")
-                    }
+        GeometryReader { geometry in
+            let foldedThoughtIDs = Self.foldedThoughtIDs(
+                in: model.messages,
+                hasActiveToolStatus: model.activeToolStatusNodeID != nil
+            )
+            ZStack {
+                if !hasTimelineContent {
+                    CPSLEmptyChatView()
                 }
-                .padding(.horizontal, CPSLTheme.contentHorizontalInset)
-                .padding(.top, topInset)
-                .padding(.bottom, bottomInset)
-            }
-            .id(timelineIdentity)
-            .scrollPosition($scrollPosition)
-            .scrollDismissesKeyboard(.interactively)
-            .contentMargins(.top, topInset, for: .scrollIndicators)
-            .contentMargins(.bottom, bottomInset, for: .scrollIndicators)
-            .opacity(hasTimelineContent ? 1 : 0)
-            .onAppear {
-                scrollToBottom(animated: false)
-            }
-            .onChange(of: model.messages.count) { _, _ in
-                scrollToBottom(animated: true)
-            }
-            .onChange(of: model.isRunning) { _, isRunning in
-                if isRunning {
+
+                ScrollView {
+                    LazyVStack(spacing: CPSLTheme.messageVerticalSpacing) {
+                        ForEach(model.messages) { message in
+                            CPSLChatMessageView(
+                                message: message,
+                                isThoughtFolded: foldedThoughtIDs.contains(message.id),
+                                isStreaming: message.id == model.streamingAssistantMessageID,
+                                maxExpandableHeight: geometry.size.height * 0.3,
+                                openBrowser: { browserID in
+                                    model.openWebBrowserFromTimeline(browserID: browserID)
+                                },
+                                openFilePath: { path in
+                                    model.openFilePathFromTimeline(path)
+                                },
+                                loadAttachmentThumbnail: { attachment in
+                                    await model.attachmentThumbnail(for: attachment)
+                                }
+                            )
+                            .id(message.id)
+                        }
+
+                        if model.isRunning {
+                            CPSLAgentWorkingIndicatorView()
+                                .id("agent-working-indicator")
+                        }
+                    }
+                    .padding(.horizontal, CPSLTheme.contentHorizontalInset)
+                    .padding(.top, topInset)
+                    .padding(.bottom, bottomInset)
+                }
+                .id(timelineIdentity)
+                .scrollPosition($scrollPosition)
+                .scrollDismissesKeyboard(.interactively)
+                .contentMargins(.top, topInset, for: .scrollIndicators)
+                .contentMargins(.bottom, bottomInset, for: .scrollIndicators)
+                .opacity(hasTimelineContent ? 1 : 0)
+                .onAppear {
+                    scrollToBottom(animated: false)
+                }
+                .onChange(of: model.messages.count) { _, _ in
                     scrollToBottom(animated: true)
                 }
-            }
-            .onChange(of: model.messages.last?.body) { _, _ in
-                followStreamingBottomIfPinned()
-            }
-            .onChange(of: bottomInset) { _, _ in
-                scrollToBottomIfPinned()
-            }
-            .onChange(of: timelineIdentity) { _, _ in
-                resetScrollState()
-            }
-            .onScrollGeometryChange(
-                for: CPSLTimelineScrollState.self,
-                of: { geometry in
-                    CPSLTimelineScrollState(geometry: geometry)
-                },
-                action: { oldState, newState in
-                    guard !isScrollGeometryPaused else {
-                        return
+                .onChange(of: model.isRunning) { _, isRunning in
+                    if isRunning {
+                        scrollToBottom(animated: true)
                     }
-
-                    handleScrollGeometryChange(oldState: oldState, newState: newState)
                 }
-            )
+                .onChange(of: model.messages.last?.body) { _, _ in
+                    followStreamingBottomIfPinned()
+                }
+                .onChange(of: bottomInset) { _, _ in
+                    scrollToBottomIfPinned()
+                }
+                .onChange(of: timelineIdentity) { _, _ in
+                    resetScrollState()
+                }
+                .onScrollGeometryChange(
+                    for: CPSLTimelineScrollState.self,
+                    of: { geometry in
+                        CPSLTimelineScrollState(geometry: geometry)
+                    },
+                    action: { oldState, newState in
+                        guard !isScrollGeometryPaused else {
+                            return
+                        }
+
+                        handleScrollGeometryChange(oldState: oldState, newState: newState)
+                    }
+                )
+            }
         }
     }
 
@@ -314,6 +317,7 @@ private struct CPSLChatMessageView: View {
     let message: CPSLChatMessage
     let isThoughtFolded: Bool
     let isStreaming: Bool
+    let maxExpandableHeight: CGFloat
     let openBrowser: (String?) -> Void
     let openFilePath: (String) -> Void
     let loadAttachmentThumbnail: (CPSLAttachment) async -> Data?
@@ -352,11 +356,15 @@ private struct CPSLChatMessageView: View {
     }
 
     private var horizontalPadding: CGFloat {
-        message.role == .toolStatus ? CPSLTheme.small : CPSLTheme.medium
+        isExpandableRow ? CPSLTheme.small : CPSLTheme.medium
     }
 
     private var verticalPadding: CGFloat {
-        message.role == .toolStatus ? CPSLTheme.small / 2 : CPSLTheme.medium
+        isExpandableRow ? CPSLTheme.small / 2 : CPSLTheme.medium
+    }
+
+    private var isExpandableRow: Bool {
+        message.role == .thought || message.role == .toolStatus
     }
 
     private var messageStack: some View {
@@ -382,7 +390,11 @@ private struct CPSLChatMessageView: View {
     @ViewBuilder
     private var messageBody: some View {
         if message.role == .thought {
-            CPSLThoughtBody(text: message.body, isFolded: isThoughtFolded)
+            CPSLThoughtBody(
+                text: message.body,
+                isFolded: isThoughtFolded,
+                maxExpandedHeight: maxExpandableHeight
+            )
         } else if message.role == .command {
             CPSLCommandBlockBody(
                 text: message.body,
@@ -391,7 +403,11 @@ private struct CPSLChatMessageView: View {
             )
         } else if message.role == .toolStatus {
             if let payload = CPSLToolStatusPayload.decode(from: message.body) {
-                CPSLToolStatusBody(payload: payload, openBrowser: openBrowser)
+                CPSLToolStatusBody(
+                    payload: payload,
+                    maxExpandedHeight: maxExpandableHeight,
+                    openBrowser: openBrowser
+                )
             } else {
                 Text(message.body)
                     .font(CPSLTheme.supportingFont)
@@ -420,32 +436,88 @@ private struct CPSLChatMessageView: View {
     }
 }
 
+private struct CPSLExpandableMessageRow<Label: View, Content: View>: View {
+    @Binding var isExpanded: Bool
+    let maxExpandedHeight: CGFloat
+    let label: Label
+    let content: Content
+
+    init(
+        isExpanded: Binding<Bool>,
+        maxExpandedHeight: CGFloat,
+        @ViewBuilder label: () -> Label,
+        @ViewBuilder content: () -> Content
+    ) {
+        _isExpanded = isExpanded
+        self.maxExpandedHeight = maxExpandedHeight
+        self.label = label()
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: CPSLTheme.small) {
+                    label
+
+                    Image(systemName: "chevron.right")
+                        .font(CPSLTheme.iconSmallFont)
+                        .foregroundStyle(CPSLTheme.secondaryText)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .padding(.trailing, CPSLTheme.medium)
+                        .accessibilityHidden(true)
+                }
+                .frame(minHeight: CPSLTheme.large, alignment: .center)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if isExpanded {
+                ViewThatFits(in: .vertical) {
+                    content
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    ScrollView(.vertical) {
+                        content
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                }
+                .frame(maxHeight: maxExpandedHeight)
+                .padding(.top, CPSLTheme.small / 2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct CPSLThoughtBody: View {
     let text: String
     let isFolded: Bool
+    let maxExpandedHeight: CGFloat
     @State private var isExpanded: Bool
 
-    init(text: String, isFolded: Bool) {
+    init(text: String, isFolded: Bool, maxExpandedHeight: CGFloat) {
         self.text = text
         self.isFolded = isFolded
+        self.maxExpandedHeight = maxExpandedHeight
         _isExpanded = State(initialValue: !isFolded)
     }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            CPSLSelectableText(
-                text,
-                style: .supporting,
-                foreground: CPSLTheme.secondaryText,
-                fillsAvailableWidth: true,
-                parsesInlineMarkdown: true
-            )
-            .padding(.top, CPSLTheme.small / 2)
-        } label: {
+        CPSLExpandableMessageRow(
+            isExpanded: $isExpanded,
+            maxExpandedHeight: maxExpandedHeight
+        ) {
             HStack(spacing: CPSLTheme.small) {
-                Image(systemName: "sparkles")
-                    .font(CPSLTheme.iconSmallFont)
-                    .foregroundStyle(CPSLTheme.mauve)
+                Text("💭")
+                    .font(CPSLTheme.iconMediumFont)
+                    .frame(width: CPSLTheme.large, height: CPSLTheme.large)
                 Text(isExpanded ? "Thought" : preview)
                     .font(CPSLTheme.supportingMediumFont)
                     .foregroundStyle(CPSLTheme.secondaryText)
@@ -453,11 +525,18 @@ private struct CPSLThoughtBody: View {
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+        } content: {
+            CPSLSelectableText(
+                text,
+                style: .supporting,
+                foreground: CPSLTheme.secondaryText,
+                fillsAvailableWidth: true,
+                parsesInlineMarkdown: true
+            )
         }
         .onChange(of: isFolded) { _, folded in
             isExpanded = !folded
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var preview: String {
@@ -490,44 +569,87 @@ private struct CPSLMessageAttachmentList: View {
 
 private struct CPSLToolStatusBody: View {
     let payload: CPSLToolStatusPayload
+    let maxExpandedHeight: CGFloat
     let openBrowser: (String?) -> Void
-
-#if DEBUG
     @State private var isExpanded = false
-#endif
 
     var body: some View {
-#if DEBUG
         VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
-            DisclosureGroup(isExpanded: $isExpanded) {
-                CPSLToolStatusDebugDetails(invocations: payload.invocations)
-                    .padding(.top, CPSLTheme.small)
-            } label: {
+            CPSLExpandableMessageRow(
+                isExpanded: $isExpanded,
+                maxExpandedHeight: maxExpandedHeight
+            ) {
                 CPSLToolStatusLine(payload: payload)
+            } content: {
+                CPSLToolStatusDetails(invocations: payload.invocations)
             }
-            .disclosureGroupStyle(.automatic)
 
             if !payload.webVisits.isEmpty {
                 CPSLWebSearchStatusLine(visits: payload.webVisits, openBrowser: openBrowser)
             }
         }
-#else
-        CPSLToolStatusStack(payload: payload, openBrowser: openBrowser)
-#endif
     }
 }
 
-private struct CPSLToolStatusStack: View {
-    let payload: CPSLToolStatusPayload
-    let openBrowser: (String?) -> Void
+private struct CPSLToolStatusDetails: View {
+    let invocations: [CPSLToolStatusInvocation]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.medium) {
+            if invocations.isEmpty {
+                Text("No completed tool calls yet.")
+                    .font(CPSLTheme.captionFont)
+                    .foregroundStyle(CPSLTheme.secondaryText)
+            } else {
+                ForEach(invocations) { invocation in
+                    CPSLToolStatusInvocationView(invocation: invocation)
+                }
+            }
+        }
+    }
+}
+
+private struct CPSLToolStatusInvocationView: View {
+    let invocation: CPSLToolStatusInvocation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small) {
+            HStack(spacing: CPSLTheme.small) {
+                Image(systemName: invocation.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
+                    .foregroundStyle(invocation.isError ? CPSLTheme.danger : CPSLTheme.success)
+                Text(invocation.summary)
+                    .font(CPSLTheme.captionMediumFont)
+                    .foregroundStyle(CPSLTheme.text)
+            }
+
+            CPSLToolStatusDetailBlock(title: "Input", text: invocation.input)
+            CPSLToolStatusDetailBlock(title: "Output", text: invocation.output)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct CPSLToolStatusDetailBlock: View {
+    let title: LocalizedStringKey
+    let text: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
-            CPSLToolStatusLine(payload: payload)
-            if !payload.webVisits.isEmpty {
-                CPSLWebSearchStatusLine(visits: payload.webVisits, openBrowser: openBrowser)
-            }
+            Text(title)
+                .font(CPSLTheme.captionMediumFont)
+                .foregroundStyle(CPSLTheme.secondaryText)
+
+            CPSLSelectableText(
+                text.isEmpty ? "(empty)" : text,
+                style: .monospacedBody,
+                foreground: CPSLTheme.text,
+                fillsAvailableWidth: true,
+                lineSpacing: 0
+            )
         }
+        .padding(CPSLTheme.small)
+        .background(CPSLTheme.command)
+        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
     }
 }
 
@@ -545,7 +667,6 @@ private struct CPSLToolStatusLine: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: CPSLTheme.large, alignment: .center)
     }
 }
 
@@ -700,71 +821,6 @@ private struct CPSLToolStatusIcon: View {
         return cycle / 0.9 * 360
     }
 }
-
-#if DEBUG
-private struct CPSLToolStatusDebugDetails: View {
-    let invocations: [CPSLToolStatusInvocation]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.medium) {
-            if invocations.isEmpty {
-                Text("No completed tool calls yet.")
-                    .font(CPSLTheme.captionFont)
-                    .foregroundStyle(CPSLTheme.secondaryText)
-            } else {
-                ForEach(invocations) { invocation in
-                    CPSLToolStatusInvocationDebugView(invocation: invocation)
-                }
-            }
-        }
-    }
-}
-
-private struct CPSLToolStatusInvocationDebugView: View {
-    let invocation: CPSLToolStatusInvocation
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.small) {
-            HStack(spacing: CPSLTheme.small) {
-                Image(systemName: invocation.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
-                    .foregroundStyle(invocation.isError ? CPSLTheme.danger : CPSLTheme.success)
-                Text(invocation.isError ? "Failed step" : "Completed step")
-                    .font(CPSLTheme.captionMediumFont)
-                    .foregroundStyle(CPSLTheme.text)
-            }
-
-            CPSLToolDebugBlock(title: "Input", text: invocation.input)
-            CPSLToolDebugBlock(title: "Output", text: invocation.output)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct CPSLToolDebugBlock: View {
-    let title: String
-    let text: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: CPSLTheme.small / 2) {
-            Text(title)
-                .font(CPSLTheme.captionMediumFont)
-                .foregroundStyle(CPSLTheme.secondaryText)
-
-            CPSLSelectableText(
-                text.isEmpty ? "(empty)" : text,
-                style: .monospacedBody,
-                foreground: CPSLTheme.text,
-                fillsAvailableWidth: true,
-                lineSpacing: 0
-            )
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(CPSLTheme.small)
-        .background(CPSLTheme.command)
-        .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
-    }
-}
-#endif
 
 private struct CPSLMarkdownMessageBody: View {
     let text: String
@@ -1412,6 +1468,16 @@ private enum CPSLDiscussionPathLinks {
         }
 
         let text = run.text
+        if run.isCode,
+           let match = exactCodePath(in: text),
+           let url = fileURL(for: match.path) {
+            return [
+                run
+                    .applying(link: true, linkURL: url)
+                    .withText(displayPath(for: match.path) + match.lineSuffix)
+            ]
+        }
+
         var output: [CPSLSelectableTextRun] = []
         var cursor = text.startIndex
 
@@ -1436,6 +1502,15 @@ private enum CPSLDiscussionPathLinks {
             output.append(run.applying().withText(String(text[cursor..<text.endIndex])))
         }
         return output.isEmpty ? [run] : output
+    }
+
+    private static func exactCodePath(in text: String) -> (path: String, lineSuffix: String)? {
+        let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else {
+            return nil
+        }
+        let normalized = normalizedPathAndLineSuffix(candidate)
+        return isAllowedPath(normalized.path) ? normalized : nil
     }
 
     private static func nextMatch(

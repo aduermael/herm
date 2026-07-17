@@ -5,8 +5,8 @@ import Testing
 struct CPSLTagStoreTests {
     private func makeStore() throws -> CPSLConversationStore {
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("herm-test-\(UUID().uuidString).sqlite")
-        return try CPSLConversationStore(databaseURL: url, usesICloudContainer: false)
+            .appendingPathComponent("herm-test-\(UUID().uuidString).jsonl")
+        return try CPSLConversationStore(logURL: url, usesICloudContainer: false)
     }
 
     @Test func createAndListTags() async throws {

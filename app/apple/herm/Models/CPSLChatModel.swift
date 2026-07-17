@@ -86,6 +86,7 @@ final class CPSLChatModel {
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
     var activeToolStatusNodeID: String?
+    @ObservationIgnored var activeToolStatusConversationID: String?
     @ObservationIgnored var activeToolStatusPayload: CPSLToolStatusPayload?
     @ObservationIgnored var activeToolStatusStore: CPSLConversationStore?
     @ObservationIgnored var activeToolStatusRevision = 0
@@ -600,7 +601,6 @@ final class CPSLChatModel {
         closeWebBrowser()
         isCalendarOpen = false
         isLocationOpen = false
-        isFileBrowserOpen = true
         filePreview = nil
         let navigationID = UUID()
         activeFileNavigationRequestID = navigationID
@@ -608,23 +608,37 @@ final class CPSLChatModel {
         Task { [weak self, service] in
             let lookup = await service.fileEntry(at: normalized)
             guard let self,
-                  self.activeFileNavigationRequestID == navigationID,
-                  self.isFileBrowserOpen
+                  self.activeFileNavigationRequestID == navigationID
             else {
                 return
             }
-            self.activeFileNavigationRequestID = nil
             guard let entry = lookup.entry else {
+                self.activeFileNavigationRequestID = nil
                 self.loadBrowserPath(self.parentPath(of: normalized))
                 self.fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
+                self.isFileBrowserOpen = true
                 return
             }
 
             if entry.isDirectory {
+                self.activeFileNavigationRequestID = nil
                 self.loadBrowserPath(entry.path)
+                self.isFileBrowserOpen = true
             } else {
+                let previewResult = await service.previewFile(entry)
+                guard self.activeFileNavigationRequestID == navigationID else {
+                    return
+                }
+                self.activeFileNavigationRequestID = nil
                 self.loadBrowserPath(self.parentPath(of: entry.path))
-                self.requestFilePreview(for: entry)
+                if let preview = previewResult.preview {
+                    self.filePreviewLifetimeToken = previewResult.lifetimeToken
+                    self.filePreview = preview
+                } else {
+                    let message = previewResult.error ?? "Preview is not available for this file."
+                    self.fileBrowserError = "\(entry.path): \(message)"
+                }
+                self.isFileBrowserOpen = true
             }
         }
     }
@@ -1185,8 +1199,16 @@ final class CPSLChatModel {
             currentNodeID = conversation.summary.currentNodeID
             currentSystemPrompt = conversation.systemPrompt.isEmpty ? systemPrompt : conversation.systemPrompt
             let nodes = conversation.nodes
+            let toolStatusNodeIDs = Self.toolStatusNodeIDsNeedingInvocations(in: nodes)
+            let toolStatusInvocations = try? await store.toolStatusInvocations(
+                conversationID: conversation.summary.id,
+                nodeIDs: toolStatusNodeIDs
+            )
             messages = await Task.detached(priority: .userInitiated) {
-                nodes.compactMap(\.chatMessage)
+                Self.chatMessages(
+                    from: nodes,
+                    toolStatusInvocations: toolStatusInvocations ?? [:]
+                )
             }.value
             await reloadConversations()
             isDrawerOpen = false
@@ -1196,6 +1218,42 @@ final class CPSLChatModel {
             filePreview = nil
         } catch {
             appendErrorMessage(title: "Conversation", body: error.localizedDescription)
+        }
+    }
+
+    private nonisolated static func toolStatusNodeIDsNeedingInvocations(
+        in nodes: [CPSLStoredNode]
+    ) -> Set<String> {
+        Set(nodes.compactMap { node in
+            guard node.role == .toolStatus,
+                  let payload = CPSLToolStatusPayload.decode(from: node.body),
+                  payload.invocations.isEmpty
+            else {
+                return nil
+            }
+            return node.id
+        })
+    }
+
+    private nonisolated static func chatMessages(
+        from nodes: [CPSLStoredNode],
+        toolStatusInvocations: [String: [CPSLToolStatusInvocation]]
+    ) -> [CPSLChatMessage] {
+        nodes.compactMap { node in
+            guard var message = node.chatMessage else {
+                return nil
+            }
+            guard node.role == .toolStatus,
+                  var payload = CPSLToolStatusPayload.decode(from: message.body),
+                  payload.invocations.isEmpty,
+                  let invocations = toolStatusInvocations[node.id],
+                  !invocations.isEmpty
+            else {
+                return message
+            }
+            payload.invocations = invocations
+            message.body = payload.encodedBody()
+            return message
         }
     }
 
@@ -1235,6 +1293,7 @@ final class CPSLChatModel {
         }
 
         let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(CPSLDebugConversationSnapshot(messages: messages))
         return String(decoding: data, as: UTF8.self)
@@ -1367,6 +1426,13 @@ final class CPSLChatModel {
             currentNodeID = parentID
             await reloadConversations()
         } catch {
+            if let activeConversationID {
+                try? await store.recordError(
+                    conversationID: activeConversationID,
+                    message: error.localizedDescription,
+                    scope: "agent.run"
+                )
+            }
             let pendingContext = CPSLPendingConversationContext(
                 store: store,
                 conversationID: activeConversationID,
@@ -1556,20 +1622,29 @@ final class CPSLChatModel {
 
     func appendWebSearchVisit(_ visit: CPSLWebSearchVisit) {
         guard let nodeID = activeToolStatusNodeID,
+              let conversationID = activeToolStatusConversationID,
               let store = activeToolStatusStore,
               var payload = activeToolStatusPayload
         else {
             return
         }
         payload.webVisits.append(visit)
+        payload.webVisits = Array(payload.webVisits.suffix(12))
         activeToolStatusPayload = payload
         activeToolStatusRevision += 1
         let revision = activeToolStatusRevision
-        let payloadForEncoding = payload
+        let body = payload.encodedBody()
         Task { [weak self] in
-            let encodedBodies = await Task.detached(priority: .utility) {
-                payloadForEncoding.encodedBodies()
-            }.value
+            try? await store.recordWebVisit(
+                conversationID: conversationID,
+                nodeID: nodeID,
+                visit: visit
+            )
+            try? await store.updateNodeBody(
+                conversationID: conversationID,
+                id: nodeID,
+                body: body
+            )
             guard let self,
                   self.activeToolStatusNodeID == nodeID,
                   self.activeToolStatusRevision == revision
@@ -1578,9 +1653,8 @@ final class CPSLChatModel {
             }
             if let messageID = UUID(uuidString: nodeID),
                let index = self.messages.firstIndex(where: { $0.id == messageID }) {
-                self.messages[index].body = encodedBodies.presentation
+                self.messages[index].body = body
             }
-            try? await store.updateNodeBody(id: nodeID, body: encodedBodies.persisted)
         }
     }
 
@@ -1660,6 +1734,44 @@ final class CPSLChatModel {
 
 #if DEBUG
 private nonisolated struct CPSLDebugConversationSnapshot: Encodable {
+    let format = "herm.debug-export"
+    let schemaVersion = 1
+    let generatedAt = Date()
+    let documentation = [
+        "overview": "Unsaved draft snapshot. Persisted exports also contain chronological conversationEvents and traceEvents.",
+        "jq": ".conversation.messages[] | {role, title, body}",
+    ]
+    let messages: [CPSLChatMessage]
+    let conversationEvents: [String] = []
+    let traceEvents: [String] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case format
+        case schemaVersion
+        case generatedAt
+        case documentation
+        case conversation
+        case conversationEvents
+        case traceEvents
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(format, forKey: .format)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(generatedAt, forKey: .generatedAt)
+        try container.encode(documentation, forKey: .documentation)
+        try container.encode(
+            CPSLDebugDraftConversation(state: "draft", messages: messages),
+            forKey: .conversation
+        )
+        try container.encode(conversationEvents, forKey: .conversationEvents)
+        try container.encode(traceEvents, forKey: .traceEvents)
+    }
+}
+
+private nonisolated struct CPSLDebugDraftConversation: Encodable {
+    let state: String
     let messages: [CPSLChatMessage]
 }
 #endif

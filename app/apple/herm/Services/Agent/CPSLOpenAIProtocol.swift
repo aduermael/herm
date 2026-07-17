@@ -129,7 +129,7 @@ nonisolated struct CPSLOpenAIChatRequest: Encodable, Sendable {
     }
 }
 
-nonisolated struct CPSLOpenAITool: Encodable, Sendable {
+nonisolated struct CPSLOpenAITool: Codable, Sendable {
     let type: String
     let function: CPSLOpenAIToolFunction
 
@@ -202,13 +202,13 @@ nonisolated struct CPSLOpenAITool: Encodable, Sendable {
     }
 }
 
-nonisolated struct CPSLOpenAIToolFunction: Encodable, Sendable {
+nonisolated struct CPSLOpenAIToolFunction: Codable, Sendable {
     let name: String
     let description: String
     let parameters: CPSLOpenAIToolParameters
 }
 
-nonisolated struct CPSLOpenAIToolParameters: Encodable, Sendable {
+nonisolated struct CPSLOpenAIToolParameters: Codable, Sendable {
     let type: String
     let properties: [String: CPSLOpenAIToolParameter]
     let required: [String]
@@ -222,7 +222,7 @@ nonisolated struct CPSLOpenAIToolParameters: Encodable, Sendable {
     }
 }
 
-nonisolated struct CPSLOpenAIToolParameter: Encodable, Sendable {
+nonisolated struct CPSLOpenAIToolParameter: Codable, Sendable {
     let type: String
     let description: String
 }

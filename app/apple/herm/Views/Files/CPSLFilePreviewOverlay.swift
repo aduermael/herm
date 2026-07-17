@@ -89,6 +89,7 @@ private struct CPSLPDFFilePreview: View {
     var body: some View {
         #if (os(macOS) || canImport(UIKit)) && canImport(PDFKit)
             CPSLPDFKitView(url: url)
+                .equatable()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         #else
             CPSLPDFPreviewUnavailable(message: "PDF preview is not available on this platform.")
@@ -165,7 +166,7 @@ private enum CPSLPDFKitConfiguration {
 }
 
 #if os(macOS)
-private struct CPSLPDFKitView: NSViewRepresentable {
+private struct CPSLPDFKitView: NSViewRepresentable, Equatable {
     let url: URL
 
     func makeCoordinator() -> CPSLPDFKitCoordinator {
@@ -188,7 +189,7 @@ private struct CPSLPDFKitView: NSViewRepresentable {
     }
 }
 #elseif canImport(UIKit)
-private struct CPSLPDFKitView: UIViewRepresentable {
+private struct CPSLPDFKitView: UIViewRepresentable, Equatable {
     let url: URL
 
     func makeCoordinator() -> CPSLPDFKitCoordinator {

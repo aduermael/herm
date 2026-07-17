@@ -27,21 +27,35 @@ extension CPSLChatModel {
                 )
             )
             try Task.checkCancellation()
-            isSuppressingAssistantStream = false
-            let completion = try await context.client.streamChat(
-                CPSLOpenAIStreamRequest(
-                    messages: requestMessages,
-                    tools: CPSLOpenAITool.availableTools(
-                        allowsSubagents: context.config.maxAgentDepth > 0,
-                        currentDirectory: sandboxDirectory
-                    ),
-                    maxTokens: context.config.maxOutputTokens
-                )
-            ) { event in
+            let tools = CPSLOpenAITool.availableTools(
+                allowsSubagents: context.config.maxAgentDepth > 0,
+                currentDirectory: sandboxDirectory
+            )
+            isSuppressingAssistantStream = !tools.isEmpty
+            let request = CPSLOpenAIStreamRequest(
+                messages: requestMessages,
+                tools: tools,
+                maxTokens: context.config.maxOutputTokens
+            )
+            try await context.store.recordProviderRequest(
+                conversationID: context.conversationID,
+                model: context.config.model,
+                messages: request.messages,
+                tools: tools,
+                maxTokens: request.maxTokens,
+                scope: "main.turn.\(iteration + 1)"
+            )
+            let completion = try await context.client.streamChat(request) { event in
                 self.handleProviderStreamEvent(event)
             }
+            try await context.store.recordProviderResponse(
+                conversationID: context.conversationID,
+                completion: completion,
+                scope: "main.turn.\(iteration + 1)"
+            )
             try Task.checkCancellation()
 
+            presentCompletedAssistantIfNeeded(completion)
             await finishTypewriter()
             if !completion.toolCalls.isEmpty {
                 discardStreamingAssistantIfNeeded()
@@ -113,6 +127,7 @@ extension CPSLChatModel {
                 )
                 toolStatusNodeID = statusNode.id
                 activeToolStatusNodeID = statusNode.id
+                activeToolStatusConversationID = context.conversationID
                 activeToolStatusPayload = toolStatus
                 activeToolStatusStore = context.store
                 context.parentID = statusNode.id
@@ -142,11 +157,22 @@ extension CPSLChatModel {
                         client: context.client,
                         config: context.config,
                         agentDepth: 0,
-                        requestDirectory: sandboxDirectory
+                        requestDirectory: sandboxDirectory,
+                        traceStore: context.store,
+                        conversationID: context.conversationID
                     )
                 )
                 try Task.checkCancellation()
                 executedToolCalls.append((toolCall, toolResult))
+                try await context.store.recordToolInvocation(
+                    conversationID: context.conversationID,
+                    nodeID: toolStatusNodeID,
+                    invocation: toolResult.traceInvocation
+                )
+                toolStatus.invocations.append(
+                    CPSLToolStatusInvocation(traceInvocation: toolResult.traceInvocation)
+                )
+                toolStatus.invocations = Array(toolStatus.invocations.suffix(4))
                 if toolResult.isError {
                     hasUnresolvedToolFailure = true
                     toolStatus.state = .running
@@ -154,13 +180,10 @@ extension CPSLChatModel {
                     hasUnresolvedToolFailure = false
                     toolStatus.state = .succeeded
                 }
-#if DEBUG
-                toolStatus.invocations.append(toolResult.debugInvocation)
                 toolStatus.summary = statusSummary
                 if let toolStatusNodeID {
                     try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
                 }
-#endif
             }
 
             try await appendToolReplayBlock(
@@ -266,15 +289,28 @@ extension CPSLChatModel {
             )
         )
         isSuppressingAssistantStream = false
-        let completion = try await context.client.streamChat(
-            CPSLOpenAIStreamRequest(
-                messages: requestMessages,
-                tools: [],
-                maxTokens: context.config.maxOutputTokens
-            )
-        ) { event in
+        let request = CPSLOpenAIStreamRequest(
+            messages: requestMessages,
+            tools: [],
+            maxTokens: context.config.maxOutputTokens
+        )
+        try await context.store.recordProviderRequest(
+            conversationID: context.conversationID,
+            model: context.config.model,
+            messages: request.messages,
+            tools: [],
+            maxTokens: request.maxTokens,
+            scope: "main.synthesis"
+        )
+        let completion = try await context.client.streamChat(request) { event in
             self.handleProviderStreamEvent(event)
         }
+        try await context.store.recordProviderResponse(
+            conversationID: context.conversationID,
+            completion: completion,
+            scope: "main.synthesis"
+        )
+        presentCompletedAssistantIfNeeded(completion)
         await finishTypewriter()
 
         guard !completion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -322,22 +358,26 @@ extension CPSLChatModel {
         activeToolStatusStore = store
         activeToolStatusRevision += 1
         let revision = activeToolStatusRevision
-        let payloadForEncoding = effectivePayload
-        let encodedBodies = await Task.detached(priority: .utility) {
-            payloadForEncoding.encodedBodies()
-        }.value
+        let body = effectivePayload.encodedBody()
+        guard let conversationID = activeToolStatusConversationID else {
+            return
+        }
+        try await store.updateNodeBody(
+            conversationID: conversationID,
+            id: nodeID,
+            body: body
+        )
         guard activeToolStatusNodeID == nodeID,
               activeToolStatusRevision == revision
         else {
             return
         }
-        try await store.updateNodeBody(id: nodeID, body: encodedBodies.persisted)
         guard let messageID = UUID(uuidString: nodeID),
                 let index = messages.firstIndex(where: { $0.id == messageID })
         else {
             return
         }
-        messages[index].body = encodedBodies.presentation
+        messages[index].body = body
     }
 
     private func appendUniqueThoughtIfNeeded(
@@ -373,6 +413,7 @@ extension CPSLChatModel {
     private func clearActiveToolStatus() {
         activeToolStatusRevision += 1
         activeToolStatusNodeID = nil
+        activeToolStatusConversationID = nil
         activeToolStatusPayload = nil
         activeToolStatusStore = nil
     }
@@ -513,6 +554,17 @@ extension CPSLChatModel {
         }
     }
 
+    private func presentCompletedAssistantIfNeeded(_ completion: CPSLOpenAICompletion) {
+        guard completion.toolCalls.isEmpty,
+              streamingAssistantMessageID == nil,
+              !completion.text.isEmpty
+        else {
+            return
+        }
+        isSuppressingAssistantStream = false
+        queueAssistantDelta(completion.text)
+    }
+
     private func handleProviderStreamEvent(_ event: CPSLOpenAIStreamEvent) {
         switch event {
         case .textDelta(let delta):
@@ -614,7 +666,7 @@ extension CPSLChatModel {
                 providerContent: #"{"ok":false,"error":"Unsupported tool."}"#,
                 displayBody: "Unsupported tool: \(toolCall.function.name)",
                 isError: true,
-                debugInvocation: debugInvocation(
+                traceInvocation: traceInvocation(
                     for: toolCall,
                     displayBody: "Unsupported tool: \(toolCall.function.name)",
                     isError: true
@@ -635,7 +687,7 @@ extension CPSLChatModel {
             providerContent: providerToolContent(ok: false, output: nil, error: displayBody),
             displayBody: displayBody,
             isError: true,
-            debugInvocation: debugInvocation(for: toolCall, displayBody: displayBody, isError: true)
+            traceInvocation: traceInvocation(for: toolCall, displayBody: displayBody, isError: true)
         )
     }
 
@@ -645,7 +697,7 @@ extension CPSLChatModel {
                 providerContent: #"{"ok":false,"error":"Missing source argument."}"#,
                 displayBody: "Missing source argument.",
                 isError: true,
-                debugInvocation: debugInvocation(
+                traceInvocation: traceInvocation(
                     for: toolCall,
                     displayBody: "Missing source argument.",
                     isError: true
@@ -669,7 +721,11 @@ extension CPSLChatModel {
             providerContent: CPSLAgentToolFormatting.providerContent(output),
             displayBody: displayBody,
             isError: isError,
-            debugInvocation: debugInvocation(for: toolCall, displayBody: displayBody, isError: isError)
+            traceInvocation: traceInvocation(
+                for: toolCall,
+                displayBody: CPSLAgentToolFormatting.completeBody(output),
+                isError: isError
+            )
         )
     }
 
@@ -683,7 +739,7 @@ extension CPSLChatModel {
                 providerContent: providerToolContent(ok: false, output: nil, error: message),
                 displayBody: message,
                 isError: true,
-                debugInvocation: debugInvocation(for: toolCall, displayBody: message, isError: true)
+                traceInvocation: traceInvocation(for: toolCall, displayBody: message, isError: true)
             )
         }
 
@@ -694,7 +750,7 @@ extension CPSLChatModel {
                 providerContent: providerToolContent(ok: false, output: nil, error: message),
                 displayBody: message,
                 isError: true,
-                debugInvocation: debugInvocation(for: toolCall, displayBody: message, isError: true)
+                traceInvocation: traceInvocation(for: toolCall, displayBody: message, isError: true)
             )
         }
 
@@ -704,7 +760,9 @@ extension CPSLChatModel {
                 client: context.client,
                 config: context.config,
                 agentDepth: childDepth,
-                requestDirectory: nil
+                requestDirectory: nil,
+                traceStore: context.traceStore,
+                conversationID: context.conversationID
             )
         )
         return CPSLToolExecutionResult(
@@ -715,7 +773,7 @@ extension CPSLChatModel {
             ),
             displayBody: result.output,
             isError: result.isError,
-            debugInvocation: debugInvocation(for: toolCall, displayBody: result.output, isError: result.isError)
+            traceInvocation: traceInvocation(for: toolCall, displayBody: result.output, isError: result.isError)
         )
     }
 
@@ -757,16 +815,36 @@ extension CPSLChatModel {
                             + "</system-reminder>"
                     )
                 ] + providerMessages
-                let completion = try await context.client.streamChat(
-                    CPSLOpenAIStreamRequest(
-                        messages: requestMessages,
-                        tools: isFinalTurn ? [] : CPSLOpenAITool.availableTools(
-                            allowsSubagents: context.agentDepth < context.config.maxAgentDepth,
-                            currentDirectory: sandboxDirectory
-                        ),
-                        maxTokens: context.config.maxOutputTokens
+                let tools = isFinalTurn ? [] : CPSLOpenAITool.availableTools(
+                    allowsSubagents: context.agentDepth < context.config.maxAgentDepth,
+                    currentDirectory: sandboxDirectory
+                )
+                let request = CPSLOpenAIStreamRequest(
+                    messages: requestMessages,
+                    tools: tools,
+                    maxTokens: context.config.maxOutputTokens
+                )
+                let scope = "subagent.\(input.mode.rawValue).turn.\(turn + 1)"
+                if let traceStore = context.traceStore,
+                   let conversationID = context.conversationID {
+                    try await traceStore.recordProviderRequest(
+                        conversationID: conversationID,
+                        model: context.config.model,
+                        messages: request.messages,
+                        tools: tools,
+                        maxTokens: request.maxTokens,
+                        scope: scope
                     )
-                ) { _ in }
+                }
+                let completion = try await context.client.streamChat(request) { _ in }
+                if let traceStore = context.traceStore,
+                   let conversationID = context.conversationID {
+                    try await traceStore.recordProviderResponse(
+                        conversationID: conversationID,
+                        completion: completion,
+                        scope: scope
+                    )
+                }
 
                 if !completion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     textParts.append(completion.text)
@@ -813,9 +891,19 @@ extension CPSLChatModel {
                             client: context.client,
                             config: context.config,
                             agentDepth: context.agentDepth,
-                            requestDirectory: sandboxDirectory
+                            requestDirectory: sandboxDirectory,
+                            traceStore: context.traceStore,
+                            conversationID: context.conversationID
                         )
                     )
+                    if let traceStore = context.traceStore,
+                       let conversationID = context.conversationID {
+                        try await traceStore.recordToolInvocation(
+                            conversationID: conversationID,
+                            nodeID: nil,
+                            invocation: toolResult.traceInvocation
+                        )
+                    }
                     providerMessages.append(
                         CPSLOpenAIMessage.tool(id: toolCall.id, content: toolResult.providerContent)
                     )
@@ -834,6 +922,14 @@ extension CPSLChatModel {
                 false
             )
         } catch {
+            if let traceStore = context.traceStore,
+               let conversationID = context.conversationID {
+                try? await traceStore.recordError(
+                    conversationID: conversationID,
+                    message: error.localizedDescription,
+                    scope: "subagent.\(input.mode.rawValue)"
+                )
+            }
             let output = subAgentOutput(
                 CPSLSubAgentOutputDraft(
                     mode: input.mode,
@@ -873,12 +969,12 @@ extension CPSLChatModel {
         return "[agent mode:\(draft.mode.rawValue) turns:\(draft.turnsUsed)/\(draft.maxTurns)]\n\n\(output)"
     }
 
-    private func debugInvocation(
+    private func traceInvocation(
         for toolCall: CPSLOpenAIToolCall,
         displayBody: String,
         isError: Bool
-    ) -> CPSLToolStatusInvocation {
-        CPSLToolStatusInvocation(
+    ) -> CPSLToolTraceInvocation {
+        CPSLToolTraceInvocation(
             id: toolCall.id,
             name: toolCall.function.name,
             summary: CPSLAgentToolFormatting.summary(for: toolCall),
