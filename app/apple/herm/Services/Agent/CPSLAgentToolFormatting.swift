@@ -358,6 +358,7 @@ nonisolated enum CPSLToolStatusState: String, Codable, Equatable, Sendable {
     case running
     case succeeded
     case failed
+    case interrupted
 }
 
 nonisolated struct CPSLToolTraceInvocation: Identifiable, Codable, Equatable, Sendable {
@@ -392,17 +393,23 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
     var summary: String
     var invocations: [CPSLToolStatusInvocation]
     var webVisits: [CPSLWebSearchVisit]
+    var isSuperseded: Bool
+    var activityID: UUID?
 
     init(
         state: CPSLToolStatusState,
         summary: String,
         invocations: [CPSLToolStatusInvocation] = [],
-        webVisits: [CPSLWebSearchVisit] = []
+        webVisits: [CPSLWebSearchVisit] = [],
+        isSuperseded: Bool = false,
+        activityID: UUID? = nil
     ) {
         self.state = state
         self.summary = summary
         self.invocations = invocations
         self.webVisits = webVisits
+        self.isSuperseded = isSuperseded
+        self.activityID = activityID
     }
 
     static func running(summary: String = "Preparing tools") -> CPSLToolStatusPayload {
@@ -428,6 +435,8 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
         case summary
         case invocations
         case webVisits
+        case isSuperseded
+        case activityID
     }
 
     init(from decoder: Decoder) throws {
@@ -439,6 +448,8 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
             forKey: .invocations
         ) ?? []
         webVisits = try container.decodeIfPresent([CPSLWebSearchVisit].self, forKey: .webVisits) ?? []
+        isSuperseded = try container.decodeIfPresent(Bool.self, forKey: .isSuperseded) ?? false
+        activityID = try container.decodeIfPresent(UUID.self, forKey: .activityID)
     }
 }
 

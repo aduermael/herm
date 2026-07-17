@@ -3,15 +3,8 @@ import Foundation
 @MainActor
 extension CPSLChatModel {
     func runProviderLoop(_ context: inout CPSLProviderLoopContext) async throws {
-        var toolStatusNodeID: String?
-        var toolStatus = CPSLToolStatusPayload.running()
-        var hasUnresolvedToolFailure = false
+        var pendingFailures: [CPSLToolStatusInvocation] = []
         clearActiveToolStatus()
-        defer {
-            if !Task.isCancelled {
-                clearActiveToolStatus()
-            }
-        }
 
         for iteration in 0..<context.config.maxToolRounds {
             try Task.checkCancellation()
@@ -90,66 +83,47 @@ extension CPSLChatModel {
             }
 
             guard !completion.toolCalls.isEmpty else {
-                if hasUnresolvedToolFailure, let toolStatusNodeID {
-                    toolStatus.state = .failed
-                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+                if !pendingFailures.isEmpty {
+                    try await finishActiveToolStatus(as: .failed)
                 }
                 if completion.text.isEmpty {
                     try await appendProviderLoopError("Provider returned an empty response.", context: &context)
                 }
+                clearActiveToolStatus()
                 return
             }
 
-            var statusSummary = completion.toolCalls.first.map {
-                CPSLAgentToolFormatting.statusSummary(for: $0, assistantText: completion.text)
-            } ?? CPSLAgentToolFormatting.defaultStatusSummary
+            var statusSummary = CPSLAgentToolFormatting.defaultStatusSummary
             let assistantToolMessage = CPSLOpenAIMessage.assistant(
                 content: completion.text.isEmpty ? nil : completion.text,
                 toolCalls: completion.toolCalls
             )
-
-            if let toolStatusNodeID {
-                toolStatus.state = .running
-                toolStatus.summary = statusSummary
-                try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
-            } else {
-                toolStatus = CPSLToolStatusPayload.running(summary: statusSummary)
-                let statusNode = try await context.store.appendNode(
-                    conversationID: context.conversationID,
-                    parentID: context.parentID,
-                    draft: CPSLNodeAppendDraft(
-                        role: .toolStatus,
-                        title: nil,
-                        body: toolStatus.encodedBody(),
-                        model: completion.model,
-                        providerMessage: nil
-                    )
-                )
-                toolStatusNodeID = statusNode.id
-                activeToolStatusNodeID = statusNode.id
-                activeToolStatusConversationID = context.conversationID
-                activeToolStatusPayload = toolStatus
-                activeToolStatusStore = context.store
-                context.parentID = statusNode.id
-                context.onParentIDChange(context.parentID)
-                if let message = statusNode.chatMessage {
-                    messages.append(message)
-                }
-            }
-
             var executedToolCalls: [(toolCall: CPSLOpenAIToolCall, result: CPSLToolExecutionResult)] = []
 
             for toolCall in completion.toolCalls {
                 try Task.checkCancellation()
+                let retryPresentation: (webVisits: [CPSLWebSearchVisit], activityID: UUID)
+                if pendingFailures.isEmpty {
+                    retryPresentation = ([], UUID())
+                } else {
+                    retryPresentation = try await supersedeActiveToolStatus()
+                }
                 statusSummary = CPSLAgentToolFormatting.statusSummary(
                     for: toolCall,
                     assistantText: completion.text
                 )
-                toolStatus.state = .running
-                toolStatus.summary = statusSummary
-                if let toolStatusNodeID {
-                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
-                }
+                var toolStatus = CPSLToolStatusPayload(
+                    state: .running,
+                    summary: statusSummary,
+                    invocations: pendingFailures,
+                    webVisits: retryPresentation.webVisits,
+                    activityID: retryPresentation.activityID
+                )
+                let toolStatusNodeID = try await appendToolStatus(
+                    toolStatus,
+                    model: completion.model,
+                    context: &context
+                )
 
                 let toolResult = await executeToolCall(
                     toolCall,
@@ -164,26 +138,27 @@ extension CPSLChatModel {
                 )
                 try Task.checkCancellation()
                 executedToolCalls.append((toolCall, toolResult))
+                toolStatus.invocations.append(
+                    CPSLToolStatusInvocation(traceInvocation: toolResult.traceInvocation)
+                )
+                toolStatus.invocations = Array(toolStatus.invocations.suffix(recentToolResultsToKeep))
+                if toolResult.isError {
+                    pendingFailures = toolStatus.invocations
+                    toolStatus.state = .running
+                } else {
+                    pendingFailures.removeAll(keepingCapacity: true)
+                    toolStatus.state = .succeeded
+                }
+                toolStatus.summary = statusSummary
+                try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+                if !toolResult.isError {
+                    clearActiveToolStatus()
+                }
                 try await context.store.recordToolInvocation(
                     conversationID: context.conversationID,
                     nodeID: toolStatusNodeID,
                     invocation: toolResult.traceInvocation
                 )
-                toolStatus.invocations.append(
-                    CPSLToolStatusInvocation(traceInvocation: toolResult.traceInvocation)
-                )
-                toolStatus.invocations = Array(toolStatus.invocations.suffix(4))
-                if toolResult.isError {
-                    hasUnresolvedToolFailure = true
-                    toolStatus.state = .running
-                } else {
-                    hasUnresolvedToolFailure = false
-                    toolStatus.state = .succeeded
-                }
-                toolStatus.summary = statusSummary
-                if let toolStatusNodeID {
-                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
-                }
             }
 
             try await appendToolReplayBlock(
@@ -195,19 +170,62 @@ extension CPSLChatModel {
                 ),
                 context: &context
             )
-            toolStatus.summary = statusSummary
-            toolStatus.state = hasUnresolvedToolFailure ? .running : .succeeded
-            if let toolStatusNodeID {
-                try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
-            }
         }
 
         try Task.checkCancellation()
-        if hasUnresolvedToolFailure, let toolStatusNodeID {
-            toolStatus.state = .failed
-            try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+        if !pendingFailures.isEmpty {
+            try await finishActiveToolStatus(as: .failed)
         }
         try await synthesizeAfterToolLimit(&context)
+        clearActiveToolStatus()
+    }
+
+    private func appendToolStatus(
+        _ payload: CPSLToolStatusPayload,
+        model: String,
+        context: inout CPSLProviderLoopContext
+    ) async throws -> String {
+        let statusNode = try await context.store.appendNode(
+            conversationID: context.conversationID,
+            parentID: context.parentID,
+            draft: CPSLNodeAppendDraft(
+                role: .toolStatus,
+                title: nil,
+                body: payload.encodedBody(),
+                model: model,
+                providerMessage: nil
+            )
+        )
+        activeToolStatusNodeID = statusNode.id
+        activeToolStatusConversationID = context.conversationID
+        activeToolStatusPayload = payload
+        activeToolStatusStore = context.store
+        context.parentID = statusNode.id
+        context.onParentIDChange(statusNode.id)
+        if let message = statusNode.chatMessage {
+            messages.append(message)
+        }
+        return statusNode.id
+    }
+
+    private func supersedeActiveToolStatus() async throws -> (
+        webVisits: [CPSLWebSearchVisit],
+        activityID: UUID
+    ) {
+        guard let nodeID = activeToolStatusNodeID,
+              var payload = activeToolStatusPayload,
+              let store = activeToolStatusStore
+        else {
+            clearActiveToolStatus()
+            return ([], UUID())
+        }
+        payload.isSuperseded = true
+        try await updateToolStatus(payload, nodeID: nodeID, store: store)
+        let presentation = (
+            webVisits: payload.webVisits,
+            activityID: payload.activityID ?? UUID(uuidString: nodeID) ?? UUID()
+        )
+        return presentation
     }
 
     private func appendToolReplayBlock(
@@ -418,7 +436,10 @@ extension CPSLChatModel {
         activeToolStatusStore = nil
     }
 
-    func markActiveToolStatusStopped() async {
+    private func finishActiveToolStatus(
+        as state: CPSLToolStatusState,
+        summary: String? = nil
+    ) async throws {
         guard let nodeID = activeToolStatusNodeID,
               var payload = activeToolStatusPayload,
               let store = activeToolStatusStore
@@ -426,10 +447,36 @@ extension CPSLChatModel {
             clearActiveToolStatus()
             return
         }
-        payload.state = .failed
-        payload.summary = String(localized: "Stopped")
-        try? await updateToolStatus(payload, nodeID: nodeID, store: store)
+        payload.state = state
+        payload.isSuperseded = false
+        if let summary {
+            payload.summary = summary
+        }
+        try await updateToolStatus(payload, nodeID: nodeID, store: store)
         clearActiveToolStatus()
+    }
+
+    func markActiveToolStatusStopped() async {
+        do {
+            try await finishActiveToolStatus(
+                as: .interrupted,
+                summary: String(localized: "Stopped")
+            )
+        } catch {
+            clearActiveToolStatus()
+        }
+    }
+
+    func markActiveToolStatusFailed() async {
+        guard activeToolStatusPayload?.invocations.last?.isError == true else {
+            clearActiveToolStatus()
+            return
+        }
+        do {
+            try await finishActiveToolStatus(as: .failed)
+        } catch {
+            clearActiveToolStatus()
+        }
     }
 
     private func preparedRequestMessages(_ preparation: CPSLRequestPreparation) async -> [CPSLOpenAIMessage] {

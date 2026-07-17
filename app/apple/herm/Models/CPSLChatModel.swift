@@ -1444,6 +1444,7 @@ final class CPSLChatModel {
                 await markActiveToolStatusStopped()
                 currentNodeID = activeParentID
             } else {
+                await markActiveToolStatusFailed()
                 await appendAgentError(
                     error.localizedDescription,
                     context: CPSLPendingConversationContext(

@@ -347,9 +347,10 @@ require_match 'Provider returned an empty response' app/apple/herm/Models/CPSLCh
 require_match 'Reached maximum tool rounds' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'synthesizeAfterToolLimit' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'role: \.toolStatus' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-require_match 'hasUnresolvedToolFailure' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-require_match 'toolStatus\.state = hasUnresolvedToolFailure \? \.running : \.succeeded' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-reject_match 'toolStatusHasFailure' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'pendingFailures' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'supersedeActiveToolStatus' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'finishActiveToolStatus\(as: \.failed\)' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'as: \.interrupted' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'role: \.hidden' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'runSubAgent' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'makeConversationJSONTraceShareFile' app/apple/herm/Models/CPSLChatModel.swift
@@ -371,6 +372,12 @@ require_match 'CPSLAgentWorkingIndicatorView' app/apple/herm/Views/Chat/CPSLChat
 require_match 'CPSLAgentWorkingIndicatorView\(\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'Text\(payload\.summary\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'TimelineView\(\.animation\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'CPSLActivityDisplayItem\.items' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'expandedEntryIDs: expansion\.expandedEntryIDs' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match '#if DEBUG' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match '\.allowsHitTesting\(canExpand\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'CPSLHeightLimitedExpandedBlock' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+reject_match '\.disabled\(!canExpand\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'cycleDuration: TimeInterval = 0\.84' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'dotBounceOffset' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 reject_match 'return trimmed\.isEmpty \? "Thinking" : trimmed' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift

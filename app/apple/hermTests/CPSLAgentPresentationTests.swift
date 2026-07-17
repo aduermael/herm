@@ -103,5 +103,118 @@ struct CPSLAgentPresentationTests {
 
         let decoded = CPSLToolStatusPayload.decode(from: legacyBody)
         #expect(decoded?.invocations.isEmpty == true)
+        #expect(decoded?.isSuperseded == false)
+    }
+
+    @Test func interruptedStatusRoundTrips() {
+        let activityID = UUID()
+        let payload = CPSLToolStatusPayload(
+            state: .interrupted,
+            summary: "Stopped",
+            activityID: activityID
+        )
+
+        #expect(CPSLToolStatusPayload.decode(from: payload.encodedBody()) == payload)
+    }
+
+    @Test func retryStatusKeepsItsPresentationIdentity() {
+        let activityID = UUID()
+        let failedAttempt = CPSLChatMessage(
+            role: .toolStatus,
+            title: nil,
+            body: CPSLToolStatusPayload(
+                state: .running,
+                summary: "First attempt",
+                isSuperseded: true,
+                activityID: activityID
+            ).encodedBody()
+        )
+        let retry = CPSLChatMessage(
+            role: .toolStatus,
+            title: nil,
+            body: CPSLToolStatusPayload(
+                state: .running,
+                summary: "Retrying",
+                activityID: activityID
+            ).encodedBody()
+        )
+
+        #expect(failedAttempt.activityEntryID == retry.activityEntryID)
+    }
+
+    @Test func timelineGroupsConsecutiveThoughtsAndVisibleToolStatuses() {
+        let user = CPSLChatMessage(role: .user, title: nil, body: "Start")
+        let firstThought = CPSLChatMessage(role: .thought, title: nil, body: "First thought")
+        let supersededStatus = CPSLChatMessage(
+            role: .toolStatus,
+            title: nil,
+            body: CPSLToolStatusPayload(
+                state: .running,
+                summary: "Failed attempt",
+                isSuperseded: true
+            ).encodedBody()
+        )
+        let secondThought = CPSLChatMessage(role: .thought, title: nil, body: "Second thought")
+        let currentStatus = CPSLChatMessage(
+            role: .toolStatus,
+            title: nil,
+            body: CPSLToolStatusPayload.running(summary: "Trying again").encodedBody()
+        )
+        let assistant = CPSLChatMessage(role: .assistant, title: nil, body: "Done")
+
+        let items = CPSLChatTimelineItem.grouped(
+            from: [user, firstThought, supersededStatus, secondThought, currentStatus, assistant]
+        )
+
+        #expect(items.count == 3)
+        guard case .activity(let group) = items[1] else {
+            Issue.record("Expected one activity group between the user and assistant messages")
+            return
+        }
+        #expect(group.id == firstThought.id)
+        #expect(group.messages.map(\.id) == [firstThought.id, secondThought.id, currentStatus.id])
+    }
+
+    @Test func collapsedActivityKeepsAnExpandedOlderEntryVisible() {
+        let messages = (0..<9).map { index in
+            CPSLChatMessage(role: .thought, title: nil, body: "Thought \(index)")
+        }
+        let group = CPSLTimelineActivityGroup(id: messages[0].id, messages: messages)
+
+        let displayItems = CPSLActivityDisplayItem.items(
+            for: group,
+            expandedEntryIDs: [messages[3].id],
+            showsAll: false
+        )
+
+        #expect(displayItems.map(\.id) == [
+            .omission(messages[0].id),
+            .message(messages[3].id),
+            .omission(messages[4].id),
+            .message(messages[6].id),
+            .message(messages[7].id),
+            .message(messages[8].id),
+        ])
+    }
+
+    @Test func expandedActivityOffersOneFoldControlAndEveryEntry() {
+        let messages = (0..<4).map { index in
+            CPSLChatMessage(role: .thought, title: nil, body: "Thought \(index)")
+        }
+        let group = CPSLTimelineActivityGroup(id: messages[0].id, messages: messages)
+
+        let displayItems = CPSLActivityDisplayItem.items(
+            for: group,
+            expandedEntryIDs: [],
+            showsAll: true
+        )
+
+        #expect(displayItems.map(\.id) == [
+            .collapse(group.id),
+            .message(messages[0].id),
+            .message(messages[1].id),
+            .message(messages[2].id),
+            .message(messages[3].id),
+        ])
     }
 }
