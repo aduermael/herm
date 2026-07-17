@@ -58,10 +58,18 @@ jobs:
           enablement: true
 
       - name: Upload artifact
+        id: upload
         uses: actions/upload-pages-artifact@v4
         with:
           path: docs
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/github-script@v9
+        env:
+          PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
+        with:
+          script: |
+            const deployPages = require('./.github/scripts/deploy-pages.cjs')
+            const artifactId = Number(process.env.PAGES_ARTIFACT_ID)
+            await deployPages({ github, context, core }, { artifactId })
