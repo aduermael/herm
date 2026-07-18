@@ -7,17 +7,32 @@ on:
       - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
+  redispatch-tag:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Redispatch tagged deployment from the default branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          gh workflow run pages.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$DEFAULT_BRANCH"
+
   deploy:
+    if: github.ref_type != 'tag'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -58,18 +73,10 @@ jobs:
           enablement: true
 
       - name: Upload artifact
-        id: upload
         uses: actions/upload-pages-artifact@v4
         with:
           path: docs
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/github-script@v9
-        env:
-          PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
-        with:
-          script: |
-            const deployPages = require('./.github/scripts/deploy-pages.cjs')
-            const artifactId = Number(process.env.PAGES_ARTIFACT_ID)
-            await deployPages({ github, context, core }, { artifactId })
+        uses: actions/deploy-pages@v5
