@@ -688,12 +688,12 @@ struct CPSLFilePreview: Identifiable, Equatable, Sendable {
     let kind: CPSLFilePreviewKind
 }
 
-struct CPSLFilePreviewLoadResult: @unchecked Sendable {
+nonisolated struct CPSLFilePreviewLoadResult: @unchecked Sendable {
     let preview: CPSLFilePreview?
     let error: String?
     let lifetimeToken: AnyObject?
 
-    nonisolated init(
+    init(
         preview: CPSLFilePreview?,
         error: String?,
         lifetimeToken: AnyObject? = nil
