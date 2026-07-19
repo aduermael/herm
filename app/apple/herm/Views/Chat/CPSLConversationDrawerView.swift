@@ -44,10 +44,8 @@ private struct CPSLConversationDrawerContent: View {
         let activeTags = model.allTags.filter { model.activeTagIDs.contains($0.id) }
         VStack(alignment: .leading, spacing: 0) {
             CPSLDrawerToolbar(
-                title: model.showingArchived ? "Archived" : "Conversations",
                 isBusy: model.isBusy,
                 isArchivedScope: model.showingArchived,
-                onBack: { searchFocused = false; model.closeDrawer() },
                 onNewChat: { searchFocused = false; model.startNewConversation() },
                 onToggleArchived: { searchFocused = false; model.setArchivedScope(!model.showingArchived) }
             )
@@ -76,6 +74,11 @@ private struct CPSLConversationDrawerContent: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { searchFocused = false }
+        .onChange(of: model.isDrawerOpen) { _, isOpen in
+            if !isOpen {
+                searchFocused = false
+            }
+        }
         .padding(.top, topInset)
         .padding(.bottom, keyboardOverlap > 0 ? keyboardOverlap + CPSLTheme.small : bottomInset)
         .frame(width: width)
@@ -213,26 +216,19 @@ private struct CPSLConversationSearchBar: View {
 }
 
 private struct CPSLDrawerToolbar: View {
-    let title: String
     let isBusy: Bool
     let isArchivedScope: Bool
-    let onBack: () -> Void
     let onNewChat: () -> Void
     let onToggleArchived: () -> Void
 
     var body: some View {
         HStack(spacing: CPSLTheme.small) {
-            Button(action: onBack) {
-                chip("chevron.left")
+            HStack(spacing: CPSLTheme.small / 2) {
+                Text("Herm")
+                    .cpslAnimatedPastelRainbowForeground()
+                Text(verbatim: "🐚")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Back to chat")
-
-            Text(title)
-                .font(CPSLTheme.userFont(size: CPSLTheme.FontSize.body, weight: .semibold))
-                .foregroundStyle(CPSLTheme.text)
-                .lineLimit(1)
-                .padding(.leading, CPSLTheme.small / 2)
+            .font(CPSLTheme.headerFont)
 
             Spacer(minLength: CPSLTheme.small)
 
@@ -251,6 +247,7 @@ private struct CPSLDrawerToolbar: View {
             .accessibilityLabel("New conversation")
         }
         .frame(height: CPSLTheme.controlSize)
+        .padding(.trailing, CPSLTheme.controlSize + CPSLTheme.small)
     }
 
     private func chip(_ systemName: String, isActive: Bool = false) -> some View {

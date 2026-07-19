@@ -416,8 +416,6 @@ struct CPSLChatScreen: View {
                 .padding(.leading, CPSLTheme.medium)
                 .padding(.top, CPSLTheme.topChromeSafeAreaGap)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
-                .opacity(1 - drawerProgress)
-                .allowsHitTesting(!model.isDrawerOpen)
                 .zIndex(3)
             }
             .onAppear {
