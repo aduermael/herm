@@ -1,6 +1,13 @@
 import Foundation
 
 actor CPSLConversationStore {
+    private nonisolated static let iso8601FractionalSecondsFormat = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: true
+    )
+    private nonisolated static let iso8601SecondPrecisionFormat = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: false
+    )
+
     let conversationLogURL: URL
     let traceLogURL: URL
     let usesICloudContainer: Bool
@@ -641,11 +648,9 @@ actor CPSLConversationStore {
 
     private static func jsonEncoder(prettyPrinted: Bool = false) -> JSONEncoder {
         let encoder = JSONEncoder()
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         encoder.dateEncodingStrategy = .custom { date, encoder in
             var container = encoder.singleValueContainer()
-            try container.encode(formatter.string(from: date))
+            try container.encode(Self.iso8601FractionalSecondsFormat.format(date))
         }
         encoder.outputFormatting = prettyPrinted ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
         return encoder
@@ -653,14 +658,10 @@ actor CPSLConversationStore {
 
     private static func jsonDecoder() -> JSONDecoder {
         let decoder = JSONDecoder()
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let secondPrecisionFormatter = ISO8601DateFormatter()
-        secondPrecisionFormatter.formatOptions = [.withInternetDateTime]
         decoder.dateDecodingStrategy = .custom { decoder in
             let value = try decoder.singleValueContainer().decode(String.self)
-            guard let date = formatter.date(from: value)
-                ?? secondPrecisionFormatter.date(from: value)
+            guard let date = (try? Self.iso8601FractionalSecondsFormat.parse(value))
+                ?? (try? Self.iso8601SecondPrecisionFormat.parse(value))
             else {
                 throw DecodingError.dataCorrupted(
                     .init(codingPath: decoder.codingPath, debugDescription: "Invalid ISO-8601 date.")

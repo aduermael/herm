@@ -693,7 +693,7 @@ struct CPSLFilePreviewLoadResult: @unchecked Sendable {
     let error: String?
     let lifetimeToken: AnyObject?
 
-    init(
+    nonisolated init(
         preview: CPSLFilePreview?,
         error: String?,
         lifetimeToken: AnyObject? = nil
