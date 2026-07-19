@@ -129,7 +129,7 @@ nonisolated struct CPSLOpenAIChatRequest: Encodable, Sendable {
     }
 }
 
-nonisolated struct CPSLOpenAITool: Encodable, Sendable {
+nonisolated struct CPSLOpenAITool: Codable, Sendable {
     let type: String
     let function: CPSLOpenAIToolFunction
 
@@ -165,10 +165,14 @@ nonisolated struct CPSLOpenAITool: Encodable, Sendable {
         type: "function",
         function: CPSLOpenAIToolFunction(
             name: "agent",
-            description: "Spawn a focused sub-agent with its own turn budget. Use mode explore for research and reading. Use mode general for CPSL execution cycles or implementation-style work. Sub-agents return a concise result to this conversation and cannot access host shell tools.",
+            description: "Spawn a focused sub-agent with its own turn budget. Include intent: a short user-facing description of the expected work, without mentioning helpers, agents, tools, code, paths, or implementation details. Use mode explore for research and reading. Use mode general for CPSL execution cycles or implementation-style work. Sub-agents return a concise result to this conversation and cannot access host shell tools.",
             parameters: CPSLOpenAIToolParameters(
                 type: "object",
                 properties: [
+                    "intent": CPSLOpenAIToolParameter(
+                        type: "string",
+                        description: "Short user-facing action phrase shown as status, such as Comparing venue options or Verifying document details. Do not mention helpers, agents, tools, code, paths, or implementation details."
+                    ),
                     "task": CPSLOpenAIToolParameter(
                         type: "string",
                         description: "A clear, self-contained task for the sub-agent."
@@ -178,7 +182,7 @@ nonisolated struct CPSLOpenAITool: Encodable, Sendable {
                         description: "Either explore or general. Explore is for research; general is for execution-heavy work."
                     )
                 ],
-                required: ["task", "mode"],
+                required: ["intent", "task", "mode"],
                 additionalProperties: false
             )
         )
@@ -198,13 +202,13 @@ nonisolated struct CPSLOpenAITool: Encodable, Sendable {
     }
 }
 
-nonisolated struct CPSLOpenAIToolFunction: Encodable, Sendable {
+nonisolated struct CPSLOpenAIToolFunction: Codable, Sendable {
     let name: String
     let description: String
     let parameters: CPSLOpenAIToolParameters
 }
 
-nonisolated struct CPSLOpenAIToolParameters: Encodable, Sendable {
+nonisolated struct CPSLOpenAIToolParameters: Codable, Sendable {
     let type: String
     let properties: [String: CPSLOpenAIToolParameter]
     let required: [String]
@@ -218,7 +222,7 @@ nonisolated struct CPSLOpenAIToolParameters: Encodable, Sendable {
     }
 }
 
-nonisolated struct CPSLOpenAIToolParameter: Encodable, Sendable {
+nonisolated struct CPSLOpenAIToolParameter: Codable, Sendable {
     let type: String
     let description: String
 }

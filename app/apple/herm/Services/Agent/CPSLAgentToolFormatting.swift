@@ -29,7 +29,7 @@ nonisolated enum CPSLAgentToolFormatting {
     static func agentInput(from arguments: String) -> CPSLAgentToolInput? {
         guard let data = arguments.data(using: .utf8),
                 let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                Set(object.keys).isSubset(of: ["task", "mode"]),
+                Set(object.keys).isSubset(of: ["task", "mode", "intent"]),
                 let task = object["task"] as? String,
                 !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else {
@@ -43,7 +43,9 @@ nonisolated enum CPSLAgentToolFormatting {
 
         return CPSLAgentToolInput(
             task: task.trimmingCharacters(in: .whitespacesAndNewlines),
-            mode: subAgentMode
+            mode: subAgentMode,
+            intent: sanitizedStatusSentence(from: object["intent"] as? String)
+                ?? sanitizedStatusSentence(from: task)
         )
     }
 
@@ -64,11 +66,9 @@ nonisolated enum CPSLAgentToolFormatting {
             return input.intent ?? inferredSandboxIntent(from: input.source)
         case agentName:
             guard let input = agentInput(from: toolCall.function.arguments) else {
-                return "Checking with a helper"
+                return defaultStatusSummary
             }
-            return input.mode == .explore
-                ? "Asking a helper to inspect this"
-                : "Asking a helper to work on this"
+            return input.intent ?? defaultStatusSummary
         default:
             return defaultStatusSummary
         }
@@ -87,6 +87,25 @@ nonisolated enum CPSLAgentToolFormatting {
 
     static func statusSentence(from assistantText: String, fallback: String = defaultStatusSummary) -> String {
         sanitizedStatusSentence(from: assistantText) ?? fallback
+    }
+
+    static func uniqueThought(
+        from assistantText: String,
+        toolCalls: [CPSLOpenAIToolCall]
+    ) -> String? {
+        let summaries = toolCalls.map {
+            statusSummary(for: $0, assistantText: assistantText)
+        }
+        let uniqueLines = assistantText
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { line in
+                !line.isEmpty && !summaries.contains { isEquivalentStatus(line, $0) }
+            }
+        guard !uniqueLines.isEmpty else {
+            return nil
+        }
+        return uniqueLines.joined(separator: "\n")
     }
 
     static func promptPathLiteral(_ path: String) -> String {
@@ -154,6 +173,34 @@ nonisolated enum CPSLAgentToolFormatting {
         return line
     }
 
+    private static func isEquivalentStatus(_ lhs: String, _ rhs: String) -> Bool {
+        let leftWords = normalizedStatusWords(lhs)
+        let rightWords = normalizedStatusWords(rhs)
+        guard !leftWords.isEmpty, !rightWords.isEmpty else {
+            return false
+        }
+        let overlap = leftWords.intersection(rightWords).count
+        return Double(overlap) / Double(min(leftWords.count, rightWords.count)) >= 0.75
+    }
+
+    private static func normalizedStatusWords(_ text: String) -> Set<String> {
+        let stopWords: Set<String> = [
+            "a", "am", "an", "and", "i", "ill", "im", "let", "me", "next", "now", "the", "this", "to", "will"
+        ]
+        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }
+        return Set(words.compactMap { rawWord in
+            var word = String(rawWord)
+            if word.count > 5, word.hasSuffix("ing") {
+                word.removeLast(3)
+            } else if word.count > 4, word.hasSuffix("ed") {
+                word.removeLast(2)
+            } else if word.count > 3, word.hasSuffix("s") {
+                word.removeLast()
+            }
+            return stopWords.contains(word) ? nil : word
+        })
+    }
+
     private static func inferredSandboxIntent(from source: String) -> String {
         let lower = source.lowercased()
         if lower.contains("fs.tree") || lower.contains("fs.list") {
@@ -209,6 +256,10 @@ nonisolated enum CPSLAgentToolFormatting {
     }
 
     static func displayBody(_ output: CPSLAgentToolOutput) -> String {
+        truncatedText(completeBody(output))
+    }
+
+    static func completeBody(_ output: CPSLAgentToolOutput) -> String {
         var sections: [String] = []
         appendTrimmed(output.stdout, to: &sections)
         appendTrimmed(output.stderr, to: &sections)
@@ -222,7 +273,7 @@ nonisolated enum CPSLAgentToolFormatting {
         if sections.isEmpty {
             sections.append(output.exitCode.map { "exit \($0)" } ?? "done")
         }
-        return truncatedText(sections.joined(separator: "\n\n"))
+        return sections.joined(separator: "\n\n")
     }
 
     static func truncatedText(_ text: String) -> String {
@@ -295,6 +346,7 @@ nonisolated enum CPSLSubAgentMode: String, Codable, Equatable, Sendable {
 nonisolated struct CPSLAgentToolInput: Equatable, Sendable {
     let task: String
     let mode: CPSLSubAgentMode
+    let intent: String?
 }
 
 nonisolated struct CPSLSandboxToolInput: Equatable, Sendable {
@@ -306,6 +358,16 @@ nonisolated enum CPSLToolStatusState: String, Codable, Equatable, Sendable {
     case running
     case succeeded
     case failed
+    case interrupted
+}
+
+nonisolated struct CPSLToolTraceInvocation: Identifiable, Codable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let summary: String
+    let input: String
+    let output: String
+    let isError: Bool
 }
 
 nonisolated struct CPSLToolStatusInvocation: Identifiable, Codable, Equatable, Sendable {
@@ -315,6 +377,15 @@ nonisolated struct CPSLToolStatusInvocation: Identifiable, Codable, Equatable, S
     let input: String
     let output: String
     let isError: Bool
+
+    init(traceInvocation: CPSLToolTraceInvocation) {
+        id = traceInvocation.id
+        name = traceInvocation.name
+        summary = traceInvocation.summary
+        input = CPSLAgentToolFormatting.truncatedText(traceInvocation.input)
+        output = CPSLAgentToolFormatting.truncatedText(traceInvocation.output)
+        isError = traceInvocation.isError
+    }
 }
 
 nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
@@ -322,21 +393,27 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
     var summary: String
     var invocations: [CPSLToolStatusInvocation]
     var webVisits: [CPSLWebSearchVisit]
+    var isSuperseded: Bool
+    var activityID: UUID?
 
     init(
         state: CPSLToolStatusState,
         summary: String,
-        invocations: [CPSLToolStatusInvocation],
-        webVisits: [CPSLWebSearchVisit] = []
+        invocations: [CPSLToolStatusInvocation] = [],
+        webVisits: [CPSLWebSearchVisit] = [],
+        isSuperseded: Bool = false,
+        activityID: UUID? = nil
     ) {
         self.state = state
         self.summary = summary
         self.invocations = invocations
         self.webVisits = webVisits
+        self.isSuperseded = isSuperseded
+        self.activityID = activityID
     }
 
     static func running(summary: String = "Preparing tools") -> CPSLToolStatusPayload {
-        CPSLToolStatusPayload(state: .running, summary: summary, invocations: [])
+        CPSLToolStatusPayload(state: .running, summary: summary)
     }
 
     static func decode(from body: String) -> CPSLToolStatusPayload? {
@@ -358,14 +435,21 @@ nonisolated struct CPSLToolStatusPayload: Codable, Equatable, Sendable {
         case summary
         case invocations
         case webVisits
+        case isSuperseded
+        case activityID
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         state = try container.decode(CPSLToolStatusState.self, forKey: .state)
         summary = try container.decode(String.self, forKey: .summary)
-        invocations = try container.decodeIfPresent([CPSLToolStatusInvocation].self, forKey: .invocations) ?? []
+        invocations = try container.decodeIfPresent(
+            [CPSLToolStatusInvocation].self,
+            forKey: .invocations
+        ) ?? []
         webVisits = try container.decodeIfPresent([CPSLWebSearchVisit].self, forKey: .webVisits) ?? []
+        isSuperseded = try container.decodeIfPresent(Bool.self, forKey: .isSuperseded) ?? false
+        activityID = try container.decodeIfPresent(UUID.self, forKey: .activityID)
     }
 }
 
@@ -383,5 +467,5 @@ nonisolated struct CPSLToolExecutionResult {
     let providerContent: String
     let displayBody: String
     let isError: Bool
-    let debugInvocation: CPSLToolStatusInvocation
+    let traceInvocation: CPSLToolTraceInvocation
 }

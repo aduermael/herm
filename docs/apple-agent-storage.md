@@ -1,26 +1,65 @@
 # Apple Agent Storage
 
-The Swift agent stores conversations in a local SQLite database with node-shaped
-conversation history. At launch, the app first tries the iCloud ubiquity
-container and stores the database under `Documents/Herm/conversations.sqlite`.
-If iCloud is unavailable, it falls back to Application Support.
+The Swift agent stores durable state in two append-only JSONL files:
 
-This is an iCloud file-container prototype, not Apple's standard robust
-structured-data sync design. It can make a SQLite file available through the
-shared iCloud documents container, but SQLite is still a single local database
-file and iCloud file syncing does not provide record-level merge semantics. For
-production-quality multi-device structured data sync, the expected Apple stack is
-CloudKit-backed persistence, such as Core Data or SwiftData with CloudKit.
+- `conversations.jsonl` contains conversation, node, tag, and metadata mutations.
+- `traces.jsonl` contains detailed provider requests/responses, tool calls, web
+  visits, and errors. Trace entries are not loaded to render a conversation.
+
+At launch, the app first tries the iCloud ubiquity container and stores the logs
+under `Documents/Herm`. If iCloud is unavailable, it falls back to Application
+Support. Each write encodes one complete JSON value on one line, appends it, and
+synchronizes the file. Normal writes never load and rewrite the existing log.
+
+The debug export is different by design: it loads the relevant JSONL entries and
+creates a documented, pretty-printed JSON object with the reconstructed
+conversation, chronological source events, chronological trace events, and `jq`
+examples. This keeps the live format cheap to append while making exported data
+easy for humans and analysis tools to inspect partially.
+
+## Log and export shape
+
+Every JSONL entry has `schemaVersion`, `id`, `timestamp`, and `kind`; timestamps
+use ISO-8601 UTC with fractional seconds so rapid mutations remain ordered.
+Conversation entries additionally identify `conversationID` when the event is
+conversation-scoped. Their kinds are `conversation.created`, `nodes.appended`,
+`node.body_updated`, conversation metadata mutations, and tag mutations. The
+event-specific value is stored under the matching field such as `conversation`,
+`nodes`, `body`, `model`, `flag`, `title`, `tag`, or `tagIDs`.
+
+Trace kinds are `provider.request`, `provider.response`, `tool.invocation`,
+`web.visit`, and `error`. Their detailed values are under `providerRequest`,
+`providerResponse`, `toolInvocation`, `webVisit`, or `message`. Provider request
+entries include the exact replay messages and tool schemas; sandbox trace output
+is not shortened for presentation.
+
+An exported JSON object has this stable top-level shape:
+
+```text
+format, schemaVersion, generatedAt, documentation,
+conversation, tags, conversationEvents, traceEvents
+```
+
+Useful partial reads include:
+
+```sh
+jq '.conversation.summary' export.json
+jq '.conversation.nodes[] | {sequence, role, title, body}' export.json
+jq '.traceEvents[] | select(.kind == "tool.invocation") | .toolInvocation' export.json
+```
+
+This is an iCloud file-container prototype, not a multi-writer sync system.
+Concurrent appends from multiple devices and log compaction remain future work.
 
 Practical implications for this prototype:
 
-- Keep SQLite in rollback-journal mode, not WAL, so the database is not split
-  across multiple live files.
-- Use short transactions and `BEGIN IMMEDIATE` so local writes are serialized.
-- Treat concurrent edits from multiple devices as a future CloudKit migration
-  problem, not something this file-sync prototype fully solves.
-- Keep the node schema independent of SQLite details so the persistence layer can
-  move to CloudKit-backed storage later without changing the agent loop.
+- Keep every JSONL entry independently decodable and versioned.
+- Ignore and discard only an incomplete final line, which can be left by process
+  termination; corruption in a completed line is an error.
+- Treat concurrent edits from multiple devices as a future storage problem, not
+  something this prototype fully solves.
+- Keep the node model independent of the log replay details so persistence can
+  change later without changing the agent loop.
 
 ## Agent files
 

@@ -368,7 +368,7 @@ private enum CPSLOverlayMotion {
 }
 
 struct CPSLChatScreen: View {
-    @StateObject private var model = CPSLChatModel()
+    @State private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
     @State private var drawerProgress: CGFloat = 0
     @State private var drawerMotionGeneration = 0
@@ -416,8 +416,6 @@ struct CPSLChatScreen: View {
                 .padding(.leading, CPSLTheme.medium)
                 .padding(.top, CPSLTheme.topChromeSafeAreaGap)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
-                .opacity(1 - drawerProgress)
-                .allowsHitTesting(!model.isDrawerOpen)
                 .zIndex(3)
             }
             .onAppear {
@@ -587,7 +585,7 @@ private struct CPSLDrawerGestureCapture<DrawerGesture: Gesture>: View {
 }
 
 private struct CPSLMainContentStage: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @Binding var promptDismissRequest: Int
     let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
@@ -680,7 +678,7 @@ private struct CPSLMainContentStage: View {
 }
 
 private struct CPSLPrimaryContentView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
     let isTimelineScrollGeometryPaused: Bool
@@ -716,7 +714,7 @@ private struct CPSLFileBrowserOverlay: View {
 }
 
 private struct CPSLBottomChromeView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @Binding var promptDismissRequest: Int
 
     private var isPromptCompact: Bool {
@@ -815,7 +813,7 @@ private struct CPSLICloudImportStatusView: View {
 }
 
 private struct CPSLHeaderActionsView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
 #if DEBUG
     @State private var traceShareFile: CPSLJSONTraceShareFile?
     @State private var isPreparingTraceShareFile = false

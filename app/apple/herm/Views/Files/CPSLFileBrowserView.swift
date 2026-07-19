@@ -175,7 +175,7 @@ private enum CPSLFileBrowserInteractionMode: Equatable {
 }
 
 struct CPSLFileBrowserView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @State private var isICloudImporterPresented = false
     @State private var isICloudImporterPending = false
     @State private var isICloudAccessModePickerPresented = false
@@ -380,7 +380,7 @@ struct CPSLFileBrowserView: View {
 }
 
 private struct CPSLFileBrowserRouteStack: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let actions: CPSLFileBrowserActions
     @State private var pages: [CPSLFileBrowserDisplayPage] = []
     @State private var transitionGeneration = 0
@@ -662,7 +662,7 @@ private struct CPSLFileBrowserActions {
 }
 
 private struct CPSLFileBrowserHeader: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let actions: CPSLFileBrowserActions
 
     var body: some View {

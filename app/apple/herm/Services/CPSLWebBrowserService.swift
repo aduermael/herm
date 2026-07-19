@@ -28,6 +28,7 @@ final class CPSLWebBrowserService: ObservableObject {
     private let defaultWindowSize = CGSize(width: 1200, height: 900)
     private let maxInlineJSONBytes = 16_000
     private let activityDuration: TimeInterval = 1.6
+    private static let maxBackgroundLeanBrowsers = 6
     private static let supportedControlKeys: Set<String> = [
         "Enter", "Escape", "Tab", "Backspace", "Delete",
         "ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown",
@@ -555,6 +556,9 @@ final class CPSLWebBrowserService: ObservableObject {
         resourceMode: CPSLWebBrowserResourceMode,
         networkPolicy: CPSLWebBrowserNetworkPolicy
     ) async throws -> CPSLWebBrowserSession {
+        if resourceMode == .lean {
+            retireOldestBackgroundLeanBrowserIfNeeded()
+        }
         let id = nextBrowserID()
         let browser = try await makeBrowser(
             id: id,
@@ -566,6 +570,24 @@ final class CPSLWebBrowserService: ObservableObject {
         lastBrowserID = id
         refreshSummaries()
         return browser
+    }
+
+    private func retireOldestBackgroundLeanBrowserIfNeeded() {
+        let backgroundLeanBrowsers = browsers.values.filter {
+            $0.resourceMode == .lean && !$0.isVisible
+        }
+        guard backgroundLeanBrowsers.count >= Self.maxBackgroundLeanBrowsers,
+              let oldest = backgroundLeanBrowsers.min(by: { $0.createdAt < $1.createdAt })
+        else {
+            return
+        }
+
+        oldest.webView.stopLoading()
+        backgroundHost.detach(oldest.webView)
+        browsers.removeValue(forKey: oldest.id)
+        if lastBrowserID == oldest.id {
+            lastBrowserID = browsers.values.max(by: { $0.createdAt < $1.createdAt })?.id
+        }
     }
 
     private func makeBrowser(
@@ -2431,6 +2453,7 @@ private final class CPSLWebBrowserBackgroundHost {
 
 private final class CPSLWebBrowserSession {
     let id: String
+    let createdAt = Date()
     var resourceMode: CPSLWebBrowserResourceMode
     let webView: WKWebView
     var windowSize: CGSize

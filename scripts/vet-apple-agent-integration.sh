@@ -122,7 +122,8 @@ require_match 'OPENAI_API_KEY' docs/apple-agent-config.md
 require_match 'OPENAI_MODEL' docs/apple-agent-config.md
 require_match 'HERM_MAX_AGENT_DEPTH' docs/apple-agent-config.md
 require_match 'main agent may summon sub-agents' docs/apple-agent-config.md
-require_match 'invalidValue\("OPENAI_BASE_URL"\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'validatedBaseURL\(baseURLValue, key: "OPENAI_BASE_URL"\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
+require_match 'throw CPSLAgentConfigError\.invalidValue\(key\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'make\(' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'parseEnv' scripts/generate-apple-env-constants.swift
 require_match '\["http", "https"\]\.contains\(scheme\)' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
@@ -143,7 +144,7 @@ require_match 'CODE_SIGN_ENTITLEMENTS = herm/herm.entitlements;' app/apple/herm.
 require_match 'CODE_SIGN_ENTITLEMENTS\[sdk=macosx\*\].*herm-macOS.entitlements' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'ENABLE_USER_SELECTED_FILES = readwrite;' app/apple/herm.xcodeproj/project.pbxproj
 reject_match 'ENABLE_USER_SELECTED_FILES = readonly;' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'libsqlite3.tbd' app/apple/herm.xcodeproj/project.pbxproj
+reject_match 'libsqlite3.tbd' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'PBXFileSystemSynchronizedBuildFileExceptionSet' app/apple/herm.xcodeproj/project.pbxproj
 require_match '^[[:space:]]*\.env,' app/apple/herm.xcodeproj/project.pbxproj
 require_match '^[[:space:]]*\.env\.local,' app/apple/herm.xcodeproj/project.pbxproj
@@ -161,20 +162,17 @@ require_match 'allow_webview_pdf_rendering\(webview_pdf_rendering_allowed\(confi
 require_match 'restricted_network_policy_returns_structured_webview_pdf_denials' external/cpsl/ffi/src/lib.rs
 require_match 'webview_pdf_rendering_requires_unrestricted_webbrowser_policy' external/cpsl/ffi/src/lib.rs
 require_match 'iCloud file-container prototype' docs/apple-agent-storage.md
-require_match 'not Apple.s standard robust' docs/apple-agent-storage.md
-require_match 'CloudKit-backed persistence' docs/apple-agent-storage.md
+require_match 'append-only JSONL files' docs/apple-agent-storage.md
+require_match 'debug export' docs/apple-agent-storage.md
 
 require_match 'url\(forUbiquityContainerIdentifier: nil\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'PRAGMA journal_mode=DELETE' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'PRAGMA synchronous=FULL' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'BEGIN IMMEDIATE TRANSACTION' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'sqlite3_busy_timeout' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'init\(databaseURL: URL, usesICloudContainer: Bool\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'addColumnIfMissing' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'PRAGMA table_info' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'ALTER TABLE' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'backfillLegacyConversationPointers' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'legacy conversation pointers did not backfill' scripts/vet-apple-conversation-store.swift
+require_match 'conversations\.jsonl' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'traces\.jsonl' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'appendJSONLine' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'handle\.seekToEnd\(\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'handle\.synchronize\(\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'partial tail' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'init\(logURL: URL, usesICloudContainer: Bool\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'model: String\?' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'updateConversationModelIfMissing' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'updateConversationModelIfMissing' app/apple/herm/Models/CPSLChatModel.swift
@@ -186,14 +184,14 @@ require_match 'private func loadStore\(\) async throws -> CPSLConversationStore'
 require_match 'let store = try await loadStore\(\)' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'store = try await loadStore\(\)' app/apple/herm/Models/CPSLChatModel.swift
 reject_match 'guard let store else' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'conversations = try await store\.loadSummaries\(\)' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'sequence = try nextSequence' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'conversations = try await store\.fetchConversationSummaries' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'nextSequence' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'parentRequired' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'parentRequired' scripts/vet-apple-conversation-store.swift
-require_match 'assertParentBelongsToConversation' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'conversation\.nodes\.contains' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'parentConversationMismatch' scripts/vet-apple-conversation-store.swift
-require_match 'CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'CREATE INDEX IF NOT EXISTS idx_nodes_parent' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'recordProviderRequest' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'recordToolInvocation' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 
 require_match 'maxToolRounds: positiveIntValue' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'defaultMaxToolRounds = 200' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
@@ -214,7 +212,7 @@ require_match 'fs\.help\(\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.sw
 require_match 'Declare variables with local' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'external lua/luau interpreters' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Bash, Python, shell commands' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
-require_match 'fs\.help\(\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'module\.help\(\)' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSL is your execution environment: a Unix-like local environment' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Luau is the interface instead of Bash' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Luau essentials' app/apple/herm/Models/CPSLChatModel.swift
@@ -292,8 +290,6 @@ require_match '"skills"' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"virtual": mount.virtualPath' app/apple/herm/Services/CPSLDebugService.swift
 require_match '"mode": "ro"' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'Copy Bundled Skills' app/apple/herm.xcodeproj/project.pbxproj
-reject_match 'alwaysOutOfDate = 1;' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'Skills,' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'SRCROOT.*/herm/Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
@@ -305,7 +301,7 @@ require_match 'let callbackBox = CPSLWebBrowserCallbackBox\(service: webBrowser\
   app/apple/herm/Services/CPSLDebugService.swift
 require_match 'let allowedDomains = \["\*"\]' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'do not use require to load them' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'help\(\) is the authoritative module list' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'help\(\).*authoritative module list' app/apple/herm/Skills/webbrowser/SKILL.md
 require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift
@@ -351,9 +347,10 @@ require_match 'Provider returned an empty response' app/apple/herm/Models/CPSLCh
 require_match 'Reached maximum tool rounds' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'synthesizeAfterToolLimit' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'role: \.toolStatus' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-require_match 'hasUnresolvedToolFailure' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-require_match 'toolStatus\.state = hasUnresolvedToolFailure \? \.running : \.succeeded' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
-reject_match 'toolStatusHasFailure' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'pendingFailures' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'supersedeActiveToolStatus' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'finishActiveToolStatus\(as: \.failed\)' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'as: \.interrupted' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'role: \.hidden' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'runSubAgent' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'makeConversationJSONTraceShareFile' app/apple/herm/Models/CPSLChatModel.swift
@@ -375,6 +372,12 @@ require_match 'CPSLAgentWorkingIndicatorView' app/apple/herm/Views/Chat/CPSLChat
 require_match 'CPSLAgentWorkingIndicatorView\(\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'Text\(payload\.summary\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'TimelineView\(\.animation\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'CPSLActivityDisplayItem\.items' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'expandedEntryIDs: expansion\.expandedEntryIDs' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match '#if DEBUG' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match '\.allowsHitTesting\(canExpand\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+require_match 'CPSLHeightLimitedExpandedBlock' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
+reject_match '\.disabled\(!canExpand\)' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'cycleDuration: TimeInterval = 0\.84' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 require_match 'dotBounceOffset' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
 reject_match 'return trimmed\.isEmpty \? "Thinking" : trimmed' app/apple/herm/Views/Chat/CPSLChatTimelineView.swift
@@ -414,7 +417,7 @@ require_match 'title: "Temporary"' app/apple/herm/Views/Files/CPSLFileBrowserVie
 require_match 'title: "iCloud"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'systemName: "icloud\.fill"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'title: "Cloud Drives"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
-require_match 'Button\("Connect"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'actionTitle: "Connect"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'model\.dictation\.finish\(\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'guard isICloudImporterPending, !model\.dictation\.isActive else' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'Button\("Read Only"\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
@@ -550,9 +553,9 @@ if command -v swiftc >/dev/null 2>&1; then
     swiftc \
       app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
       app/apple/herm/Models/CPSLTypes.swift \
+      app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift \
       app/apple/herm/Services/Agent/CPSLConversationStore.swift \
       scripts/vet-apple-conversation-store.swift \
-      -lsqlite3 \
       -o /tmp/herm-vet-conversation-store
     /tmp/herm-vet-conversation-store
   fi

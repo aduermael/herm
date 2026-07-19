@@ -39,6 +39,8 @@ struct CPSLToolExecutionContext {
     let config: CPSLAgentConfig
     let agentDepth: Int
     let requestDirectory: String?
+    let traceStore: CPSLConversationStore?
+    let conversationID: String?
 }
 
 struct CPSLSubAgentOutputDraft {
