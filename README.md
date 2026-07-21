@@ -111,12 +111,17 @@ herm/
 │   └── cpsl/                  CPSL backend submodule
 ├── .herm-cpsl/                Ignored CPSL build artifacts and cache
 ├── img/                       Demo assets
-├── plans/                     Project planning docs
 ├── CPSL_BUILD.md              Native CPSL local sandbox build guide
+├── CONTRIBUTING.md            Contributor setup, standards, and PR guide
 ├── go.mod
 ├── LICENSE
 └── README.md
 ```
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, tests, CI checks, coding
+standards, and pull request expectations.
 
 ## Test
 
