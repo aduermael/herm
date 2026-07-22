@@ -4,28 +4,28 @@
 [![Prompt Length](https://github.com/aduermael/herm/actions/workflows/prompt-length.yml/badge.svg)](https://github.com/aduermael/herm/actions/workflows/prompt-length.yml)
 [![CI Checks](https://github.com/aduermael/herm/actions/workflows/ci-checks.yml/badge.svg)](https://github.com/aduermael/herm/actions/workflows/ci-checks.yml)
 
-Herm is a model-agnostic, general-purpose AI agent built for safe, flexible execution. It natively supports multiple isolation methods (containers, in-process Unix-like sandboxes, and host sandboxes such as `sandbox_exec` on macOS or `bubblewrap` on Linux). 
+Herm is a model-agnostic, general-purpose AI agent built for safe, flexible execution. It natively supports multiple isolation methods (containers, in-process Unix-like sandboxes, and host sandboxes such as `sandbox_exec` on macOS or `bubblewrap` on Linux).
 
 The Herm CLI defaults to containers with self-building environments, so you can run anything safely without approval interruptions.
 
-The logo and mascot is a hermit crab called Herm, representing the hermetic nature of the agent. 🐚
+The logo and mascot feature a hermit crab called Herm, representing the hermetic nature of the agent. 🐚
 
 ## Herm CLI
 
 ![demo](img/demo.gif)
 
-**Containerized by default:** Use the CLI on your host, the agent itself runs inside Docker containers and can only access files from your current work directory. No permission prompts.
+**Containerized by default:** Use the CLI on your host; the agent itself runs inside Docker containers and can only access files from your current work directory. No permission prompts.
 
-**Multi-provider** — Anthropic, OpenAI, Gemini, Grok, OpenRouter, Ollama, Azure OpenAI, Vertex AI, or Bedrock… You can mix and match models, like Grok as main agent, Haiku for exploration and Gemini for vision.
+**Multi-provider** — Anthropic, OpenAI, Gemini, Grok, OpenRouter, Ollama, Azure OpenAI, Vertex AI, or Bedrock… You can mix and match models, like Grok as the main agent, Haiku for exploration, and Gemini for vision.
 
 **Self-building dev environments** — Herm extends container environments by writing Dockerfiles dynamically. Environments are scoped per project (current work directory).
 
-**100% open-source** — Everything is open: system prompts, skills, tools. No hidden instructions, no black boxes. You can fork it to make it your own. 
+**100% open-source** — Everything is open: system prompts, skills, tools. No hidden instructions, no black boxes. You can fork it to make it your own.
 
 ### Requirements
 
 - macOS or Linux (arm64 and amd64)
-- Docker (through [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev)) when using default container based isolation
+- Docker (through [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev)) when using the default container-based isolation
 
 ### Install
 
@@ -40,7 +40,7 @@ brew tap aduermael/herm
 brew install herm
 ```
 
-Or read instructions to [build from source](#).
+Or read the instructions to [build from source](CONTRIBUTING.md#setup).
 
 ### Run
 
@@ -56,29 +56,30 @@ herm
 
 Rough priority order, subject to change.
 
-1. **Benchmarks:** measure herm against Claude Code, Codex, Grok Build and other coding agents.
-2. **PR review bot:** Herm bot (Github Action) that reviews pull requests.
-3. **Safe connectivity:** Let herm talk to external APIs and databases without ever seeing your credentials. (We’ll probably use [SFAE](https://sfae.io) for this)
+1. **Benchmarks:** measure Herm against Claude Code, Codex, Grok Build and other coding agents.
+2. **PR review bot:** Herm bot (GitHub Action) that reviews pull requests.
+3. **Safe connectivity:** Let Herm talk to external APIs and databases without ever seeing your credentials. (We'll probably use [SFAE](https://sfae.io) for this)
 
 ## Project Structure
 
 ```
 herm/
+├── app/apple/                 iOS and macOS app (SwiftUI)
 ├── cmd/
-│   ├── herm/                  Main application
-│   │   ├── prompts/           System prompt templates (embedded)
-│   │   └── dockerfiles/       Base container definition (embedded)
+│   ├── herm/                  Herm CLI
 │   └── debug/                 Debug utilities
+├── prompts/                   System prompts and tool docs (embedded)
 ├── scripts/                   Build helpers
-├── .herm/
-│   └── skills/                Skill definitions (e.g. devenv)
+├── tools/                     Repo tooling
+├── docs/                      Website (GitHub Pages → hermagent.com)
 ├── external/
-│   ├── langdag/               langdag submodule
-│   └── cpsl/                  CPSL backend submodule
-├── .herm-cpsl/                Ignored CPSL build artifacts and cache
+│   ├── langdag/               LLM client/orchestration submodule
+│   └── cpsl/                  Native sandbox backend submodule
 ├── img/                       Demo assets
-├── CPSL_BUILD.md              Native CPSL local sandbox build guide
-├── CONTRIBUTING.md            Contributor setup, standards, and PR guide
+├── install.sh                 Installer (published at hermagent.com/install.sh)
+├── THIRD-PARTY-NOTICES        Third-party license attributions
+├── CPSL_BUILD.md
+├── CONTRIBUTING.md
 ├── go.mod
 ├── LICENSE
 └── README.md
@@ -94,4 +95,6 @@ Join the [Discord](https://discord.gg/WFjcymwtZU) to chat, ask questions, or sha
 
 ## License
 
-[MIT](LICENSE)
+Herm is distributed under the [MIT License](LICENSE).
+
+Third-party software included with Herm is redistributed under its own licenses. See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES) for attributions, required NOTICE excerpts, and license texts.
