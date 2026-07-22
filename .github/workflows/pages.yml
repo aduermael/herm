@@ -61,11 +61,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved website version: $VERSION"
 
-      - name: Inject version
+      - name: Stage website assets
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          # Root install.sh is the source of truth; always publish it on Pages so
+          # https://hermagent.com/install.sh stays in sync with the repo root.
+          if [[ ! -f install.sh ]]; then
+            echo "error: install.sh missing at repository root" >&2
+            exit 1
+          fi
+          cp -f install.sh docs/install.sh
+          chmod +x docs/install.sh
           sed -i "s|__VERSION__|$VERSION|g" docs/index.html
+          # Sanity-check the published installer is present in the site tree.
+          test -x docs/install.sh
+          head -n 1 docs/install.sh | grep -q '^#!'
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
