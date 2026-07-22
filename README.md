@@ -50,7 +50,9 @@ herm
 
 ## Herm app for iOS/macOS
 
-**TODO**
+Herm is also distributed as a native iOS and macOS application. It cannot be used as a coding agent in that context, but it has an in-process Unix-like sandbox and a Luau-scriptable runtime that allow it to accomplish a wide variety of tasks fully on-device. Herm can even write programs for itself in that environment, mount file storage, and leverage OS frameworks for web browsing, location, calendars, and more.
+
+Herm for iOS/macOS is not yet available on the App Store, but is in active development in this repository.
 
 ## Roadmap
 
