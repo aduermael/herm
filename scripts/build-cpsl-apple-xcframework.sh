@@ -220,6 +220,13 @@ sh "$herm_root/scripts/apply-cpsl-patches.sh" "$cpsl_root"
 [ -f "$cpsl_root/ffi/Cargo.toml" ] || die "missing CPSL FFI crate at $cpsl_root/ffi"
 [ -f "$cpsl_root/ffi/include/cpsl.h" ] || die "missing CPSL FFI header at $cpsl_root/ffi/include/cpsl.h"
 
+if [ "$build_system" = bazel ]; then
+	# Bazel may update host-specific module resolution data on first use. Resolve
+	# it before fingerprinting MODULE.bazel.lock so that the build cannot
+	# invalidate its own cache identity.
+	"$bazel_command" mod deps --lockfile_mode=update >/dev/null
+fi
+
 build_identity_before=$(cpsl_apple_build_stamp_expected \
 	"$herm_root" "$cpsl_root" "$profile" "$cargo_profile" "$cargo_incremental") || \
 	die "failed to compute CPSL Apple build identity"
@@ -497,8 +504,15 @@ fi
 build_identity_after=$(cpsl_apple_build_stamp_expected \
 	"$herm_root" "$cpsl_root" "$profile" "$cargo_profile" "$cargo_incremental") || \
 	die "failed to verify CPSL Apple build identity"
-[ "$build_identity_before" = "$build_identity_after" ] || \
+if [ "$build_identity_before" != "$build_identity_after" ]; then
+	identity_before_path="$work_dir/.cpsl-build-identity-before.$$"
+	identity_after_path="$work_dir/.cpsl-build-identity-after.$$"
+	printf '%s\n' "$build_identity_before" >"$identity_before_path"
+	printf '%s\n' "$build_identity_after" >"$identity_after_path"
+	diff -u "$identity_before_path" "$identity_after_path" >&2 || true
+	rm -f "$identity_before_path" "$identity_after_path"
 	die "CPSL Apple build inputs changed while the build was running; retry the build"
+fi
 cpsl_apple_build_stamp_write_value "$build_stamp_path" "$build_identity_after"
 
 if [ -z "${OUT_DIR:-}" ] && [ -z "${CPSL_WORK_DIR:-}" ] && [ -z "${CONFIGURATION:-}" ]; then

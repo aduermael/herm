@@ -155,6 +155,7 @@ if [ "${1:-}" = --version ]; then
 	exit 0
 fi
 
+[ "${1:-}" != mod ] || exit 0
 [ "${1:-}" = build ] || exit 1
 platform=
 mode=
