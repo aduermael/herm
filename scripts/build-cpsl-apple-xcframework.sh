@@ -275,10 +275,7 @@ build_target() {
 			"--platforms=$bazel_platform" \
 			"--compilation_mode=$bazel_compilation_mode" \
 			"--symlink_prefix=$work_dir/bazel-" \
-			"--repo_env=DEVELOPER_DIR=$developer_dir" \
-			"--action_env=DEVELOPER_DIR=$developer_dir" \
-			"--action_env=SDKROOT=$sdk_path" \
-			"--action_env=$deployment_env=$deployment_target"
+			"--repo_env=DEVELOPER_DIR=$developer_dir"
 		case "$sdk" in
 		iphoneos | iphonesimulator)
 			set -- "$@" "--ios_minimum_os=$deployment_target"
