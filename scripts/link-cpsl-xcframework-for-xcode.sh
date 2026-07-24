@@ -397,6 +397,10 @@ cpsl_xcode_overlay_built_slice() {
 	prepared_dir="$tmp_dir/prepared-$dest_id"
 	rm -rf "$prepared_dir"
 	cp -R "$source_dir" "$prepared_dir"
+	# Bazel outputs are read-only. The validation overlay may replace this file
+	# after adding placeholder-only architectures, so make the private copy
+	# writable first.
+	chmod u+w "$prepared_dir/libcpsl.dylib"
 	cpsl_xcode_make_overlay_validation_safe "$category" "$prepared_dir/libcpsl.dylib"
 
 	mkdir -p "$dest_dir/Headers"
