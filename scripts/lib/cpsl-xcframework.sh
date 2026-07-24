@@ -190,6 +190,32 @@ cpsl_apple_arch_for_rust_target() {
 	esac
 }
 
+cpsl_apple_bazel_platform_for_rust_target() {
+	target=$1
+
+	case "$target" in
+	aarch64-apple-ios)
+		printf '%s\n' //bazel/platforms:ios_arm64
+		;;
+	aarch64-apple-ios-sim)
+		printf '%s\n' //bazel/platforms:ios_sim_arm64
+		;;
+	x86_64-apple-ios)
+		printf '%s\n' //bazel/platforms:ios_sim_x86_64
+		;;
+	aarch64-apple-darwin)
+		printf '%s\n' //bazel/platforms:macos_arm64
+		;;
+	x86_64-apple-darwin)
+		printf '%s\n' //bazel/platforms:macos_x86_64
+		;;
+	*)
+		printf '%s\n' "unsupported CPSL Apple Rust target for Bazel: $target" >&2
+		return 1
+		;;
+	esac
+}
+
 cpsl_apple_request_print() {
 	apple_platforms=$1
 	ios_device_targets=$2
@@ -359,6 +385,51 @@ cpsl_apple_cargo_profile_from_configuration() {
 
 cpsl_apple_cargo_profile_from_environment() {
 	cpsl_apple_cargo_profile_from_configuration "${CONFIGURATION:-}"
+}
+
+cpsl_apple_bazel_compilation_mode_from_configuration() {
+	configuration=${1:-}
+
+	case "$configuration" in
+	Debug)
+		printf '%s\n' dbg
+		;;
+	"" | Release)
+		printf '%s\n' opt
+		;;
+	*)
+		printf '%s\n' "unsupported Xcode configuration for CPSL build: $configuration" >&2
+		return 1
+		;;
+	esac
+}
+
+cpsl_apple_bazel_compilation_mode_from_environment() {
+	cpsl_apple_bazel_compilation_mode_from_configuration "${CONFIGURATION:-}"
+}
+
+cpsl_apple_build_system_from_environment() {
+	build_system=${CPSL_APPLE_BUILD_SYSTEM:-bazel}
+
+	case "$build_system" in
+	bazel | cargo)
+		printf '%s\n' "$build_system"
+		;;
+	*)
+		printf '%s\n' "CPSL_APPLE_BUILD_SYSTEM must be bazel or cargo, got: $build_system" >&2
+		return 1
+		;;
+	esac
+}
+
+cpsl_apple_bazel_command() {
+	if [ -n "${BAZEL:-}" ]; then
+		command -v "$BAZEL"
+	elif command -v bazelisk >/dev/null 2>&1; then
+		command -v bazelisk
+	else
+		command -v bazel
+	fi
 }
 
 cpsl_apple_cargo_incremental_from_environment() {

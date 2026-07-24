@@ -1,6 +1,7 @@
 module(name = "herm")
 
 bazel_dep(name = "gazelle", version = "0.51.3")
+bazel_dep(name = "apple_support", version = "1.24.2")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "rules_go", version = "0.61.1")
 bazel_dep(name = "rules_rust", version = "0.71.3")
@@ -23,6 +24,13 @@ use_repo(
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
+    extra_target_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+        "x86_64-apple-darwin",
+        "x86_64-apple-ios",
+    ],
     versions = ["1.95.0"],
 )
 use_repo(rust, "rust_toolchains")
@@ -30,12 +38,28 @@ use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.annotation(
+    crate = "luau0-src",
+    data_glob = ["**"],
+    patch_args = ["-p0"],
+    patches = ["//bazel/patches:luau0-src-runfiles.patch"],
+)
+crate.annotation(
+    build_script_data = ["@cpsl_crates__luau0-src-0.20.7-luau728//:luau0_src"],
+    crate = "mlua-sys",
+)
 crate.from_cargo(
     name = "cpsl_crates",
-    cargo_lockfile = "//:external/cpsl/Cargo.lock",
-    manifests = ["//:external/cpsl/Cargo.toml"],
+    cargo_lockfile = "//bazel/cpsl-deps:Cargo.lock",
+    manifests = ["//bazel/cpsl-deps:Cargo.toml"],
+    skip_cargo_lockfile_overwrite = True,
     supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
         "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-apple-ios",
         "x86_64-unknown-linux-gnu",
     ],
 )

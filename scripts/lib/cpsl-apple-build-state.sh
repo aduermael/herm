@@ -76,6 +76,11 @@ cpsl_apple_builder_inputs_state() {
 
 	{
 		for relative_path in \
+			.bazelrc \
+			.bazelversion \
+			BUILD.bazel \
+			MODULE.bazel \
+			MODULE.bazel.lock \
 			rust-toolchain.toml \
 			scripts/build-cpsl-apple-xcframework.sh \
 			scripts/apply-cpsl-patches.sh \
@@ -86,6 +91,12 @@ cpsl_apple_builder_inputs_state() {
 		do
 			cpsl_apple_state_file_record "$relative_path" "$herm_root/$relative_path"
 		done
+
+		find "$herm_root/bazel" -type f -print 2>/dev/null | LC_ALL=C sort |
+			while IFS= read -r path; do
+				relative_path=${path#"$herm_root/"}
+				cpsl_apple_state_file_record "$relative_path" "$path"
+			done
 
 		cpsl_apple_state_file_record scripts/cpsl-patches/series "$series_file"
 		if [ -f "$series_file" ]; then
@@ -139,6 +150,9 @@ cpsl_apple_build_stamp_content() {
 	rustc_version=$6
 	cargo_version=$7
 	xcode_version=$8
+	build_system=$9
+	bazel_compilation_mode=${10}
+	bazel_version=${11}
 	source_path=$(CDPATH= cd "$source_root" && pwd -P) || return 1
 	source_state=$(cpsl_apple_source_tree_state "$source_path") || return 1
 	builder_state=$(cpsl_apple_builder_inputs_state "$herm_root") || return 1
@@ -147,7 +161,7 @@ cpsl_apple_build_stamp_content() {
 	[ -n "${IOS_DEVICE_TARGETS:-}${IOS_SIMULATOR_TARGETS:-}" ] || ios_deployment_target=unused
 	[ -n "${MACOS_TARGETS:-}" ] || macos_deployment_target=unused
 
-	printf 'format=1\n'
+	printf 'format=2\n'
 	printf 'source_path=%s\n' "$(cpsl_apple_state_value "$source_path")"
 	printf 'source_state=%s\n' "$(cpsl_apple_state_value "$source_state")"
 	printf 'builder_inputs_sha256=%s\n' "$builder_state"
@@ -158,8 +172,14 @@ cpsl_apple_build_stamp_content() {
 		printf 'features=ffi-minimal\n'
 	fi
 	printf 'configuration=%s\n' "$(cpsl_apple_state_value "${CONFIGURATION:-manual}")"
-	printf 'cargo_profile=%s\n' "$cargo_profile"
-	printf 'cargo_incremental=%s\n' "$cargo_incremental"
+	printf 'build_system=%s\n' "$build_system"
+	if [ "$build_system" = bazel ]; then
+		printf 'bazel_compilation_mode=%s\n' "$bazel_compilation_mode"
+		printf 'bazel_version=%s\n' "$(cpsl_apple_state_value "$bazel_version")"
+	else
+		printf 'cargo_profile=%s\n' "$cargo_profile"
+		printf 'cargo_incremental=%s\n' "$cargo_incremental"
+	fi
 	printf 'apple_platforms=%s\n' "$(cpsl_apple_state_value "$APPLE_PLATFORMS")"
 	printf 'ios_device_targets=%s\n' "$(cpsl_apple_state_value "$IOS_DEVICE_TARGETS")"
 	printf 'ios_simulator_targets=%s\n' "$(cpsl_apple_state_value "$IOS_SIMULATOR_TARGETS")"
@@ -167,9 +187,11 @@ cpsl_apple_build_stamp_content() {
 	printf 'ios_deployment_target=%s\n' "$(cpsl_apple_state_value "$ios_deployment_target")"
 	printf 'macos_deployment_target=%s\n' "$(cpsl_apple_state_value "$macos_deployment_target")"
 	printf 'pdfium_version=%s\n' "$(cpsl_apple_state_value "${PDFIUM_VERSION:-7734}")"
-	printf 'rustflags=%s\n' "$(cpsl_apple_state_value "${RUSTFLAGS:-}")"
-	printf 'rustc_version=%s\n' "$(cpsl_apple_state_value "$rustc_version")"
-	printf 'cargo_version=%s\n' "$(cpsl_apple_state_value "$cargo_version")"
+	if [ "$build_system" = cargo ]; then
+		printf 'rustflags=%s\n' "$(cpsl_apple_state_value "${RUSTFLAGS:-}")"
+		printf 'rustc_version=%s\n' "$(cpsl_apple_state_value "$rustc_version")"
+		printf 'cargo_version=%s\n' "$(cpsl_apple_state_value "$cargo_version")"
+	fi
 	printf 'xcode_version=%s\n' "$(cpsl_apple_state_value "$xcode_version")"
 }
 
@@ -180,12 +202,24 @@ cpsl_apple_build_stamp_expected() {
 	cargo_profile=$4
 	cargo_incremental=$5
 
-	rustc_version=$(rustc -vV 2>/dev/null) || return 1
-	cargo_version=$(cargo --version 2>/dev/null) || return 1
+	build_system=$(cpsl_apple_build_system_from_environment) || return 1
 	xcode_version=$(xcodebuild -version 2>/dev/null) || return 1
+	if [ "$build_system" = bazel ]; then
+		bazel_command=$(cpsl_apple_bazel_command 2>/dev/null) || return 1
+		bazel_version=$("$bazel_command" --version 2>/dev/null) || return 1
+		bazel_compilation_mode=$(cpsl_apple_bazel_compilation_mode_from_environment) || return 1
+		rustc_version=unused
+		cargo_version=unused
+	else
+		rustc_version=$(rustc -vV 2>/dev/null) || return 1
+		cargo_version=$(cargo --version 2>/dev/null) || return 1
+		bazel_version=unused
+		bazel_compilation_mode=unused
+	fi
 	cpsl_apple_build_stamp_content \
 		"$herm_root" "$source_root" "$build_profile" "$cargo_profile" "$cargo_incremental" \
-		"$rustc_version" "$cargo_version" "$xcode_version"
+		"$rustc_version" "$cargo_version" "$xcode_version" \
+		"$build_system" "$bazel_compilation_mode" "$bazel_version"
 }
 
 cpsl_apple_build_stamp_matches_value() {

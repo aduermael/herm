@@ -154,7 +154,7 @@ herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/host-path.sh"
 . "$script_dir/lib/cpsl-xcframework.sh"
 . "$script_dir/lib/cpsl-apple-build-state.sh"
-herm_ensure_rust_path
+herm_ensure_host_tools_path
 
 skip_mode=0
 while [ "$#" -gt 0 ]; do
@@ -189,12 +189,26 @@ if cpsl_apple_has_xcode_selection; then
 	unset CPSL_ROOT
 fi
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
-cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
-cargo_incremental=$(cpsl_apple_cargo_incremental_from_environment) || die "failed to resolve CPSL incremental compilation setting"
+build_system=$(cpsl_apple_build_system_from_environment) || die "failed to resolve CPSL Apple build system"
+if [ "$build_system" = cargo ]; then
+	cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+	cargo_incremental=$(cpsl_apple_cargo_incremental_from_environment) || die "failed to resolve CPSL incremental compilation setting"
+else
+	cargo_profile=unused
+	cargo_incremental=unused
+fi
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 default_cpsl_root="$herm_root/external/cpsl"
 cpsl_input_root=${CPSL_ROOT:-"$default_cpsl_root"}
 [ "${HERM_CPSL_FORCE_SUBMODULE:-0}" -eq 0 ] || cpsl_input_root=$default_cpsl_root
+if [ "$build_system" = bazel ]; then
+	if [ -n "${CPSL_ROOT:-}" ]; then
+		requested_cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
+		[ "$requested_cpsl_root" = "$default_cpsl_root" ] || \
+			die "Bazel builds use $default_cpsl_root; set CPSL_APPLE_BUILD_SYSTEM=cargo to build a different CPSL_ROOT"
+	fi
+	cpsl_input_root=$default_cpsl_root
+fi
 xcframework_path="$out_dir/cpsl.xcframework"
 pdfium_path="$out_dir/libs/pdfium"
 build_stamp_path=$(cpsl_apple_build_stamp_path "$out_dir")
@@ -239,6 +253,7 @@ printf 'Building CPSL Apple XCFramework for: %s (%s)\n' "$CPSL_REQUEST_DESCRIPTI
 APPLE_PLATFORMS="$APPLE_PLATFORMS" \
 	IOS_DEVICE_TARGETS="$IOS_DEVICE_TARGETS" \
 	IOS_SIMULATOR_TARGETS="$IOS_SIMULATOR_TARGETS" \
-	MACOS_TARGETS="$MACOS_TARGETS" \
-	CONFIGURATION="${CONFIGURATION:-}" \
+MACOS_TARGETS="$MACOS_TARGETS" \
+CONFIGURATION="${CONFIGURATION:-}" \
+CPSL_APPLE_BUILD_SYSTEM="$build_system" \
 	"$herm_root/scripts/build-cpsl-apple-xcframework.sh"

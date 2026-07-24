@@ -22,8 +22,8 @@ Usage:
 
 Builds one CPSL XCFramework for Apple app targets.
 
-By default this script builds CPSL from Herm's external/cpsl submodule,
-matching scripts/build-cpsl-image.sh. The output is one Apple-consumable
+By default this script builds CPSL with Bazel from Herm's external/cpsl
+submodule. The output is one Apple-consumable
 XCFramework containing the requested iOS device, iOS simulator, and/or macOS
 slices.
 
@@ -33,15 +33,18 @@ Options:
   -h, --help  Show this help.
 
 Environment:
-  CPSL_ROOT                Existing CPSL checkout to use instead of external/cpsl.
+  CPSL_APPLE_BUILD_SYSTEM Build system: bazel (default) or cargo (fallback).
+  BAZEL                    Bazel or Bazelisk executable override.
+  CPSL_ROOT                Existing CPSL checkout for the Cargo fallback. Bazel
+                           builds use Herm's external/cpsl submodule.
   CPSL_WORK_DIR            Gitignored work/artifact root. Defaults to HERM_ROOT/.herm-cpsl.
-  CPSL_TARGET_DIR          Cargo target directory override. The default is a
+  CPSL_TARGET_DIR          Cargo fallback target directory override. The default is a
                            toolchain-keyed directory under CPSL_WORK_DIR/cargo-target.
   CARGO_INCREMENTAL       Override Cargo incremental compilation with 0 or 1.
                           Defaults to 1 for Debug and 0 for Release.
   OUT_DIR                  Artifact directory. Defaults to CPSL_WORK_DIR/artifacts/apple,
                            or CPSL_WORK_DIR/artifacts/apple/CONFIGURATION for Xcode builds.
-  CONFIGURATION            Xcode configuration. Debug uses Cargo debug; Release uses Cargo release.
+  CONFIGURATION            Xcode configuration. Debug uses Bazel dbg; Release uses Bazel opt.
   APPLE_PLATFORMS          Platforms to include. Defaults to "ios macos".
   IOS_DEPLOYMENT_TARGET    Minimum iOS version. Defaults to 17.0.
   MACOSX_DEPLOYMENT_TARGET Minimum macOS version. Defaults to 14.0.
@@ -83,7 +86,7 @@ herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/cpsl-xcframework.sh"
 . "$script_dir/lib/cpsl-apple-build-state.sh"
 . "$script_dir/lib/build-manifest.sh"
-herm_ensure_rust_path
+herm_ensure_host_tools_path
 
 [ "$(uname -s)" = Darwin ] || die "Apple XCFramework builds require macOS with Xcode"
 
@@ -92,8 +95,15 @@ mkdir -p "$work_dir"
 work_dir=$(CDPATH= cd "$work_dir" && pwd -P)
 default_cpsl_root="$herm_root/external/cpsl"
 target_dir=${CPSL_TARGET_DIR:-}
-cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
-cargo_incremental=$(cpsl_apple_cargo_incremental_from_environment) || die "failed to resolve CPSL incremental compilation setting"
+build_system=$(cpsl_apple_build_system_from_environment) || die "failed to resolve CPSL Apple build system"
+bazel_compilation_mode=$(cpsl_apple_bazel_compilation_mode_from_environment) || die "failed to resolve CPSL Bazel compilation mode"
+if [ "$build_system" = cargo ]; then
+	cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+	cargo_incremental=$(cpsl_apple_cargo_incremental_from_environment) || die "failed to resolve CPSL incremental compilation setting"
+else
+	cargo_profile=unused
+	cargo_incremental=unused
+fi
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 ios_deployment_target=${IOS_DEPLOYMENT_TARGET:-${IPHONEOS_DEPLOYMENT_TARGET:-17.0}}
 macos_deployment_target=${MACOSX_DEPLOYMENT_TARGET:-14.0}
@@ -115,8 +125,13 @@ include_macos=0
 [ -n "$ios_simulator_targets" ] && include_ios_simulator=1
 [ -n "$macos_targets" ] && include_macos=1
 
-need_cmd cargo "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
-need_cmd rustc "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
+if [ "$build_system" = bazel ]; then
+	bazel_command=$(cpsl_apple_bazel_command 2>/dev/null) || \
+		die "Bazelisk or Bazel is required; install Bazelisk with: brew install bazelisk"
+else
+	need_cmd cargo "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
+	need_cmd rustc "install Rust from https://rustup.rs, then restart Xcode so run scripts can find ~/.cargo/bin"
+fi
 need_cmd xcode-select "run: xcode-select --install"
 need_cmd xcodebuild "install Xcode"
 need_cmd xcrun "install Xcode command line tools"
@@ -127,7 +142,7 @@ developer_dir=$(xcode-select -p)
 if ! xcodebuild -version >/dev/null 2>&1; then
 	die "selected developer directory is not full Xcode: $developer_dir; install full Xcode, open it once, then run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
 fi
-if [ -z "$target_dir" ]; then
+if [ "$build_system" = cargo ] && [ -z "$target_dir" ]; then
 	cache_namespace=$(cpsl_apple_cargo_cache_namespace) || die "failed to derive CPSL Cargo cache namespace"
 	target_dir="$work_dir/cargo-target/$cache_namespace"
 fi
@@ -158,7 +173,7 @@ fi
 if [ "$include_macos" -eq 1 ]; then
 	required_targets="${required_targets:+$required_targets }$macos_targets"
 fi
-if command -v rustup >/dev/null 2>&1; then
+if [ "$build_system" = cargo ] && command -v rustup >/dev/null 2>&1; then
 	missing_targets=
 	for target in $required_targets; do
 		if ! rustup target list --installed | grep -qx "$target"; then
@@ -170,7 +185,13 @@ if command -v rustup >/dev/null 2>&1; then
 	fi
 fi
 
-if [ "${HERM_CPSL_FORCE_SUBMODULE:-0}" = 1 ]; then
+if [ "$build_system" = bazel ] && [ -n "${CPSL_ROOT:-}" ]; then
+	requested_cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
+	[ "$requested_cpsl_root" = "$default_cpsl_root" ] || \
+		die "Bazel builds use $default_cpsl_root; set CPSL_APPLE_BUILD_SYSTEM=cargo to build a different CPSL_ROOT"
+fi
+
+if [ "${HERM_CPSL_FORCE_SUBMODULE:-0}" = 1 ] || [ "$build_system" = bazel ]; then
 	if [ -n "${CPSL_ROOT:-}" ]; then
 		printf 'Ignoring CPSL_ROOT for Xcode CPSL build; using Herm submodule: %s\n' "$default_cpsl_root"
 	fi
@@ -239,43 +260,72 @@ build_target() {
 	deployment_env=$3
 	deployment_target=$4
 	output_dir=$5
-	target_env=$(target_env_name "$target")
-	target_env_upper=$(target_env_name_upper "$target")
 	sdk_path=$(xcrun --sdk "$sdk" --show-sdk-path)
-	clang=$(xcrun --sdk "$sdk" --find clang)
-	clangxx=$(xcrun --sdk "$sdk" --find clang++)
-	ar=$(xcrun --sdk "$sdk" --find ar)
-	install_name_flags="-C link-arg=-Wl,-install_name,@rpath/$lib_name"
-	rustflags=${RUSTFLAGS:-}
-	if [ -n "$rustflags" ]; then
-		rustflags="$rustflags $install_name_flags"
+
+	printf 'Building CPSL FFI (%s, %s) for %s\n' "$profile" "$build_system" "$target"
+	if [ "$build_system" = bazel ]; then
+		bazel_platform=$(cpsl_apple_bazel_platform_for_rust_target "$target") || exit 1
+		if [ "$profile" = apple-app ]; then
+			bazel_config=cpsl-apple
+		else
+			bazel_config=cpsl-minimum
+		fi
+		set -- build //:cpsl \
+			"--config=$bazel_config" \
+			"--platforms=$bazel_platform" \
+			"--compilation_mode=$bazel_compilation_mode" \
+			"--symlink_prefix=$work_dir/bazel-" \
+			"--repo_env=DEVELOPER_DIR=$developer_dir" \
+			"--action_env=DEVELOPER_DIR=$developer_dir" \
+			"--action_env=SDKROOT=$sdk_path" \
+			"--action_env=$deployment_env=$deployment_target"
+		case "$sdk" in
+		iphoneos | iphonesimulator)
+			set -- "$@" "--ios_minimum_os=$deployment_target"
+			;;
+		macosx)
+			set -- "$@" "--macos_minimum_os=$deployment_target"
+			;;
+		esac
+		"$bazel_command" "$@"
+		target_lib="$work_dir/bazel-bin/$lib_name"
 	else
-		rustflags=$install_name_flags
+		target_env=$(target_env_name "$target")
+		target_env_upper=$(target_env_name_upper "$target")
+		clang=$(xcrun --sdk "$sdk" --find clang)
+		clangxx=$(xcrun --sdk "$sdk" --find clang++)
+		ar=$(xcrun --sdk "$sdk" --find ar)
+		install_name_flags="-C link-arg=-Wl,-install_name,@rpath/$lib_name"
+		rustflags=${RUSTFLAGS:-}
+		if [ -n "$rustflags" ]; then
+			rustflags="$rustflags $install_name_flags"
+		else
+			rustflags=$install_name_flags
+		fi
+		if [ "$profile" = apple-app ]; then
+			cargo_features=embedded-agent
+		else
+			cargo_features=ffi-minimal
+		fi
+		set -- build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi
+		if [ "$cargo_profile" = release ]; then
+			set -- "$@" --release
+		fi
+		set -- "$@" --no-default-features --features "$cargo_features" --target "$target"
+		env \
+			"SDKROOT=$sdk_path" \
+			"$deployment_env=$deployment_target" \
+			"CC_$target_env=$clang" \
+			"CXX_$target_env=$clangxx" \
+			"AR_$target_env=$ar" \
+			"CARGO_TARGET_${target_env_upper}_LINKER=$clang" \
+			"CARGO_INCREMENTAL=$cargo_incremental" \
+			"RUSTFLAGS=$rustflags" \
+			cargo "$@"
+
+		target_lib="$target_dir/$target/$cargo_profile/$lib_name"
 	fi
 
-	printf 'Building CPSL FFI (%s) for %s\n' "$profile" "$target"
-	if [ "$profile" = apple-app ]; then
-		cargo_features=embedded-agent
-	else
-		cargo_features=ffi-minimal
-	fi
-	set -- build --manifest-path "$cpsl_root/Cargo.toml" --target-dir "$target_dir" -p cpsl-ffi
-	if [ "$cargo_profile" = release ]; then
-		set -- "$@" --release
-	fi
-	set -- "$@" --no-default-features --features "$cargo_features" --target "$target"
-	env \
-		"SDKROOT=$sdk_path" \
-		"$deployment_env=$deployment_target" \
-		"CC_$target_env=$clang" \
-		"CXX_$target_env=$clangxx" \
-		"AR_$target_env=$ar" \
-		"CARGO_TARGET_${target_env_upper}_LINKER=$clang" \
-		"CARGO_INCREMENTAL=$cargo_incremental" \
-		"RUSTFLAGS=$rustflags" \
-		cargo "$@"
-
-	target_lib="$target_dir/$target/$cargo_profile/$lib_name"
 	[ -f "$target_lib" ] || die "expected CPSL library not found: $target_lib"
 	mkdir -p "$output_dir"
 	cp "$target_lib" "$output_dir/$lib_name"
@@ -419,13 +469,21 @@ herm_manifest_init "$manifest_path"
 herm_manifest_add "$manifest_path" builder build-cpsl-apple-xcframework.sh
 herm_manifest_add "$manifest_path" profile "$profile"
 herm_manifest_add "$manifest_path" features "$([ "$profile" = apple-app ] && printf '%s' embedded-agent || printf '%s' ffi-minimal)"
-herm_manifest_add "$manifest_path" cargo_profile "$cargo_profile"
-herm_manifest_add "$manifest_path" cargo_incremental "$cargo_incremental"
+herm_manifest_add "$manifest_path" build_system "$build_system"
+if [ "$build_system" = bazel ]; then
+	herm_manifest_add "$manifest_path" bazel_compilation_mode "$bazel_compilation_mode"
+	herm_manifest_add "$manifest_path" bazel_version "$("$bazel_command" --version)"
+else
+	herm_manifest_add "$manifest_path" cargo_profile "$cargo_profile"
+	herm_manifest_add "$manifest_path" cargo_incremental "$cargo_incremental"
+fi
 herm_manifest_add "$manifest_path" targets "$CPSL_REQUEST_DESCRIPTION"
 herm_manifest_add "$manifest_path" herm_revision "$(herm_source_revision "$herm_root")"
 herm_manifest_add "$manifest_path" cpsl_revision "$(herm_source_revision "$cpsl_root")"
-herm_manifest_add "$manifest_path" rustc_version "$(rustc --version)"
-herm_manifest_add "$manifest_path" cargo_version "$(cargo --version)"
+if [ "$build_system" = cargo ]; then
+	herm_manifest_add "$manifest_path" rustc_version "$(rustc --version)"
+	herm_manifest_add "$manifest_path" cargo_version "$(cargo --version)"
+fi
 herm_manifest_add "$manifest_path" xcode_version "$(xcodebuild -version)"
 herm_manifest_add "$manifest_path" clang_version "$(xcrun clang --version | sed -n '1p')"
 herm_manifest_add_file "$manifest_path" cpsl_header_sha256 "$include_dir/cpsl.h"
@@ -453,7 +511,12 @@ else
 fi
 
 printf '\nBuilt CPSL Apple XCFramework (%s)\n' "$profile"
-printf '  cargo profile: %s\n' "$cargo_profile"
+printf '  build system: %s\n' "$build_system"
+if [ "$build_system" = bazel ]; then
+	printf '  Bazel compilation mode: %s\n' "$bazel_compilation_mode"
+else
+	printf '  Cargo profile: %s\n' "$cargo_profile"
+fi
 printf '  targets: %s\n' "$CPSL_REQUEST_DESCRIPTION"
 printf '  image: %s\n' "$display_out"
 printf '  xcframework: %s/%s\n' "$display_out" "$xcframework_name"

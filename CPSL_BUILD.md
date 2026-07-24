@@ -146,9 +146,9 @@ scripts/build-cpsl-apple-xcframework.sh
 ```
 
 Direct CLI use follows the same source dependency model as the host-native
-helper: Herm builds from `external/cpsl` unless `CPSL_ROOT` points at an
-existing checkout. Xcode auto-builds are stricter and always build from Herm's
-`external/cpsl` submodule, ignoring any `CPSL_ROOT` in the user's environment.
+helper only when the Cargo fallback is selected. The default Bazel build and
+Xcode auto-builds always use Herm's `external/cpsl` submodule because the Bazel
+graph models that checkout directly.
 
 The script builds CPSL's FFI crate for iOS device, iOS simulator, and macOS
 targets by default, then packages the dynamic libraries plus `cpsl.h` into one
@@ -161,31 +161,33 @@ XCFramework:
   include/cpsl.h
 ```
 
-Direct CLI builds use Cargo's release profile by default. When invoked from
-Xcode, the helper follows Xcode's `CONFIGURATION`: `Debug` uses Cargo's debug
-profile with incremental compilation, while `Release` uses Cargo's release
-profile without incremental compilation. This follows Cargo's normal profile
-defaults. The default Cargo target directory is also namespaced by the Rust,
-Cargo, and Xcode versions plus deployment/linker settings, so an Xcode or
-toolchain change cannot consume incompatible incremental state. Source edits
-continue to share that namespace and receive normal incremental recompilation.
-Set `CARGO_INCREMENTAL=0` or `1` only to override the profile behavior.
-
-Install Rust with [rustup](https://rustup.rs/), then add the Apple targets before
-building:
+Apple XCFrameworks use Bazel by default. Install Bazelisk (recommended) or
+Bazel before building:
 
 ```sh
-rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin
+brew install bazelisk
 ```
 
-Xcode run scripts do not use your login-shell `PATH`. The CPSL build scripts
-source `~/.cargo/env` and prepend `~/.cargo/bin` automatically. If Xcode still
-cannot find `cargo`, restart Xcode after installing Rust.
+Direct CLI builds use Bazel's optimized mode by default. When invoked from
+Xcode, `Debug` uses Bazel's `dbg` mode and `Release` uses `opt`. Bazel downloads
+the pinned Rust toolchains and all five Apple targets declared in
+`MODULE.bazel`; no host `rustup target add` step is required. Xcode run scripts
+also search Homebrew's standard Apple Silicon and Intel binary directories, so
+Bazelisk installed with Homebrew is available outside a login shell.
 
-Override the source or output path the same way as the host-native helper:
+The previous Cargo path remains available as an explicit fallback:
 
 ```sh
-CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-apple-xcframework.sh
+CPSL_APPLE_BUILD_SYSTEM=cargo scripts/build-cpsl-apple-xcframework.sh
+```
+
+The fallback requires Rust and the selected Apple targets. It accepts
+`CPSL_ROOT`, `CPSL_TARGET_DIR`, and `CARGO_INCREMENTAL` as before. The Bazel
+path rejects a `CPSL_ROOT` outside Herm's submodule.
+
+Override the output path or platform selection as needed:
+
+```sh
 OUT_DIR=/tmp/cpsl-apple scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=ios scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=macos scripts/build-cpsl-apple-xcframework.sh
@@ -269,12 +271,13 @@ it reuses
 `.herm-cpsl/artifacts/apple/Release/cpsl.xcframework` only when its adjacent
 `.cpsl-apple-build.stamp` exactly matches the current request. The content-based
 identity includes the selected platform and Rust target triples, Cargo profile
-and incremental mode, deployment targets, CPSL source revision plus local
-changes, the ordered patch inputs, build-script content, `RUSTFLAGS`, PDFium
-version, and Rust/Cargo/Xcode versions. It therefore rebuilds when any effective
-input changes even if file mtimes move backwards, and it does not reuse a
-universal artifact for a single-architecture request. A build is left unstamped
-and retried if its inputs change while compilation is running.
+or Bazel compilation mode, deployment targets, CPSL source revision plus local
+changes, the ordered patch inputs, Bazel graph and lock files, build-script
+content, PDFium version, and Bazel/Xcode versions. Cargo fallback identities
+also include `RUSTFLAGS` and Rust/Cargo versions. It therefore rebuilds when any
+effective input changes even if file mtimes move backwards, and it does not
+reuse a universal artifact for a single-architecture request. A build is left
+unstamped and retried if its inputs change while compilation is running.
 
 Xcode keeps Debug and Release CPSL artifacts separate:
 
@@ -325,9 +328,8 @@ The first CPSL XCFramework build for a destination may take several minutes.
 You need:
 
 - **Full Xcode** installed and selected (Command Line Tools alone is not enough)
-- The Rust Apple target(s) for the selected Xcode destination, or all targets
-  listed in [Apple XCFramework](#apple-xcframework) if you want the direct CLI
-  default output
+- **Bazelisk or Bazel** available on `PATH`; the pinned Rust Apple toolchains
+  are downloaded by Bazel
 
 Initialize Xcode from Terminal if needed:
 
@@ -337,7 +339,7 @@ sudo xcodebuild -runFirstLaunch
 ```
 
 The `herm` target sets `ENABLE_USER_SCRIPT_SANDBOXING = NO` so the run-script
-phase can invoke Cargo, Git, `xcodebuild`, and write under `.herm-cpsl/`.
+phase can invoke Bazel, Git, `xcodebuild`, and write under `.herm-cpsl/`.
 
 ### Force rebuild
 
@@ -451,10 +453,10 @@ scripts/test-cpsl-xcframework.sh
 scripts/test-cpsl-apple-build-integration.sh
 ```
 
-The integration test uses deterministic fake Apple tools to verify Debug and
-Release profile selection, incremental-mode propagation, warm no-ops, source
-staleness, corrupt-binary recovery, and exact architecture replacement. The
-macOS CI job separately builds the real Herm Xcode scheme twice.
+The integration test uses deterministic fake Apple tools to verify Bazel
+Debug/Release mode selection, the Cargo fallback, warm no-ops, source staleness,
+corrupt-binary recovery, and exact architecture replacement. The macOS CI job
+separately builds the real Herm Xcode scheme twice.
 
 To report the observed success/failure ratio for recent GitHub Actions runs:
 
@@ -467,9 +469,8 @@ workflow file, and sample size to override the defaults; the public API limits
 one report to at most 100 runs. The initial measurement is recorded in
 [`docs/CPSL_BUILD_BASELINE.md`](docs/CPSL_BUILD_BASELINE.md).
 
-The initial Linux-only Bazel experiment is documented in
-[`docs/BAZEL_EXPERIMENT.md`](docs/BAZEL_EXPERIMENT.md). It is additive; Cargo
-and Go remain the supported build path while the experiment is evaluated.
+The Bazel CPSL graph and the history of the initial Linux-only experiment are
+documented in [`docs/BAZEL_EXPERIMENT.md`](docs/BAZEL_EXPERIMENT.md).
 
 ## macOS From Linux
 

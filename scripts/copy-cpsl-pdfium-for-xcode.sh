@@ -10,7 +10,6 @@ script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/cpsl-xcframework.sh"
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
-cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 pdfium_root="$out_dir/libs/pdfium"
 placeholder_dir="$herm_root/scripts/cpsl-xcframework-placeholder"

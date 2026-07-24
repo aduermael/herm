@@ -1,0 +1,23 @@
+--- src/lib.rs
++++ src/lib.rs
+@@ -108,7 +108,19 @@
+         let out_dir = self.out_dir.as_ref().expect("OUT_DIR is not set");
+         let build_dir = out_dir.join("luau-build");
+ 
+-        let source_base_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
++        // Under Bazel this crate is linked into another crate's build script, so
++        // its bundled Luau sources live in that executable's runfiles tree.
++        let source_base_dir = env::current_exe()
++            .ok()
++            .map(|path| PathBuf::from(format!("{}.runfiles", path.display())))
++            .and_then(|runfiles| fs::read_dir(runfiles).ok())
++            .and_then(|entries| {
++                entries
++                    .filter_map(Result::ok)
++                    .map(|entry| entry.path())
++                    .find(|path| path.join("luau").is_dir())
++            })
++            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+         let luau_source_dir = source_base_dir.join("luau");
+         let common_include_dir = luau_source_dir.join("Common").join("include");
+         let vm_source_dir = luau_source_dir.join("VM").join("src");

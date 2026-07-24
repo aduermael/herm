@@ -1,47 +1,53 @@
-# Bazel Linux Experiment
+# Bazel CPSL Build
 
-This is a deliberately narrow experiment. Cargo and Go modules remain the
-dependency sources of truth; Bazel models only the minimum Linux CPSL FFI
-profile and the Herm binary.
+Bazel is the default build system for CPSL Apple XCFrameworks. Cargo remains
+the source of truth for Rust dependency versions and is available as an
+explicit Apple fallback. Host-native Linux CPSL builds continue to use Cargo.
 
-The configuration pins Bazel, Go, Rust, and the Bazel rule sets. Crate Universe
-reads CPSL's existing Cargo manifests and lockfile, while `go_deps` reads the
-root Go module. The Rust targets intentionally select only `ffi-minimal` and
-the matching CPSL core features.
+The Bazel module pins Bazel, Go, Rust, and the Bazel rule sets. Crate Universe
+reads the registry dependency mirror in `bazel/cpsl-deps`, whose lockfile is
+derived from CPSL's committed Cargo lockfile. Herm models CPSL's first-party
+path crates directly so repository generation does not write into the source
+tree.
 
-After installing Bazel or Bazelisk, reproduce the experiment with:
+The `//:cpsl` shared-library target supports the minimal and Apple app feature
+profiles. The Apple wrapper builds it once per requested target platform,
+combines architecture slices where necessary, stages PDFium, and uses
+`xcodebuild -create-xcframework` for the final package.
+
+## Commands
+
+On macOS with full Xcode selected and Bazelisk or Bazel installed:
 
 ```sh
-bazel mod tidy
-bazel build //:linux_experiment
-bazel build //:cpsl_ffi //cmd/herm:herm
+scripts/build-cpsl-apple-xcframework.sh
 ```
 
-Compare any resulting clean and cached timings with
-[`CPSL_BUILD_BASELINE.md`](CPSL_BUILD_BASELINE.md).
+The wrapper selects `--config=cpsl-apple`. Its five supported platform labels
+are defined in `bazel/platforms/BUILD.bazel` for iOS device arm64, iOS
+simulator arm64 and x86_64, and macOS arm64 and x86_64.
 
-## Result and decision
+For the small profile, use:
 
-The experiment was run with Bazel 9.1.1 on 2026-07-15. `bazel mod tidy`
-completed but warned that CPSL path dependencies were non-hermetic and copied
-them into top-level `modules/` and `vendor/` directories. The subsequent
-`bazel build //:linux_experiment` failed during analysis because the generated
-Crate Universe repository did not declare the `void` dependency required by
-the patched `conch-parser` crate. No comparable Bazel timing was produced.
+```sh
+scripts/build-cpsl-apple-xcframework.sh --minimum
+```
 
-Bazel is not the supported CPSL Apple build system. `rules_rust` can generate
-dependencies from Cargo and build a shared Rust library, and Bazel's strongest
-additional benefit would be a content-addressed remote cache. This repository
-does not currently have that cache infrastructure, while its measured warm
-Cargo build is one second and the Xcode path now uses a content-keyed no-op plus
-Cargo's Debug incremental compilation. Adopting Bazel today would duplicate the
-Cargo feature/dependency graph and still require custom Apple slice, PDFium,
-XCFramework, and Xcode integration logic.
+To diagnose or temporarily bypass the Bazel path:
 
-Revisit the decision only if cross-machine cache reuse becomes a concrete need.
-Before considering Apple integration, require the Linux target to build from a
-committed lockfile without non-hermetic path warnings and show a material clean
-or cached improvement over the Cargo baseline. Then prove all five Apple Rust
-triples and Debug/Release parity independently. See the official
-[`rules_rust` Crate Universe documentation](https://bazelbuild.github.io/rules_rust/crate_universe_bzlmod.html)
-and [Bazel remote-cache requirements](https://bazel.build/remote/caching).
+```sh
+CPSL_APPLE_BUILD_SYSTEM=cargo scripts/build-cpsl-apple-xcframework.sh
+```
+
+The Cargo fallback requires a host Rust installation and the requested Apple
+targets. It is also the only Apple path that accepts a separate `CPSL_ROOT`.
+
+## Historical experiment
+
+The original 2026-07-15 Linux-only experiment failed because Crate Universe
+treated CPSL path dependencies as external generated repositories and did not
+model the patched `conch-parser` dependency correctly. The adopted graph fixes
+that by declaring first-party CPSL crates in the root Bazel package, using a
+registry-only dependency manifest, and carrying a small `luau0-src` runfiles
+compatibility patch. A Linux-safe `//:cpsl` minimum-profile build now completes;
+native Apple builds are exercised by the macOS Xcode CI job.
