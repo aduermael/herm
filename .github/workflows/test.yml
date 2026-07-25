@@ -88,23 +88,11 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install pinned Rust toolchain
-        run: |
-          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
-          rustup toolchain install "$toolchain" --profile minimal
-          rustup target add aarch64-apple-darwin --toolchain "$toolchain"
-
-      - name: Resolve Xcode cache key
-        id: xcode
-        run: echo "cache-key=$(xcodebuild -version | shasum -a 256 | awk '{ print $1 }')" >> "$GITHUB_OUTPUT"
-
-      - uses: actions/cache@v4
+      - uses: bazel-contrib/setup-bazel@0.19.0
         with:
-          path: |
-            ~/.cargo/git
-            ~/.cargo/registry
-            .herm-cpsl/cargo-target
-          key: cpsl-macos-${{ runner.os }}-${{ steps.xcode.outputs.cache-key }}-${{ hashFiles('rust-toolchain.toml', 'external/cpsl/Cargo.lock') }}
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}-cpsl-macos
+          repository-cache: true
 
       - name: Build Herm through Xcode
         run: |
@@ -126,8 +114,8 @@ jobs:
           test -f "$out/cpsl.xcframework/macos-arm64/libcpsl.dylib"
           test -f "$out/libs/pdfium/macos/lib/libpdfium.dylib"
           test -f "$out/.cpsl-apple-build.stamp"
-          grep -Fx 'cargo_profile=debug' "$out/.cpsl-apple-build.stamp"
-          grep -Fx 'cargo_incremental=1' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'build_system=bazel' "$out/.cpsl-apple-build.stamp"
+          grep -Fx 'bazel_compilation_mode=dbg' "$out/.cpsl-apple-build.stamp"
           grep -Fx 'ios_device_targets=' "$out/.cpsl-apple-build.stamp"
           grep -Fx 'ios_simulator_targets=' "$out/.cpsl-apple-build.stamp"
           grep -Fx 'macos_targets=aarch64-apple-darwin' "$out/.cpsl-apple-build.stamp"

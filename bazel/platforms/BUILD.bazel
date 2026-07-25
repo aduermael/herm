@@ -1,0 +1,49 @@
+package(default_visibility = ["//visibility:public"])
+
+platform(
+    name = "macos_arm64",
+    constraint_values = [
+        "@apple_support//constraints:apple",
+        "@platforms//cpu:aarch64",
+        "@platforms//os:osx",
+    ],
+)
+
+platform(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@apple_support//constraints:apple",
+        "@platforms//cpu:x86_64",
+        "@platforms//os:osx",
+    ],
+)
+
+platform(
+    name = "ios_arm64",
+    constraint_values = [
+        "@apple_support//constraints:apple",
+        "@apple_support//constraints:device",
+        "@platforms//cpu:aarch64",
+        "@platforms//os:ios",
+    ],
+)
+
+platform(
+    name = "ios_sim_arm64",
+    constraint_values = [
+        "@apple_support//constraints:apple",
+        "@apple_support//constraints:simulator",
+        "@platforms//cpu:aarch64",
+        "@platforms//os:ios",
+    ],
+)
+
+platform(
+    name = "ios_sim_x86_64",
+    constraint_values = [
+        "@apple_support//constraints:apple",
+        "@apple_support//constraints:simulator",
+        "@platforms//cpu:x86_64",
+        "@platforms//os:ios",
+    ],
+)

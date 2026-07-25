@@ -107,6 +107,17 @@ assert_eq "manual mac-only ignores iOS device" "" "$IOS_DEVICE_TARGETS"
 assert_eq "manual mac-only ignores iOS simulator" "" "$IOS_SIMULATOR_TARGETS"
 assert_eq "manual mac-only target" aarch64-apple-darwin "$MACOS_TARGETS"
 
+assert_eq "default Apple build system" bazel "$(unset CPSL_APPLE_BUILD_SYSTEM; cpsl_apple_build_system_from_environment)"
+assert_eq "explicit Cargo fallback" cargo "$(CPSL_APPLE_BUILD_SYSTEM=cargo cpsl_apple_build_system_from_environment)"
+assert_eq "Debug Bazel mode" dbg "$(cpsl_apple_bazel_compilation_mode_from_configuration Debug)"
+assert_eq "Release Bazel mode" opt "$(cpsl_apple_bazel_compilation_mode_from_configuration Release)"
+assert_eq "iOS device Bazel platform" //bazel/platforms:ios_arm64 \
+	"$(cpsl_apple_bazel_platform_for_rust_target aarch64-apple-ios)"
+assert_eq "iOS simulator Bazel platform" //bazel/platforms:ios_sim_x86_64 \
+	"$(cpsl_apple_bazel_platform_for_rust_target x86_64-apple-ios)"
+assert_eq "macOS Bazel platform" //bazel/platforms:macos_arm64 \
+	"$(cpsl_apple_bazel_platform_for_rust_target aarch64-apple-darwin)"
+
 assert_eq "debug configuration cargo profile" debug "$(cpsl_apple_cargo_profile_from_configuration Debug)"
 assert_eq "release configuration cargo profile" release "$(cpsl_apple_cargo_profile_from_configuration Release)"
 assert_eq "default cargo profile" release "$(cpsl_apple_cargo_profile_from_configuration "")"
@@ -173,48 +184,48 @@ MACOS_TARGETS=
 CONFIGURATION=Debug
 export APPLE_PLATFORMS IOS_DEVICE_TARGETS IOS_SIMULATOR_TARGETS MACOS_TARGETS CONFIGURATION
 identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test cargo unused unused)
 identity_stamp=$(cpsl_apple_build_stamp_path "$identity_root/out")
 cpsl_apple_build_stamp_write_value "$identity_stamp" "$identity"
 cpsl_apple_build_stamp_matches_value "$identity_stamp" "$identity" || \
 	fail "build identity should match unchanged inputs"
 touch "$identity_source/input.rs"
 unchanged_identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test cargo unused unused)
 cpsl_apple_build_stamp_matches_value "$identity_stamp" "$unchanged_identity" || \
 	fail "build identity should ignore mtime-only changes"
 printf '%s\n' unlisted >"$identity_root/scripts/cpsl-patches/local-only.patch"
 unchanged_identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test cargo unused unused)
 cpsl_apple_build_stamp_matches_value "$identity_stamp" "$unchanged_identity" || \
 	fail "build identity should ignore patches absent from the ordered series"
 IOS_SIMULATOR_TARGETS=x86_64-apple-ios
 changed_identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test cargo unused unused)
 if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
 	fail "build identity should reject a different exact architecture"
 fi
 IOS_SIMULATOR_TARGETS=aarch64-apple-ios-sim
 changed_identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" minimum debug 1 rustc-test cargo-test xcode-test)
+	"$identity_root" "$identity_source" minimum debug 1 rustc-test cargo-test xcode-test cargo unused unused)
 if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
 	fail "build identity should reject a different CPSL feature profile"
 fi
 changed_identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" apple-app debug 1 rustc-new cargo-test xcode-test)
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-new cargo-test xcode-test cargo unused unused)
 if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
 	fail "build identity should reject a different Rust toolchain"
 fi
 printf '%s\n' source-v2 >"$identity_source/input.rs"
 changed_identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test cargo unused unused)
 if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
 	fail "build identity should reject changed CPSL source content"
 fi
 printf '%s\n' source-v1 >"$identity_source/input.rs"
 printf '%s\n' patch-v2 >"$identity_root/scripts/cpsl-patches/0001-test.patch"
 changed_identity=$(cpsl_apple_build_stamp_content \
-	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test)
+	"$identity_root" "$identity_source" apple-app debug 1 rustc-test cargo-test xcode-test cargo unused unused)
 if cpsl_apple_build_stamp_matches_value "$identity_stamp" "$changed_identity"; then
 	fail "build identity should reject changed listed patch content"
 fi

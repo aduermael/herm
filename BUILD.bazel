@@ -1,3 +1,4 @@
+load("@cpsl_crates//:defs.bzl", "all_crate_deps")
 load("@gazelle//:def.bzl", "gazelle")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library")
 
@@ -15,6 +16,11 @@ exports_files([
 
 gazelle(name = "gazelle")
 
+config_setting(
+    name = "cpsl_apple_app_profile",
+    define_values = {"CPSL_PROFILE": "apple-app"},
+)
+
 rust_library(
     name = "conch_parser",
     srcs = glob(["external/cpsl/vendor/conch-parser/src/**/*.rs"]),
@@ -31,14 +37,62 @@ rust_library(
     crate_root = "external/cpsl/modules/native-http/src/lib.rs",
     edition = "2021",
     deps = [
-        "@cpsl_crates//:reqwest",
         "@cpsl_crates//:thiserror",
         "@cpsl_crates//:url",
+    ] + select({
+        "@rules_rust//rust/platform:macos": [
+            "@cpsl_crates//:block2",
+            "@cpsl_crates//:objc2",
+            "@cpsl_crates//:objc2-foundation",
+        ],
+        "//conditions:default": ["@cpsl_crates//:reqwest"],
+    }),
+)
+
+rust_library(
+    name = "native_webview_pdf",
+    srcs = glob(["external/cpsl/modules/native-webview-pdf/src/**/*.rs"]),
+    crate_name = "native_webview_pdf",
+    crate_root = "external/cpsl/modules/native-webview-pdf/src/lib.rs",
+    edition = "2021",
+    target_compatible_with = select({
+        "@rules_rust//rust/platform:ios": [],
+        "@rules_rust//rust/platform:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "@cpsl_crates//:block2",
+        "@cpsl_crates//:objc2",
+        "@cpsl_crates//:objc2-core-foundation",
+        "@cpsl_crates//:objc2-foundation",
+        "@cpsl_crates//:objc2-web-kit",
+        "@cpsl_crates//:thiserror",
     ],
 )
 
 rust_library(
-    name = "cpsl_core",
+    name = "apple_calendar",
+    srcs = glob(["external/cpsl/modules/apple-calendar/src/**/*.rs"]),
+    crate_name = "apple_calendar",
+    crate_root = "external/cpsl/modules/apple-calendar/src/lib.rs",
+    edition = "2021",
+    target_compatible_with = select({
+        "@rules_rust//rust/platform:ios": [],
+        "@rules_rust//rust/platform:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "@cpsl_crates//:block2",
+        "@cpsl_crates//:objc2",
+        "@cpsl_crates//:objc2-core-graphics",
+        "@cpsl_crates//:objc2-event-kit",
+        "@cpsl_crates//:objc2-foundation",
+        "@cpsl_crates//:thiserror",
+    ],
+)
+
+rust_library(
+    name = "cpsl_core_minimal",
     srcs = glob(["external/cpsl/core/src/**/*.rs"]),
     crate_features = [
         "mod-csv",
@@ -67,28 +121,99 @@ rust_library(
     ],
 )
 
+rust_library(
+    name = "cpsl_core_apple",
+    srcs = glob(["external/cpsl/core/src/**/*.rs"]),
+    crate_features = [
+        "mod-apple-calendar",
+        "mod-base64",
+        "mod-country",
+        "mod-csv",
+        "mod-datetime",
+        "mod-doc",
+        "mod-email",
+        "mod-fin",
+        "mod-fs",
+        "mod-fuzzy",
+        "mod-html",
+        "mod-http",
+        "mod-image",
+        "mod-json",
+        "mod-location",
+        "mod-numpy",
+        "mod-phone",
+        "mod-plot",
+        "mod-qr",
+        "mod-random",
+        "mod-regex",
+        "mod-ripgrep",
+        "mod-url",
+        "mod-webbrowser",
+        "mod-xml",
+        "mod-yaml",
+        "pdfium-render",
+    ],
+    crate_name = "cpsl_core",
+    crate_root = "external/cpsl/core/src/lib.rs",
+    edition = "2021",
+    target_compatible_with = select({
+        "@rules_rust//rust/platform:ios": [],
+        "@rules_rust//rust/platform:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = all_crate_deps(
+        normal = True,
+        package_name = "bazel/cpsl-deps",
+    ) + [
+        ":apple_calendar",
+        ":conch_parser",
+        ":native_http",
+        ":native_webview_pdf",
+    ],
+)
+
 rust_shared_library(
-    name = "cpsl_ffi",
+    name = "cpsl",
     srcs = glob(["external/cpsl/ffi/src/**/*.rs"]),
     compile_data = ["external/cpsl/runtime/shrt.luau"],
-    crate_features = ["ffi-minimal"],
+    crate_features = select({
+        ":cpsl_apple_app_profile": ["embedded-agent"],
+        "//conditions:default": ["ffi-minimal"],
+    }),
     crate_name = "cpsl",
     crate_root = "external/cpsl/ffi/src/lib.rs",
     edition = "2021",
     rustc_env = {"CARGO_PKG_VERSION": "0.1.0"},
-    target_compatible_with = ["@platforms//os:linux"],
+    rustc_flags = select({
+        "@rules_rust//rust/platform:ios": [
+            "-C",
+            "link-arg=-Wl,-install_name,@rpath/libcpsl.dylib",
+        ],
+        "@rules_rust//rust/platform:macos": [
+            "-C",
+            "link-arg=-Wl,-install_name,@rpath/libcpsl.dylib",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
-        ":cpsl_core",
         "@cpsl_crates//:serde",
         "@cpsl_crates//:serde_json",
         "@cpsl_crates//:url",
-    ],
+    ] + select({
+        ":cpsl_apple_app_profile": [":cpsl_core_apple"],
+        "//conditions:default": [":cpsl_core_minimal"],
+    }),
+)
+
+alias(
+    name = "cpsl_ffi",
+    actual = ":cpsl",
 )
 
 filegroup(
     name = "linux_experiment",
     srcs = [
-        ":cpsl_ffi",
+        ":cpsl",
         "//cmd/herm",
     ],
     target_compatible_with = ["@platforms//os:linux"],

@@ -19,6 +19,7 @@ tools/edit-file/edit-file
 .herm-lock
 .herm-cpsl/artifacts/
 .herm-cpsl/cargo-target/
+.herm-cpsl/bazel-*
 .herm-cpsl/.cpsl-xcframework-build.lock
 .herm-cpsl/pdfium/
 .herm-cpsl/benchmarks/

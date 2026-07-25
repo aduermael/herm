@@ -17,11 +17,16 @@ assert_contains() {
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 repo_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cpsl-apple-build-integration.XXXXXX")
-trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+cleanup() {
+	status=$?
+	rm -rf "$tmp_dir"
+	exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
 
 fixture_root="$tmp_dir/herm"
 fixture_scripts="$fixture_root/scripts"
-cpsl_root="$tmp_dir/cpsl"
+cpsl_root="$fixture_root/external/cpsl"
 fake_bin="$tmp_dir/bin"
 fake_state="$tmp_dir/state"
 work_dir="$tmp_dir/work"
@@ -52,6 +57,10 @@ do
 	cp "$repo_root/$path" "$fixture_root/$path"
 done
 cp "$repo_root/rust-toolchain.toml" "$fixture_root/rust-toolchain.toml"
+for path in .bazelrc .bazelversion BUILD.bazel MODULE.bazel MODULE.bazel.lock; do
+	cp "$repo_root/$path" "$fixture_root/$path"
+done
+cp -R "$repo_root/bazel" "$fixture_root/bazel"
 printf '%s\n' '# no integration patches in the synthetic CPSL fixture' \
 	>"$fixture_scripts/cpsl-patches/series"
 
@@ -135,6 +144,40 @@ mkdir -p "$target_dir/$target/$profile"
 printf '%s\n' "$arch" >"$target_dir/$target/$profile/libcpsl.dylib"
 printf '%s\t%s\t%s\n' "$target" "$profile" "${CARGO_INCREMENTAL:-unset}" \
 	>>"$FAKE_TOOL_STATE/cargo.log"
+EOF
+
+cat >"$fake_bin/bazel" <<'EOF'
+#!/bin/sh
+set -eu
+
+if [ "${1:-}" = --version ]; then
+	printf '%s\n' 'bazel 8.4.2 (fake)'
+	exit 0
+fi
+
+[ "${1:-}" != mod ] || exit 0
+[ "${1:-}" = build ] || exit 1
+platform=
+mode=
+config=
+symlink_prefix=
+for arg in "$@"; do
+	case "$arg" in
+	--platforms=*) platform=${arg#*=} ;;
+	--compilation_mode=*) mode=${arg#*=} ;;
+	--config=*) config=${arg#*=} ;;
+	--symlink_prefix=*) symlink_prefix=${arg#*=} ;;
+	esac
+done
+case "$platform" in
+//bazel/platforms:ios_arm64 | //bazel/platforms:ios_sim_arm64 | //bazel/platforms:macos_arm64) arch=arm64 ;;
+//bazel/platforms:ios_sim_x86_64 | //bazel/platforms:macos_x86_64) arch=x86_64 ;;
+*) printf '%s\n' "unsupported fake Bazel platform: $platform" >&2; exit 1 ;;
+esac
+[ -n "$symlink_prefix" ] || exit 1
+mkdir -p "${symlink_prefix}bin"
+printf '%s\n' "$arch" >"${symlink_prefix}bin/libcpsl.dylib"
+printf '%s\t%s\t%s\n' "$platform" "$mode" "$config" >>"$FAKE_TOOL_STATE/bazel.log"
 EOF
 
 cat >"$fake_bin/rustup" <<'EOF'
@@ -288,9 +331,11 @@ run_ensure() {
 	configuration=$1
 	simulator_targets=$2
 	log_path=$3
+	build_system=${4:-bazel}
 
-	HOME="$home_dir" \
+	if ! HOME="$home_dir" \
 	PATH="$fake_bin:/usr/bin:/bin" \
+	BAZEL="$fake_bin/bazel" \
 	CPSL_ROOT="$cpsl_root" \
 	CPSL_WORK_DIR="$work_dir" \
 	APPLE_PLATFORMS=ios \
@@ -298,7 +343,11 @@ run_ensure() {
 	IOS_SIMULATOR_TARGETS="$simulator_targets" \
 	MACOS_TARGETS= \
 	CONFIGURATION="$configuration" \
-		"$fixture_scripts/ensure-cpsl-apple-xcframework.sh" >"$log_path" 2>&1
+	CPSL_APPLE_BUILD_SYSTEM="$build_system" \
+		"$fixture_scripts/ensure-cpsl-apple-xcframework.sh" >"$log_path" 2>&1; then
+		cat "$log_path" >&2
+		fail "$configuration $build_system ensure failed"
+	fi
 }
 
 debug_first="$tmp_dir/debug-first.log"
@@ -308,16 +357,17 @@ debug_stale="$tmp_dir/debug-stale.log"
 debug_arch="$tmp_dir/debug-arch.log"
 release_first="$tmp_dir/release-first.log"
 release_second="$tmp_dir/release-second.log"
+cargo_fallback="$tmp_dir/cargo-fallback.log"
 
 run_ensure Debug aarch64-apple-ios-sim "$debug_first"
 assert_contains "initial Debug build" "Building CPSL Apple XCFramework" "$debug_first"
-assert_contains "Debug Cargo profile" 'aarch64-apple-ios-sim	debug	1' "$fake_state/cargo.log"
-debug_cargo_count=$(wc -l <"$fake_state/cargo.log" | tr -d '[:space:]')
+assert_contains "Debug Bazel mode" '//bazel/platforms:ios_sim_arm64	dbg	cpsl-apple' "$fake_state/bazel.log"
+debug_bazel_count=$(wc -l <"$fake_state/bazel.log" | tr -d '[:space:]')
 
 run_ensure Debug aarch64-apple-ios-sim "$debug_second"
 assert_contains "warm Debug build" "Using existing CPSL XCFramework" "$debug_second"
-[ "$(wc -l <"$fake_state/cargo.log" | tr -d '[:space:]')" = "$debug_cargo_count" ] || \
-	fail "warm Debug build unexpectedly invoked Cargo"
+[ "$(wc -l <"$fake_state/bazel.log" | tr -d '[:space:]')" = "$debug_bazel_count" ] || \
+	fail "warm Debug build unexpectedly invoked Bazel"
 
 printf '%s\n' x86_64 \
 	>"$work_dir/artifacts/apple/Debug/cpsl.xcframework/ios-arm64-simulator/libcpsl.dylib"
@@ -330,7 +380,7 @@ assert_contains "stale source rebuild" "CPSL build identity changed" "$debug_sta
 
 run_ensure Debug x86_64-apple-ios "$debug_arch"
 assert_contains "architecture switch rebuild" "CPSL build identity changed" "$debug_arch"
-assert_contains "x86_64 Cargo target" 'x86_64-apple-ios	debug	1' "$fake_state/cargo.log"
+assert_contains "x86_64 Bazel platform" '//bazel/platforms:ios_sim_x86_64	dbg	cpsl-apple' "$fake_state/bazel.log"
 debug_info="$work_dir/artifacts/apple/Debug/cpsl.xcframework/Info.plist"
 . "$fixture_scripts/lib/cpsl-xcframework.sh"
 cpsl_xcframework_matches_targets "$debug_info" "" x86_64-apple-ios "" || \
@@ -338,19 +388,24 @@ cpsl_xcframework_matches_targets "$debug_info" "" x86_64-apple-ios "" || \
 
 run_ensure Release aarch64-apple-ios-sim "$release_first"
 assert_contains "initial Release build" "Building CPSL Apple XCFramework" "$release_first"
-assert_contains "Release Cargo profile" 'aarch64-apple-ios-sim	release	0' "$fake_state/cargo.log"
-release_cargo_count=$(wc -l <"$fake_state/cargo.log" | tr -d '[:space:]')
+assert_contains "Release Bazel mode" '//bazel/platforms:ios_sim_arm64	opt	cpsl-apple' "$fake_state/bazel.log"
+release_bazel_count=$(wc -l <"$fake_state/bazel.log" | tr -d '[:space:]')
 
 run_ensure Release aarch64-apple-ios-sim "$release_second"
 assert_contains "warm Release build" "Using existing CPSL XCFramework" "$release_second"
-[ "$(wc -l <"$fake_state/cargo.log" | tr -d '[:space:]')" = "$release_cargo_count" ] || \
-	fail "warm Release build unexpectedly invoked Cargo"
+[ "$(wc -l <"$fake_state/bazel.log" | tr -d '[:space:]')" = "$release_bazel_count" ] || \
+	fail "warm Release build unexpectedly invoked Bazel"
 
 debug_stamp="$work_dir/artifacts/apple/Debug/.cpsl-apple-build.stamp"
 release_stamp="$work_dir/artifacts/apple/Release/.cpsl-apple-build.stamp"
-assert_contains "Debug stamp profile" 'cargo_profile=debug' "$debug_stamp"
-assert_contains "Debug stamp incremental" 'cargo_incremental=1' "$debug_stamp"
-assert_contains "Release stamp profile" 'cargo_profile=release' "$release_stamp"
-assert_contains "Release stamp incremental" 'cargo_incremental=0' "$release_stamp"
+assert_contains "Debug stamp build system" 'build_system=bazel' "$debug_stamp"
+assert_contains "Debug stamp mode" 'bazel_compilation_mode=dbg' "$debug_stamp"
+assert_contains "Release stamp build system" 'build_system=bazel' "$release_stamp"
+assert_contains "Release stamp mode" 'bazel_compilation_mode=opt' "$release_stamp"
+
+run_ensure Debug aarch64-apple-ios-sim "$cargo_fallback" cargo
+assert_contains "Cargo fallback rebuild" "Building CPSL Apple XCFramework" "$cargo_fallback"
+assert_contains "Cargo fallback profile" 'aarch64-apple-ios-sim	debug	1' "$fake_state/cargo.log"
+assert_contains "Cargo fallback stamp" 'build_system=cargo' "$debug_stamp"
 
 printf '%s\n' "CPSL Apple build integration tests passed"
