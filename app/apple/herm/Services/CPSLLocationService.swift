@@ -77,6 +77,13 @@ final class CPSLLocationService: NSObject, ObservableObject {
     }
 
     func loadCurrentLocation() async -> CPSLFeatureAccessState {
+        // Keep UI responsive: show loading first, then hop for any blocking CoreLocation checks.
+        isLoadingCurrentLocation = true
+        locationError = nil
+        defer {
+            isLoadingCurrentLocation = false
+        }
+
         let requestedAccess = await requestAccess()
         guard requestedAccess == .granted else {
             currentLocation = nil
@@ -85,12 +92,6 @@ final class CPSLLocationService: NSObject, ObservableObject {
         }
 
 #if canImport(CoreLocation)
-        isLoadingCurrentLocation = true
-        locationError = nil
-        defer {
-            isLoadingCurrentLocation = false
-        }
-
         guard await Self.locationServicesEnabled() else {
             currentLocation = nil
             locationError = "Location Services are disabled; enable them in iOS Settings or macOS System Settings."
@@ -98,6 +99,8 @@ final class CPSLLocationService: NSObject, ObservableObject {
         }
 
         startUpdatingIfAllowed()
+        // Yield so the location overlay can paint its chrome before we wait on a fix.
+        await Task.yield()
         let location = await freshestLocation()
         guard let location else {
             locationError = "Current location is not available yet."

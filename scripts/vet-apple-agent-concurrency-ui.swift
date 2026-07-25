@@ -24,7 +24,7 @@ private struct CPSLAgentConcurrencyUIChecks {
                     "sub-agent execution should enforce the configured depth limit")
         try require(runtime.contains("allowsSubagents: context.agentDepth < context.config.maxAgentDepth"),
                     "nested sub-agent tool exposure should stop at the depth limit")
-        try require(runtime.contains("tools: isFinalTurn ? [] : CPSLOpenAITool.availableTools"),
+        try require(runtime.contains("let tools = isFinalTurn ? [] : CPSLOpenAITool.availableTools("),
                     "sub-agents should have no tools on their final synthesis turn")
     }
 
@@ -50,16 +50,23 @@ private struct CPSLAgentConcurrencyUIChecks {
     }
 
     private static func assertRunningLifecycleIsBalanced(chatModel: String) throws {
-        try require(chatModel.contains("@Published private(set) var isRunning = false"),
-                    "chat model should publish running state")
+        // Observable macro (not Combine @Published) owns isRunning for SwiftUI.
+        try require(chatModel.contains("private(set) var isRunning = false"),
+                    "chat model should expose running state")
+        try require(chatModel.contains("@Observable"),
+                    "chat model should publish running state via Observation")
         try require(chatModel.contains("private func runAgent(prompt: CPSLAttachmentPrompt) async {\n        defer {\n            isRunning = false\n            activeRunTask = nil\n        }"),
                     "agent run should clear running state through a defer")
         try require(chatModel.contains("Task { @MainActor in\n            defer {\n                isRunning = false\n                activeRunTask = nil\n            }"),
                     "direct command runs should clear running state through a MainActor defer")
+        try require(chatModel.contains("func stopAgent()"),
+                    "chat model should expose stopAgent for the composer Stop control")
+        try require(chatModel.contains("activeRunTask?.cancel()"),
+                    "stopAgent should cancel the active run task so nested work observes cancellation")
     }
 
     private static func assertWorkingIndicatorContract(timeline: String) throws {
-        try require(timeline.contains("if model.isRunning {\n                        CPSLAgentWorkingIndicatorView()"),
+        try require(timeline.contains("if model.isRunning {\n                            CPSLAgentWorkingIndicatorView()"),
                     "timeline should show a dots-only working indicator whenever the model is running")
         try require(timeline.contains("private struct CPSLAgentWorkingIndicatorView"),
                     "working indicator should be a distinct SwiftUI view")

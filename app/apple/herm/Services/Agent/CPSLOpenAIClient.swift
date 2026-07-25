@@ -32,16 +32,20 @@ actor CPSLOpenAIClient {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
 
+        try Task.checkCancellation()
         let (bytes, response) = try await session.bytes(for: request)
+        try Task.checkCancellation()
         try await validate(response: response, bytes: bytes)
 
         let accumulator = CPSLOpenAIStreamAccumulator(model: config.model)
         for try await line in bytes.lines {
+            try Task.checkCancellation()
             guard let event = try accumulator.consume(line: line) else {
                 continue
             }
             await onEvent(event)
         }
+        try Task.checkCancellation()
         return try accumulator.validatedCompletion()
     }
 

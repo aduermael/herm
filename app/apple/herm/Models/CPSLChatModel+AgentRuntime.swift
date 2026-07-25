@@ -483,7 +483,12 @@ extension CPSLChatModel {
         let estimatedBytesPerTokenValue = estimatedBytesPerToken
         let toolResultClearThresholdValue = toolResultClearThreshold
         let recentToolResultsToKeepValue = recentToolResultsToKeep
-        return await Task.detached(priority: .userInitiated) {
+        // Detached work does not inherit cancellation; check before and after so Stop
+        // still aborts between provider turns promptly.
+        guard !Task.isCancelled else {
+            return []
+        }
+        let messages = await Task.detached(priority: .userInitiated) {
             CPSLAgentRequestPreparationBuilder.preparedRequestMessages(
                 preparation,
                 estimatedBytesPerToken: estimatedBytesPerTokenValue,
@@ -491,6 +496,7 @@ extension CPSLChatModel {
                 recentToolResultsToKeep: recentToolResultsToKeepValue
             )
         }.value
+        return Task.isCancelled ? [] : messages
     }
 
     private func appendProviderLoopError(
@@ -680,7 +686,7 @@ extension CPSLChatModel {
         messages[index] = persistedMessage
     }
 
-    private func discardStreamingAssistantIfNeeded() {
+    func discardStreamingAssistantIfNeeded() {
         guard let id = streamingAssistantMessageID else {
             return
         }
@@ -695,6 +701,9 @@ extension CPSLChatModel {
         _ toolCall: CPSLOpenAIToolCall,
         context: CPSLToolExecutionContext
     ) async -> CPSLToolExecutionResult {
+        if Task.isCancelled {
+            return cancelledToolExecutionResult(for: toolCall)
+        }
         if let requestDirectory = context.requestDirectory,
             let restoreError = await restoreCurrentDirectory(requestDirectory, for: toolCall) {
             return restoreError
@@ -720,6 +729,18 @@ extension CPSLChatModel {
                 )
             )
         }
+    }
+
+    private func cancelledToolExecutionResult(
+        for toolCall: CPSLOpenAIToolCall
+    ) -> CPSLToolExecutionResult {
+        let message = "Stopped."
+        return CPSLToolExecutionResult(
+            providerContent: providerToolContent(ok: false, output: nil, error: message),
+            displayBody: message,
+            isError: true,
+            traceInvocation: traceInvocation(for: toolCall, displayBody: message, isError: true)
+        )
     }
 
     private func restoreCurrentDirectory(
@@ -752,7 +773,13 @@ extension CPSLChatModel {
             )
         }
 
+        if Task.isCancelled {
+            return cancelledToolExecutionResult(for: toolCall)
+        }
         let result = await service.evaluateLuau(source)
+        if Task.isCancelled || result.errorCode == "cancelled" {
+            return cancelledToolExecutionResult(for: toolCall)
+        }
         let output = CPSLAgentToolOutput(
             stdout: result.stdout,
             stderr: result.stderr,
@@ -842,9 +869,11 @@ extension CPSLChatModel {
 
         do {
             for turn in 0..<maxTurns {
+                try Task.checkCancellation()
                 turnsUsed = turn + 1
                 let isFinalTurn = turn == maxTurns - 1
                 let sandboxDirectory = await service.currentDirectory()
+                try Task.checkCancellation()
                 let turnGuidance: String
                 if isFinalTurn {
                     turnGuidance = "Budget: turn \(turn + 1)/\(maxTurns). FINAL: return the best usable result now; no tools."
@@ -884,6 +913,7 @@ extension CPSLChatModel {
                     )
                 }
                 let completion = try await context.client.streamChat(request) { _ in }
+                try Task.checkCancellation()
                 if let traceStore = context.traceStore,
                    let conversationID = context.conversationID {
                     try await traceStore.recordProviderResponse(
@@ -932,6 +962,7 @@ extension CPSLChatModel {
                     )
                 )
                 for toolCall in completion.toolCalls {
+                    try Task.checkCancellation()
                     let toolResult = await executeToolCall(
                         toolCall,
                         context: CPSLToolExecutionContext(
@@ -943,6 +974,7 @@ extension CPSLChatModel {
                             conversationID: context.conversationID
                         )
                     )
+                    try Task.checkCancellation()
                     if let traceStore = context.traceStore,
                        let conversationID = context.conversationID {
                         try await traceStore.recordToolInvocation(
@@ -967,6 +999,18 @@ extension CPSLChatModel {
                     )
                 ),
                 false
+            )
+        } catch is CancellationError {
+            return (
+                subAgentOutput(
+                    CPSLSubAgentOutputDraft(
+                        mode: input.mode,
+                        turnsUsed: turnsUsed,
+                        maxTurns: maxTurns,
+                        textParts: textParts + ["Stopped."]
+                    )
+                ),
+                true
             )
         } catch {
             if let traceStore = context.traceStore,

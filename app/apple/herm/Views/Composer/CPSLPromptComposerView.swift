@@ -459,11 +459,12 @@ struct CPSLPromptComposerView: View {
                     .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(CPSLTheme.background)
-            .background(CPSLTheme.error)
+            .foregroundStyle(CPSLTheme.text)
+            .background(CPSLTheme.danger)
             .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             .accessibilityLabel("Stop")
+            .accessibilityAddTraits(.isButton)
         } else if canSubmit {
             Button {
                 dismissKeyboard()
