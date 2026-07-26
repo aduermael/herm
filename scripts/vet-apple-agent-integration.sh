@@ -542,6 +542,15 @@ if command -v swiftc >/dev/null 2>&1; then
     -o /tmp/herm-vet-eval-race
   /tmp/herm-vet-eval-race
   swiftc \
+    app/apple/herm/Models/CPSLEvalTypes.swift \
+    scripts/vet-apple-stop-control.swift \
+    -o /tmp/herm-vet-stop-control
+  /tmp/herm-vet-stop-control
+  swiftc -parse-as-library \
+    scripts/vet-apple-file-info-media-mainthread.swift \
+    -o /tmp/herm-vet-file-info-media
+  /tmp/herm-vet-file-info-media
+  swiftc \
     app/apple/herm/Models/CPSLICloudMount.swift \
     app/apple/herm/Services/CPSLICloudBookmarkAccess.swift \
     app/apple/herm/Services/CPSLICloudFileMaterializer.swift \

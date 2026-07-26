@@ -112,22 +112,13 @@ final class CPSLCalendarService: ObservableObject {
             isLoadingEvents = false
         }
 
-        let now = Date()
-        let endDate = Foundation.Calendar.current.date(byAdding: .day, value: 14, to: now)
-            ?? now.addingTimeInterval(14 * 24 * 60 * 60)
-        let predicate = eventStore.predicateForEvents(
-            withStart: now,
-            end: endDate,
-            calendars: nil
-        )
-        let events = eventStore.events(matching: predicate)
-            .sorted { lhs, rhs in
-                lhs.startDate < rhs.startDate
-            }
-            .prefix(12)
-            .map(Self.event(from:))
-        upcomingEvents = Self.eventsWithUniqueIDs(events)
-        upcomingEventDays = Self.groupedByDay(upcomingEvents)
+        // EventKit reads are thread-safe; keep the MainActor free while matching/sorting.
+        let store = CPSLSendableEventStore(eventStore)
+        let fetched = await Task.detached(priority: .userInitiated) {
+            Self.fetchUpcomingEvents(from: store.value)
+        }.value
+        upcomingEvents = fetched.events
+        upcomingEventDays = fetched.days
 #else
         upcomingEvents = []
         upcomingEventDays = []
@@ -137,7 +128,34 @@ final class CPSLCalendarService: ObservableObject {
     }
 
 #if canImport(EventKit)
-    private static func event(from event: EKEvent) -> CPSLCalendarEvent {
+    /// EventKit allows reading from background threads; box for Task.detached Sendable capture.
+    private nonisolated struct CPSLSendableEventStore: @unchecked Sendable {
+        let value: EKEventStore
+        init(_ value: EKEventStore) { self.value = value }
+    }
+
+    private nonisolated static func fetchUpcomingEvents(
+        from store: EKEventStore
+    ) -> (events: [CPSLCalendarEvent], days: [CPSLCalendarDay]) {
+        let now = Date()
+        let endDate = Foundation.Calendar.current.date(byAdding: .day, value: 14, to: now)
+            ?? now.addingTimeInterval(14 * 24 * 60 * 60)
+        let predicate = store.predicateForEvents(
+            withStart: now,
+            end: endDate,
+            calendars: nil
+        )
+        let events = store.events(matching: predicate)
+            .sorted { lhs, rhs in
+                lhs.startDate < rhs.startDate
+            }
+            .prefix(12)
+            .map(Self.event(from:))
+        let unique = Self.eventsWithUniqueIDs(Array(events))
+        return (unique, Self.groupedByDay(unique))
+    }
+
+    private nonisolated static func event(from event: EKEvent) -> CPSLCalendarEvent {
         let id = [
             event.eventIdentifier,
             event.calendarItemIdentifier,
@@ -162,8 +180,10 @@ final class CPSLCalendarService: ObservableObject {
             attachments: Self.attachments(from: event.notes)
         )
     }
+#endif
 
-    private static func eventsWithUniqueIDs(_ events: [CPSLCalendarEvent]) -> [CPSLCalendarEvent] {
+#if canImport(EventKit)
+    private nonisolated static func eventsWithUniqueIDs(_ events: [CPSLCalendarEvent]) -> [CPSLCalendarEvent] {
         var countsByID: [String: Int] = [:]
         return events.map { event in
             let count = countsByID[event.id, default: 0]
@@ -187,7 +207,7 @@ final class CPSLCalendarService: ObservableObject {
         }
     }
 
-    private static func groupedByDay(_ events: [CPSLCalendarEvent]) -> [CPSLCalendarDay] {
+    private nonisolated static func groupedByDay(_ events: [CPSLCalendarEvent]) -> [CPSLCalendarDay] {
         let calendar = Foundation.Calendar.autoupdatingCurrent
         var groups: [CPSLCalendarDay] = []
         for event in events {
@@ -202,7 +222,7 @@ final class CPSLCalendarService: ObservableObject {
         return groups
     }
 
-    private static func calendarColor(from calendar: EKCalendar?) -> CPSLCalendarColor? {
+    private nonisolated static func calendarColor(from calendar: EKCalendar?) -> CPSLCalendarColor? {
 #if canImport(CoreGraphics)
         guard let sourceColor = calendar?.cgColor,
               let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
@@ -228,7 +248,7 @@ final class CPSLCalendarService: ObservableObject {
 #endif
     }
 
-    private static func visibleNotes(from notes: String?) -> String? {
+    private nonisolated static func visibleNotes(from notes: String?) -> String? {
         guard var notes else {
             return nil
         }
@@ -242,7 +262,7 @@ final class CPSLCalendarService: ObservableObject {
         return notes.trimmingCharacters(in: .whitespacesAndNewlines).cpslNilIfEmpty
     }
 
-    private static func attachments(from notes: String?) -> [CPSLCalendarAttachment] {
+    private nonisolated static func attachments(from notes: String?) -> [CPSLCalendarAttachment] {
         let attachmentRoot = "/home/herm/calendar-attachments/"
         guard let notes,
               let startRange = notes.range(of: "[Herm attachments]"),

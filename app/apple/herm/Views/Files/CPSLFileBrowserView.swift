@@ -114,6 +114,7 @@ private enum CPSLFileBrowserRow: Identifiable, Equatable {
 private enum CPSLFileBrowserRoute: Identifiable, Equatable {
     case folder(CPSLFileBrowserFolderSnapshot)
     case preview(CPSLFilePreview)
+    case fileInfo(CPSLFilePreview)
 
     var id: String {
         switch self {
@@ -121,6 +122,8 @@ private enum CPSLFileBrowserRoute: Identifiable, Equatable {
             return "folder:\(snapshot.path)"
         case .preview(let preview):
             return "preview:\(preview.id)"
+        case .fileInfo(let preview):
+            return "fileinfo:\(preview.id)"
         }
     }
 
@@ -131,11 +134,11 @@ private enum CPSLFileBrowserRoute: Identifiable, Equatable {
         switch (source, target) {
         case (.folder(let source), .folder(let target)):
             return folderDirection(from: source.path, to: target.path)
-        case (.folder, .preview):
+        case (.folder, .preview), (.folder, .fileInfo), (.preview, .fileInfo):
             return .forward
-        case (.preview, .folder):
+        case (.preview, .folder), (.fileInfo, .folder), (.fileInfo, .preview):
             return .backward
-        case (.preview, .preview):
+        case (.preview, .preview), (.fileInfo, .fileInfo):
             return .forward
         }
     }
@@ -387,6 +390,9 @@ private struct CPSLFileBrowserRouteStack: View {
 
     private var currentRoute: CPSLFileBrowserRoute {
         if let preview = model.filePreview {
+            if model.isFileInfoOpen {
+                return .fileInfo(preview)
+            }
             return .preview(preview)
         }
         return .folder(CPSLFileBrowserFolderSnapshot(model: model))
@@ -543,6 +549,8 @@ private struct CPSLFileBrowserRouteContent: View {
             CPSLFileBrowserPane(snapshot: snapshot, actions: actions)
         case .preview(let preview):
             CPSLFilePreviewContentView(preview: preview)
+        case .fileInfo(let preview):
+            CPSLFileInfoPageView(preview: preview)
         }
     }
 }
@@ -668,16 +676,22 @@ private struct CPSLFileBrowserHeader: View {
     var body: some View {
         HStack(spacing: CPSLTheme.medium) {
             CPSLFileBrowserBackButton(
-                isAvailable: model.filePreview != nil || model.canNavigateToParentDirectory
+                isAvailable: model.isFileInfoOpen
+                    || model.filePreview != nil
+                    || model.canNavigateToParentDirectory
             ) {
-                if model.filePreview != nil {
+                if model.isFileInfoOpen {
+                    model.closeFileInfo()
+                } else if model.filePreview != nil {
                     model.closeFilePreview()
                 } else {
                     model.navigateToParentDirectory()
                 }
             }
 
-            if let preview = model.filePreview {
+            if model.isFileInfoOpen, let preview = model.filePreview {
+                CPSLFileInfoHeaderTitle(preview: preview)
+            } else if let preview = model.filePreview {
                 CPSLFilePreviewHeaderTitle(
                     preview: preview,
                     accessMode: model.iCloudMount(containing: preview.path)?.accessMode
@@ -692,9 +706,13 @@ private struct CPSLFileBrowserHeader: View {
 
             switch actions.mode {
             case .browsing:
-                if let preview = model.filePreview, preview.showsHeaderInfoButton {
-                    CPSLFilePreviewInfoButton(preview: preview)
-                } else if actions.canEnterSelection {
+                if let preview = model.filePreview,
+                   preview.showsHeaderInfoButton,
+                   !model.isFileInfoOpen {
+                    CPSLFilePreviewInfoButton {
+                        model.openFileInfo()
+                    }
+                } else if model.filePreview == nil, actions.canEnterSelection {
                     Button("Select", action: actions.beginSelection)
                         .font(CPSLTheme.controlFont)
                         .buttonStyle(.plain)
@@ -743,23 +761,19 @@ private struct CPSLFileBrowserBackButton: View {
 }
 
 private struct CPSLFilePreviewInfoButton: View {
-    let preview: CPSLFilePreview
-    @State private var isShowingInfo = false
+    let action: () -> Void
 
     var body: some View {
         CPSLFileOverlayIconButton(
             systemName: "info.circle",
-            accessibilityLabel: "File Info"
-        ) {
-            isShowingInfo = true
-        }
-        .popover(isPresented: $isShowingInfo) {
-            CPSLFilePreviewInfoPopover(preview: preview)
-        }
+            accessibilityLabel: "File Info",
+            action: action
+        )
     }
 }
 
-private struct CPSLFilePreviewInfoPopover: View {
+/// Full-pane file metadata, pushed one level deeper in the Files stack (not a popover).
+struct CPSLFileInfoPageView: View {
     let preview: CPSLFilePreview
 
     var body: some View {
@@ -772,7 +786,7 @@ private struct CPSLFilePreviewInfoPopover: View {
             .padding(CPSLTheme.large)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(minWidth: 280, idealWidth: 320, maxWidth: 380, maxHeight: 360)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -797,6 +811,32 @@ private struct CPSLFilePreviewInfoHeader: View {
                     .foregroundStyle(CPSLTheme.secondaryText)
             }
         }
+    }
+}
+
+private struct CPSLFileInfoHeaderTitle: View {
+    let preview: CPSLFilePreview
+
+    var body: some View {
+        HStack(spacing: CPSLTheme.medium) {
+            CPSLFileIcon(
+                systemName: "info.circle.fill",
+                color: CPSLTheme.IconPalette.secondary
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Info")
+                    .font(CPSLTheme.supportingMediumFont)
+                    .foregroundStyle(CPSLTheme.text)
+                    .lineLimit(1)
+
+                Text(preview.name)
+                    .font(CPSLTheme.captionFont)
+                    .foregroundStyle(CPSLTheme.secondaryText)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1084,7 +1124,7 @@ private struct CPSLAddICloudFolderRow: View {
             actionTitle: "Add",
             systemName: "icloud.fill",
             color: CPSLTheme.IconPalette.cloud,
-            accessory: .singleIcon
+            accessory: .none
         ) {
             actions.connectICloud()
         }
@@ -1143,7 +1183,7 @@ private struct CPSLFileLocationsView: View {
                         actionTitle: "Add",
                         systemName: "icloud.fill",
                         color: CPSLTheme.IconPalette.cloud,
-                        accessory: .singleIcon
+                        accessory: .none
                     ) {
                         actions.connectICloud()
                     }
@@ -1181,29 +1221,32 @@ private struct CPSLFileLocationRow: View {
                     Text(title)
                         .font(CPSLTheme.rowTitleFont)
                         .foregroundStyle(CPSLTheme.text)
+                        .lineLimit(1)
                     Text(detail)
                         .font(CPSLTheme.captionFont)
                         .foregroundStyle(CPSLTheme.secondaryText)
                         .lineLimit(1)
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
 
                 Image(systemName: "chevron.right")
                     .font(CPSLTheme.iconSmallFont)
                     .foregroundStyle(CPSLTheme.mutedText)
+                    .frame(width: CPSLFileRowMetrics.trailingControlWidth, alignment: .trailing)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: CPSLFileRowMetrics.height, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, CPSLTheme.medium)
+        .padding(.leading, CPSLFileRowMetrics.leading)
+        .padding(.trailing, CPSLFileRowMetrics.trailing)
         .padding(.vertical, CPSLTheme.small)
     }
 }
 
 private enum CPSLCloudAccessory {
-    case singleIcon
+    case none
     case providerIcons
 }
 
@@ -1219,14 +1262,16 @@ private struct CPSLCloudConnectionRow: View {
         HStack(spacing: CPSLTheme.medium) {
             CPSLFileIcon(systemName: systemName, color: color)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(CPSLTheme.rowTitleFont)
-                    .foregroundStyle(CPSLTheme.text)
-                cloudAccessory
+            Text(title)
+                .font(CPSLTheme.rowTitleFont)
+                .foregroundStyle(CPSLTheme.text)
+                .lineLimit(1)
+
+            if case .providerIcons = accessory {
+                cloudProviderMarks
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
             Button(actionTitle, action: action)
                 .font(CPSLTheme.controlFont)
@@ -1241,27 +1286,23 @@ private struct CPSLCloudConnectionRow: View {
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.rowRadius, style: .continuous))
         }
-        .padding(.horizontal, CPSLTheme.medium)
+        .frame(minHeight: CPSLFileRowMetrics.height)
+        .padding(.leading, CPSLFileRowMetrics.leading)
+        .padding(.trailing, CPSLFileRowMetrics.trailing)
         .padding(.vertical, CPSLTheme.small)
     }
 
-    @ViewBuilder
-    private var cloudAccessory: some View {
-        switch accessory {
-        case .singleIcon:
-            Image(systemName: "icloud")
+    private var cloudProviderMarks: some View {
+        HStack(spacing: 4) {
+            CPSLCloudProviderMark(provider: .googleDrive)
+            CPSLCloudProviderMark(provider: .dropbox)
+            CPSLCloudProviderMark(provider: .oneDrive)
+            Image(systemName: "ellipsis")
                 .font(CPSLTheme.captionFont)
                 .foregroundStyle(CPSLTheme.secondaryText)
-        case .providerIcons:
-            HStack(spacing: 4) {
-                CPSLCloudProviderMark(provider: .googleDrive)
-                CPSLCloudProviderMark(provider: .dropbox)
-                CPSLCloudProviderMark(provider: .oneDrive)
-                Image(systemName: "ellipsis")
-                    .font(CPSLTheme.captionFont)
-                    .foregroundStyle(CPSLTheme.secondaryText)
-            }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Google Drive, Dropbox, OneDrive, and more")
     }
 }
 
@@ -1321,6 +1362,8 @@ private enum CPSLFileRowMetrics {
     static let indent: CGFloat = 24
     static let disclosureWidth: CGFloat = 24
     static let iconWidth: CGFloat = 20
+    /// Shared trailing control column so chevrons/actions line up across row types.
+    static let trailingControlWidth: CGFloat = CPSLTheme.controlSize
 
     static func leadingPadding(depth: Int, isDirectory: Bool) -> CGFloat {
         let base = leading + CGFloat(depth) * indent

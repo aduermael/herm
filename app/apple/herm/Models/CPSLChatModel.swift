@@ -30,14 +30,19 @@ final class CPSLChatModel {
     private(set) var filePreview: CPSLFilePreview? {
         didSet {
             if filePreview == nil {
+                isFileInfoOpen = false
                 activeFileNavigationRequestID = nil
                 activeFilePreviewRequestID = nil
                 filePreviewLoadTask?.cancel()
                 filePreviewLoadTask = nil
                 retireFilePreviewLifetimeToken()
+            } else if oldValue?.path != filePreview?.path {
+                isFileInfoOpen = false
             }
         }
     }
+    /// File metadata pushed one level deeper in the Files route stack (not a popover/drawer).
+    private(set) var isFileInfoOpen = false
     private(set) var isWebBrowserOpen = false
     private(set) var isFileActivityActive = false
     private(set) var isCalendarOpen = false
@@ -442,11 +447,14 @@ final class CPSLChatModel {
         guard isRunning else {
             return
         }
+        // Cancel the run task first so nested awaits (provider streams, sub-agents,
+        // eval race) observe cooperative cancellation immediately.
         activeRunTask?.cancel()
         isSuppressingAssistantStream = true
         typewriterTask?.cancel()
         typewriterTask = nil
         typewriterBuffer = ""
+        discardStreamingAssistantIfNeeded()
     }
 
     func addAttachment(from url: URL) {
@@ -549,6 +557,7 @@ final class CPSLChatModel {
             isCalendarOpen = false
             isLocationOpen = false
             filePreview = nil
+            // Directory listing runs async on the debug-service actor; keep open snappy.
             loadBrowserPath(browserPath)
         } else {
             filePreview = nil
@@ -655,7 +664,7 @@ final class CPSLChatModel {
         isLocationOpen = false
         closeWebBrowser()
         isCalendarOpen = true
-        Task {
+        Task(priority: .userInitiated) {
             let access = await calendar.loadUpcomingEvents()
             if access == .denied {
                 comingSoonMessage = "Calendar access is denied. Enable Calendar access for Herm in iOS Settings or macOS System Settings."
@@ -678,8 +687,9 @@ final class CPSLChatModel {
         filePreview = nil
         isCalendarOpen = false
         closeWebBrowser()
+        // Open chrome immediately; location fetch/MapKit work must not gate presentation.
         isLocationOpen = true
-        Task {
+        Task(priority: .userInitiated) {
             let access = await location.loadCurrentLocation()
             if access == .denied {
                 comingSoonMessage = location.locationError
@@ -762,7 +772,19 @@ final class CPSLChatModel {
     }
 
     func closeFilePreview() {
+        isFileInfoOpen = false
         filePreview = nil
+    }
+
+    func openFileInfo() {
+        guard filePreview != nil else {
+            return
+        }
+        isFileInfoOpen = true
+    }
+
+    func closeFileInfo() {
+        isFileInfoOpen = false
     }
 
     func isFileReadOnly(_ path: String) -> Bool {

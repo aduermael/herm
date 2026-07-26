@@ -10,19 +10,34 @@ struct CPSLLocationMapView: View {
     let location: CLLocation
     var markerSize: CGFloat = 11
     var span: CLLocationDegrees = 0.01
+    /// Defer MKMapView construction until after the first frame so opening Location
+    /// does not hitch the main thread on MapKit setup.
+    @State private var isMapReady = false
 
     var body: some View {
-        mapContent
-            .overlay {
-                Circle()
-                    .fill(.blue)
-                    .frame(width: markerSize, height: markerSize)
-                    .overlay(
-                        Circle()
-                            .stroke(.white, lineWidth: max(2, markerSize * 0.18))
-                    )
-                    .shadow(color: .black.opacity(0.24), radius: 2, y: 1)
+        Group {
+            if isMapReady {
+                mapContent
+            } else {
+                CPSLTheme.elevated
             }
+        }
+        .overlay {
+            Circle()
+                .fill(.blue)
+                .frame(width: markerSize, height: markerSize)
+                .overlay(
+                    Circle()
+                        .stroke(.white, lineWidth: max(2, markerSize * 0.18))
+                )
+                .shadow(color: .black.opacity(0.24), radius: 2, y: 1)
+        }
+        .task {
+            // Yield twice so the overlay panel can finish its open animation first.
+            await Task.yield()
+            await Task.yield()
+            isMapReady = true
+        }
     }
 
     @ViewBuilder

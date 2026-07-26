@@ -1257,6 +1257,9 @@ actor CPSLDebugService {
     }
 
     private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
+        if Task.isCancelled {
+            return Self.cancellationFailure()
+        }
         let mountUseLease: CPSLICloudMountUseLease
         do {
             let manager = try ensureICloudMountManager()
@@ -1265,6 +1268,8 @@ actor CPSLDebugService {
             }
             mountUseLease = lease
             try await manager.materializeMountsForAccess()
+        } catch is CancellationError {
+            return Self.cancellationFailure()
         } catch {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
         }
@@ -1276,8 +1281,13 @@ actor CPSLDebugService {
             sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             await webBrowser.setSandboxRoot(sandboxURLs.root)
+        } catch is CancellationError {
+            return Self.cancellationFailure()
         } catch {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
+        }
+        if Task.isCancelled {
+            return Self.cancellationFailure()
         }
 
         if let sessionError = await initializeSessionIfNeeded(

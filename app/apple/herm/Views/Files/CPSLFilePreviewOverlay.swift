@@ -672,8 +672,22 @@ private final class CPSLMediaPlaybackModel {
         if duration > 0 && currentTime >= duration - 0.25 {
             seek(to: 0)
         }
+        // Match Music: .playback ignores the hardware silent switch so media is audible.
+        Self.activatePlaybackAudioSession()
         player.play()
         isPlaying = true
+    }
+
+    private static func activatePlaybackAudioSession() {
+        #if os(iOS) || os(tvOS) || os(visionOS)
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true, options: [])
+        } catch {
+            // Playback still attempts; silent-switch behavior depends on session success.
+        }
+        #endif
     }
 
     func seek(to seconds: Double) {
