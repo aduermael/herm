@@ -140,6 +140,8 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
     private var storedMounts: [CPSLICloudMount] = []
     private var storedRecords: [CPSLICloudMountRecord] = []
     private var unavailableRecordSlugs: Set<String> = []
+    /// Virtual paths the user asked to keep downloaded (file or folder).
+    private var keepDownloadedPaths: Set<String> = []
     private var updateInProgress = false
     private var activeReaderCount = 0
     private var writerInProgress = false
@@ -209,6 +211,7 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
         storedMounts = restoredMounts
         storedRecords = refreshedRecords
         unavailableRecordSlugs = unavailableSlugs
+        keepDownloadedPaths = (try? Self.loadKeepDownloadedPaths(from: storageRoot)) ?? []
         isPrepared = true
 
         if didMigrate {
@@ -235,6 +238,7 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
             }
         }
         try Task.checkCancellation()
+        progress(.preparing)
 
         let scope = try CPSLICloudSecurityScope(url: sourceURL, access: bookmarkAccess)
         defer { scope.stop() }
@@ -242,11 +246,8 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
         guard !mounts.contains(where: { Self.pathsOverlap($0.hostURL, sourceURL) }) else {
             throw CPSLICloudMountError.alreadyMounted
         }
-
-        try CPSLICloudFileMaterializer.materializeDirectory(
-            at: sourceURL,
-            progress: progress
-        )
+        // Download-on-demand: connect only persists the bookmark. Content is
+        // materialized when a specific path is opened, pinned, or prefetched.
         try Task.checkCancellation()
 
         let values = try sourceURL.resourceValues(forKeys: [.localizedNameKey])
@@ -299,14 +300,114 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
 
         let updatedRecords = storedRecords.filter { $0.slug != mount.slug }
         let updatedMounts = mounts.filter { $0.slug != mount.slug }
+        let prunedPins = withLock {
+            keepDownloadedPaths.filter {
+                $0 != mount.virtualPath && !$0.hasPrefix("\(mount.virtualPath)/")
+            }
+        }
         try persist(updatedRecords)
+        try Self.saveKeepDownloadedPaths(prunedPins, to: storageRoot)
         withLock {
             storedRecords = updatedRecords
             storedMounts = updatedMounts
             unavailableRecordSlugs.remove(mount.slug)
+            keepDownloadedPaths = prunedPins
             revision &+= 1
         }
         didChangeMounts = true
+    }
+
+    func setAccessMode(
+        _ accessMode: CPSLICloudMountAccessMode,
+        at virtualPath: String
+    ) throws {
+        guard beginUpdate() else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        var didChangeMounts = false
+        defer {
+            finishUpdate()
+            if didChangeMounts {
+                notifyMountsChanged()
+            }
+        }
+        guard let index = storedMounts.firstIndex(where: { $0.virtualPath == virtualPath }),
+              let recordIndex = storedRecords.firstIndex(where: {
+                  $0.slug == storedMounts[index].slug
+              })
+        else {
+            throw CPSLICloudMountError.mountNotFound
+        }
+        let mount = storedMounts[index]
+        guard mount.accessMode != accessMode else {
+            return
+        }
+        let scope = try CPSLICloudSecurityScope(url: mount.hostURL, access: bookmarkAccess)
+        defer { scope.stop() }
+        try validateSource(mount.hostURL, accessMode: accessMode)
+        let bookmarkData = try bookmarkAccess.create(mount.hostURL, accessMode)
+        var updatedRecords = storedRecords
+        updatedRecords[recordIndex] = CPSLICloudMountRecord(
+            label: mount.label,
+            slug: mount.slug,
+            accessMode: accessMode,
+            bookmarkData: bookmarkData
+        )
+        var updatedMounts = storedMounts
+        updatedMounts[index] = CPSLICloudMount(
+            label: mount.label,
+            slug: mount.slug,
+            hostURL: mount.hostURL,
+            accessMode: accessMode
+        )
+        try persist(updatedRecords)
+        withLock {
+            storedRecords = updatedRecords
+            storedMounts = updatedMounts
+            revision &+= 1
+        }
+        didChangeMounts = true
+    }
+
+    func isKeepDownloaded(_ normalizedVirtualPath: String) -> Bool {
+        withLock {
+            keepDownloadedPaths.contains { pin in
+                normalizedVirtualPath == pin || normalizedVirtualPath.hasPrefix("\(pin)/")
+            }
+        }
+    }
+
+    func setKeepDownloaded(
+        _ keep: Bool,
+        at normalizedVirtualPath: String
+    ) async throws {
+        guard beginUpdate() else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        defer { finishUpdate() }
+        guard let url = hostURL(for: normalizedVirtualPath) else {
+            throw CPSLICloudMountError.mountNotFound
+        }
+        let scope = try CPSLICloudSecurityScope(url: url, access: bookmarkAccess)
+        defer { scope.stop() }
+
+        var pins = withLock { keepDownloadedPaths }
+        if keep {
+            pins.insert(normalizedVirtualPath)
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+            if values.isDirectory == true {
+                try CPSLICloudFileMaterializer.materializeDirectory(at: url)
+            } else {
+                try CPSLICloudFileMaterializer.materializeUbiquitousFile(url)
+            }
+        } else {
+            pins.remove(normalizedVirtualPath)
+#if canImport(Darwin)
+            try? fileManager.evictUbiquitousItem(at: url)
+#endif
+        }
+        try Self.saveKeepDownloadedPaths(pins, to: storageRoot)
+        withLock { keepDownloadedPaths = pins }
     }
 
     func beginSessionUse() throws -> CPSLICloudMountUseLease? {
@@ -319,10 +420,20 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
         try beginUse(isReadOnlyUse: true, scopedVirtualPath: scopedVirtualPath)
     }
 
-    func materializeMountsForAccess() async throws {
-        for mount in mounts {
+    /// Materialize only paths the user pinned to keep downloaded (not whole mounts).
+    func materializePinnedContent() async throws {
+        let pins = withLock { keepDownloadedPaths }
+        for path in pins.sorted() {
             try Task.checkCancellation()
-            try CPSLICloudFileMaterializer.materializeDirectory(at: mount.hostURL)
+            guard let url = hostURL(for: path) else {
+                continue
+            }
+            let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+            if values.isDirectory == true {
+                try CPSLICloudFileMaterializer.materializeDirectory(at: url)
+            } else {
+                try CPSLICloudFileMaterializer.materializeUbiquitousFile(url)
+            }
         }
     }
 
@@ -331,6 +442,57 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
             throw CPSLICloudMountError.mountNotFound
         }
         try CPSLICloudFileMaterializer.materializeUbiquitousFile(url)
+    }
+
+    /// Bounded same-folder prefetch of tiny cloud-only files after a listing.
+    func prefetchSmallCloudFiles(at hostURLs: [URL]) throws {
+        guard !hostURLs.isEmpty else {
+            return
+        }
+        var candidates: [(URL, Int64)] = []
+        var total: Int64 = 0
+        for url in hostURLs {
+#if canImport(Darwin)
+            let values = try url.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .fileSizeKey,
+                .isUbiquitousItemKey,
+                .ubiquitousItemDownloadingStatusKey,
+            ])
+            guard values.isDirectory != true else {
+                continue
+            }
+            let status = CPSLICloudSyncPolicy.downloadStatus(from: values)
+            let state = CPSLICloudSyncPolicy.syncState(
+                isUbiquitous: values.isUbiquitousItem,
+                downloadStatus: status,
+                isPinned: false
+            )
+            guard state == .cloudOnly,
+                  CPSLICloudSyncPolicy.isSmallPrefetchCandidate(
+                      fileBytes: Int64(values.fileSize ?? -1)
+                  )
+            else {
+                continue
+            }
+            let size = Int64(values.fileSize ?? 0)
+            candidates.append((url, size))
+            total += size
+#else
+            _ = url
+#endif
+        }
+#if canImport(Darwin)
+        guard CPSLICloudSyncPolicy.shouldPrefetchSmallCloudFiles(
+            fileCount: candidates.count,
+            totalBytes: total
+        ) else {
+            return
+        }
+        for (url, _) in candidates {
+            try CPSLICloudFileMaterializer.materializeUbiquitousFile(url)
+        }
+#endif
     }
 
     func containsHostURL(_ url: URL) -> Bool {
@@ -453,6 +615,33 @@ nonisolated final class CPSLICloudMountManager: @unchecked Sendable {
             to: storageRoot,
             fileManager: fileManager
         )
+    }
+
+    private static let keepDownloadedFileName = "keep-downloaded.json"
+
+    private static func loadKeepDownloadedPaths(
+        from storageRoot: URL
+    ) throws -> Set<String> {
+        let url = storageRoot.appendingPathComponent(keepDownloadedFileName)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return []
+        }
+        let data = try Data(contentsOf: url)
+        let paths = try JSONDecoder().decode([String].self, from: data)
+        return Set(paths)
+    }
+
+    private static func saveKeepDownloadedPaths(
+        _ paths: Set<String>,
+        to storageRoot: URL
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: storageRoot,
+            withIntermediateDirectories: true
+        )
+        let url = storageRoot.appendingPathComponent(keepDownloadedFileName)
+        let data = try JSONEncoder().encode(paths.sorted())
+        try data.write(to: url, options: .atomic)
     }
 
     private func uniqueMountSlug(for label: String) -> String {

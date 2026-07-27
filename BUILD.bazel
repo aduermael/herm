@@ -176,8 +176,21 @@ rust_shared_library(
     name = "cpsl",
     srcs = glob(["external/cpsl/ffi/src/**/*.rs"]),
     compile_data = ["external/cpsl/runtime/shrt.luau"],
+    # rules_rust does not expand Cargo feature dependencies. List every
+    # cfg(feature = "...") the ffi crate checks — matching the Cargo
+    # `embedded-agent` expansion in external/cpsl/ffi/Cargo.toml. Without
+    # webbrowser/location/calendar/doc/pdfium-render here, host gateways never
+    # compile in and those Luau modules stay unregistered.
     crate_features = select({
-        ":cpsl_apple_app_profile": ["embedded-agent"],
+        ":cpsl_apple_app_profile": [
+            "embedded-agent",
+            "ffi-minimal",
+            "calendar",
+            "doc",
+            "location",
+            "pdfium-render",
+            "webbrowser",
+        ],
         "//conditions:default": ["ffi-minimal"],
     }),
     crate_name = "cpsl",

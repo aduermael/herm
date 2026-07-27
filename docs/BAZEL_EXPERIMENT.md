@@ -15,6 +15,13 @@ profiles. The Apple wrapper builds it once per requested target platform,
 combines architecture slices where necessary, stages PDFium, and uses
 `xcodebuild -create-xcframework` for the final package.
 
+rules_rust does **not** expand Cargo feature dependencies. The Apple app
+profile therefore lists the full `embedded-agent` feature set on the ffi crate
+(`webbrowser`, `location`, `calendar`, `doc`, `pdfium-render`, …) in addition to
+the core `mod-*` flags on `cpsl_core_apple`. Without those ffi flags, host
+gateways never compile and Luau modules such as `webbrowser` / `location` stay
+unregistered even though core modules are built.
+
 ## Commands
 
 On macOS with full Xcode selected and Bazelisk or Bazel installed:

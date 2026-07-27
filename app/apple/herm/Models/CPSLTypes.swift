@@ -209,6 +209,20 @@ struct CPSLFileEntry: Identifiable, Equatable, Sendable {
     let name: String
     let path: String
     let isDirectory: Bool
+    /// Set for entries under iCloud mounts when sync metadata is available.
+    let syncState: CPSLFileSyncState?
+
+    init(
+        name: String,
+        path: String,
+        isDirectory: Bool,
+        syncState: CPSLFileSyncState? = nil
+    ) {
+        self.name = name
+        self.path = path
+        self.isDirectory = isDirectory
+        self.syncState = syncState
+    }
 }
 
 struct CPSLDirectoryListing: Sendable {

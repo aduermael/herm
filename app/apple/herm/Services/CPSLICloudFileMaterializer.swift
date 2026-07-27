@@ -39,10 +39,119 @@ nonisolated struct CPSLICloudImportProgress: Equatable, Sendable {
     }
 }
 
+/// Ubiquitous item sync state shown in the file browser for iCloud mount entries.
+nonisolated enum CPSLFileSyncState: String, Equatable, Sendable {
+    /// Present in iCloud but not downloaded to this device.
+    case cloudOnly
+    /// Downloaded and available locally (OS may evict later).
+    case local
+    /// Explicitly pinned to stay downloaded on this device.
+    case keepDownloaded
+
+    var systemImageName: String {
+        switch self {
+        case .cloudOnly:
+            return "icloud"
+        case .local:
+            return "checkmark.icloud"
+        case .keepDownloaded:
+            return "pin.circle.fill"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .cloudOnly:
+            return "In iCloud only"
+        case .local:
+            return "Downloaded"
+        case .keepDownloaded:
+            return "Keep downloaded"
+        }
+    }
+}
+
+/// Portable download status for pure sync-state classification (Darwin maps into this).
+nonisolated enum CPSLICloudDownloadStatus: Equatable, Sendable {
+    case notDownloaded
+    case downloaded
+    case current
+}
+
+/// Pure policy for ubiquitous sync badges and bounded small-file prefetch.
+nonisolated enum CPSLICloudSyncPolicy {
+    /// Max number of cloud-only files in one folder eligible for auto-prefetch.
+    static let smallPrefetchMaxFiles = 20
+    /// Max total size (bytes) of cloud-only files in one folder for auto-prefetch.
+    static let smallPrefetchMaxTotalBytes: Int64 = 256 * 1024
+    /// Max size of a single file included in auto-prefetch.
+    static let smallPrefetchMaxFileBytes: Int64 = 64 * 1024
+
+    /// Classify an item from resource values + Herm pin state.
+    static func syncState(
+        isUbiquitous: Bool?,
+        downloadStatus: CPSLICloudDownloadStatus?,
+        isPinned: Bool
+    ) -> CPSLFileSyncState? {
+        guard isUbiquitous == true else {
+            return nil
+        }
+        if isPinned {
+            return .keepDownloaded
+        }
+        switch downloadStatus {
+        case .current, .downloaded:
+            return .local
+        case .notDownloaded, .none:
+            return .cloudOnly
+        }
+    }
+
+    /// Whether a listed folder's cloud-only files are small/few enough to prefetch.
+    static func shouldPrefetchSmallCloudFiles(
+        fileCount: Int,
+        totalBytes: Int64
+    ) -> Bool {
+        fileCount > 0
+            && fileCount <= smallPrefetchMaxFiles
+            && totalBytes > 0
+            && totalBytes <= smallPrefetchMaxTotalBytes
+    }
+
+    static func isSmallPrefetchCandidate(fileBytes: Int64?) -> Bool {
+        guard let fileBytes, fileBytes >= 0 else {
+            return false
+        }
+        return fileBytes <= smallPrefetchMaxFileBytes
+    }
+
+#if canImport(Darwin)
+    static func downloadStatus(
+        from values: URLResourceValues
+    ) -> CPSLICloudDownloadStatus? {
+        guard values.isUbiquitousItem == true else {
+            return nil
+        }
+        switch values.ubiquitousItemDownloadingStatus {
+        case .current:
+            return .current
+        case .downloaded:
+            return .downloaded
+        case .notDownloaded:
+            return .notDownloaded
+        default:
+            return .notDownloaded
+        }
+    }
+#endif
+}
+
 nonisolated enum CPSLICloudFileMaterializer {
     private static let pollInterval: TimeInterval = 0.1
     private static let timeout: TimeInterval = 10 * 60
 
+    /// Whole-tree download used for explicit pin/keep-downloaded of a folder.
+    /// Not used on connect or every agent eval.
     static func materializeDirectory(
         at root: URL,
         materialize: @Sendable (URL) throws -> Void = {

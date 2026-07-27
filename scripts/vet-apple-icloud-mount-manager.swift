@@ -141,8 +141,12 @@ private struct CPSLICloudMountManagerChecks {
             "connecting a live mount created an app-private staged copy"
         )
         try require(
-            progress.values.first == .preparing && progress.values.last?.fractionCompleted == 1,
-            "connecting did not materialize source files"
+            progress.values.first == .preparing,
+            "connecting did not report prepare progress"
+        )
+        try require(
+            progress.values.allSatisfy { $0.phase == .preparing },
+            "connecting eagerly materialize/downloaded the whole tree"
         )
         try require(
             bookmarkRecorder.startCount == bookmarkRecorder.stopCount,

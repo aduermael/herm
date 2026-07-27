@@ -58,4 +58,45 @@ struct CPSLConversationBrowsingTests {
         let ids = groups.flatMap { $0.conversations.map(\.id) }
         #expect(ids == ["a"])
     }
+
+    @Test func loadingPresentationAvoidsFalseEmpty() {
+        let loading = CPSLConversationListPresentation.resolve(
+            isLoading: true,
+            isSearching: false,
+            showingArchived: false,
+            hasVisibleConversations: false
+        )
+        #expect(loading == .loading)
+        #expect(loading.title == "Loading conversations")
+        #expect(loading.title != "No conversations yet")
+
+        let readyWithData = CPSLConversationListPresentation.resolve(
+            isLoading: true,
+            isSearching: false,
+            showingArchived: false,
+            hasVisibleConversations: true
+        )
+        #expect(readyWithData == .populated)
+
+        let trueEmpty = CPSLConversationListPresentation.resolve(
+            isLoading: false,
+            isSearching: false,
+            showingArchived: false,
+            hasVisibleConversations: false
+        )
+        #expect(trueEmpty == .emptyFresh)
+        #expect(trueEmpty.title == "No conversations yet")
+    }
+
+    @Test func searchWithZeroVisibleHitsShowsNoMatches() {
+        // Store may have conversations; filtered groups empty → emptySearch.
+        let noMatches = CPSLConversationListPresentation.resolve(
+            isLoading: false,
+            isSearching: true,
+            showingArchived: false,
+            hasVisibleConversations: false
+        )
+        #expect(noMatches == .emptySearch)
+        #expect(noMatches.title == "No matches")
+    }
 }

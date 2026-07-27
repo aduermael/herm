@@ -714,8 +714,16 @@ actor CPSLDebugService {
             self.sandboxURLs = sandboxURLs
             let normalizedPath = Self.normalizedVirtualPath(virtualPath)
             if normalizedPath == CPSLVirtualPath.iCloudRoot {
-                let entries = try ensureICloudMountManager().mounts.map {
-                    CPSLFileEntry(name: $0.label, path: $0.virtualPath, isDirectory: true)
+                let manager = try ensureICloudMountManager()
+                let entries = manager.mounts.map {
+                    CPSLFileEntry(
+                        name: $0.label,
+                        path: $0.virtualPath,
+                        isDirectory: true,
+                        syncState: manager.isKeepDownloaded($0.virtualPath)
+                            ? .keepDownloaded
+                            : nil
+                    )
                 }
                 return CPSLDirectoryListing(entries: entries, error: nil)
             }
@@ -727,17 +735,35 @@ actor CPSLDebugService {
             }
 
             let fileManager = FileManager.default
+            var resourceKeys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey]
+#if canImport(Darwin)
+            resourceKeys.append(contentsOf: [
+                .isUbiquitousItemKey,
+                .ubiquitousItemDownloadingStatusKey,
+            ])
+#endif
             let urls = try fileManager.contentsOfDirectory(
                 at: hostURL,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: resourceKeys,
                 options: []
             )
+            let manager = try? ensureICloudMountManager()
             let entries = try urls.map { url in
-                let values = try url.resourceValues(forKeys: [.isDirectoryKey])
+                let values = try url.resourceValues(forKeys: Set(resourceKeys))
+                let childPath = Self.virtualChildPath(
+                    parent: normalizedPath,
+                    child: url.lastPathComponent
+                )
+                let syncState = Self.syncState(
+                    for: values,
+                    virtualPath: childPath,
+                    manager: manager
+                )
                 return CPSLFileEntry(
                     name: url.lastPathComponent,
-                    path: Self.virtualChildPath(parent: normalizedPath, child: url.lastPathComponent),
-                    isDirectory: values.isDirectory == true
+                    path: childPath,
+                    isDirectory: values.isDirectory == true,
+                    syncState: syncState
                 )
             }
             .sorted { lhs, rhs in
@@ -745,6 +771,19 @@ actor CPSLDebugService {
                     return lhs.isDirectory
                 }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            // Metadata listing only — never block navigation on downloads.
+            // Bounded small-file prefetch runs after the listing is returned.
+            if mountUseLease != nil, let manager {
+                let prefetchPath = normalizedPath
+                let prefetchURLs = urls
+                Task {
+                    guard let lease = try? manager.beginReadUse(for: prefetchPath) else {
+                        return
+                    }
+                    defer { lease.release() }
+                    try? manager.prefetchSmallCloudFiles(at: prefetchURLs)
+                }
             }
             fileActivityNotifier.notify(
                 CPSLFileActivity(path: normalizedPath, operation: "read")
@@ -769,15 +808,28 @@ actor CPSLDebugService {
             guard FileManager.default.fileExists(atPath: hostURL.path) else {
                 return CPSLFileEntryLookup(entry: nil, error: "File does not exist.")
             }
-            let values = try hostURL.resourceValues(forKeys: [.isDirectoryKey])
+            var resourceKeys: Set<URLResourceKey> = [.isDirectoryKey]
+#if canImport(Darwin)
+            resourceKeys.formUnion([
+                .isUbiquitousItemKey,
+                .ubiquitousItemDownloadingStatusKey,
+            ])
+#endif
+            let values = try hostURL.resourceValues(forKeys: resourceKeys)
             let name = normalizedPath == CPSLVirtualPath.root
                 ? CPSLVirtualPath.root
                 : hostURL.lastPathComponent
+            let manager = try? ensureICloudMountManager()
             return CPSLFileEntryLookup(
                 entry: CPSLFileEntry(
                     name: name,
                     path: normalizedPath,
-                    isDirectory: values.isDirectory == true
+                    isDirectory: values.isDirectory == true,
+                    syncState: Self.syncState(
+                        for: values,
+                        virtualPath: normalizedPath,
+                        manager: manager
+                    )
                 ),
                 error: nil
             )
@@ -1231,6 +1283,53 @@ actor CPSLDebugService {
         resetSessionIfMountRevisionChanged(to: iCloudMountManager.currentRevision)
     }
 
+    func setICloudMountAccessMode(
+        _ accessMode: CPSLICloudMountAccessMode,
+        at virtualPath: String
+    ) throws {
+        guard !isSessionBusy else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        let manager = try ensureICloudMountManager()
+        try manager.setAccessMode(
+            accessMode,
+            at: Self.normalizedVirtualPath(virtualPath)
+        )
+        resetSessionIfMountRevisionChanged(to: manager.currentRevision)
+    }
+
+    func setKeepDownloaded(
+        _ keep: Bool,
+        at virtualPath: String
+    ) async throws {
+        guard !isSessionBusy else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        try await ensureICloudMountManager().setKeepDownloaded(
+            keep,
+            at: Self.normalizedVirtualPath(virtualPath)
+        )
+    }
+
+    private nonisolated static func syncState(
+        for values: URLResourceValues,
+        virtualPath: String,
+        manager: CPSLICloudMountManager?
+    ) -> CPSLFileSyncState? {
+        let isPinned = manager?.isKeepDownloaded(virtualPath) == true
+#if canImport(Darwin)
+        let status = CPSLICloudSyncPolicy.downloadStatus(from: values)
+        return CPSLICloudSyncPolicy.syncState(
+            isUbiquitous: values.isUbiquitousItem,
+            downloadStatus: status,
+            isPinned: isPinned
+        )
+#else
+        _ = values
+        return isPinned ? .keepDownloaded : nil
+#endif
+    }
+
     func availableSkills() -> [CPSLAgentSkill] {
         let userRootURL: URL?
         do {
@@ -1267,7 +1366,8 @@ actor CPSLDebugService {
                 return Self.ffiFailure("An iCloud folder is already in use")
             }
             mountUseLease = lease
-            try await manager.materializeMountsForAccess()
+            // Pins only — never whole-tree hydrate every mount for an eval.
+            try await manager.materializePinnedContent()
         } catch is CancellationError {
             return Self.cancellationFailure()
         } catch {
