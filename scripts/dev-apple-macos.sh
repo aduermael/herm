@@ -64,8 +64,8 @@ Options:
   --open             Launch the .app with Launch Services instead of running the executable.
   --skip-cpsl        Do not build the CPSL XCFramework; require it to already exist.
   --rebuild-cpsl     Rebuild the CPSL XCFramework before building the app.
-  --full-cpsl        Deprecated: the ensure script always builds the full iOS+macOS framework.
-  --universal-cpsl   Build both arm64 and x86_64 macOS CPSL slices.
+  --full-cpsl        Deprecated: CPSL follows Xcode's selected destination.
+  --universal-cpsl   Deprecated: CPSL follows Xcode's selected architecture.
   --project-signing  Use the Xcode project's signing settings instead of ad hoc signing.
   --configuration C  Build configuration. Defaults to Debug.
   --derived-data P   DerivedData path. Defaults to .herm-apple/DerivedData.
@@ -84,7 +84,6 @@ cd "$root"
 
 mode=run
 cpsl_mode=auto
-cpsl_macos_targets=${MACOS_TARGETS:-}
 configuration=Debug
 derived_data="$root/.herm-apple/DerivedData"
 project_signing=0
@@ -109,7 +108,6 @@ while [ "$#" -gt 0 ]; do
 	--full-cpsl)
 		;;
 	--universal-cpsl)
-		cpsl_macos_targets="aarch64-apple-darwin x86_64-apple-darwin"
 		;;
 	--project-signing)
 		project_signing=1
@@ -134,6 +132,11 @@ while [ "$#" -gt 0 ]; do
 	esac
 	shift
 done
+
+if [ "$cpsl_mode" = auto ] && [ "${HERM_CPSL_REBUILD:-0}" = 1 ]; then
+	cpsl_mode=rebuild
+fi
+unset HERM_CPSL_REBUILD
 
 [ "$(uname -s)" = Darwin ] || die "run this from a macOS terminal, not Linux or a container"
 
@@ -187,36 +190,23 @@ xcode_arch=$host_arch
 
 [ -d "$project" ] || die "missing Xcode project: $project"
 
-if [ -z "$cpsl_macos_targets" ]; then
-	case "$host_arch" in
-	arm64)
-		cpsl_macos_targets=aarch64-apple-darwin
-		;;
-	aarch64)
-		cpsl_macos_targets=aarch64-apple-darwin
-		xcode_arch=arm64
-		;;
-	x86_64)
-		cpsl_macos_targets=x86_64-apple-darwin
-		;;
-	*)
-		die "unsupported macOS architecture for CPSL build: $host_arch"
-		;;
-	esac
-fi
+case "$host_arch" in
+arm64) ;;
+aarch64) xcode_arch=arm64 ;;
+x86_64) ;;
+*) die "unsupported macOS architecture for CPSL build: $host_arch" ;;
+esac
 
-if [ "$cpsl_mode" = rebuild ]; then
-	HERM_CPSL_REBUILD=1
-	export HERM_CPSL_REBUILD
-fi
-if [ -n "$cpsl_macos_targets" ]; then
-	export MACOS_TARGETS="$cpsl_macos_targets"
-fi
 export CONFIGURATION="$configuration"
 if [ "$cpsl_mode" = skip ]; then
-	"$root/scripts/link-cpsl-xcframework-for-xcode.sh" --skip
+	PLATFORM_NAME=macosx SDK_NAME=macosx ARCHS="$xcode_arch" \
+		"$root/scripts/link-cpsl-xcframework-for-xcode.sh" --skip
+elif [ "$cpsl_mode" = rebuild ]; then
+	HERM_CPSL_REBUILD=1 PLATFORM_NAME=macosx SDK_NAME=macosx ARCHS="$xcode_arch" \
+		"$root/scripts/link-cpsl-xcframework-for-xcode.sh"
 else
-	"$root/scripts/link-cpsl-xcframework-for-xcode.sh"
+	PLATFORM_NAME=macosx SDK_NAME=macosx ARCHS="$xcode_arch" \
+		"$root/scripts/link-cpsl-xcframework-for-xcode.sh"
 fi
 
 clean_xattrs "$root/app/apple/herm" "$xcframework_path" "$app_path"

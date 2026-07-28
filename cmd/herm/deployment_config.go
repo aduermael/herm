@@ -57,6 +57,7 @@ type DeploymentAwareConfig struct {
 	PasteCollapseMinChars int                         `json:"paste_collapse_min_chars,omitempty"`
 	ActiveModel           string                      `json:"active_model,omitempty"`
 	ExplorationModel      string                      `json:"exploration_model,omitempty"`
+	VisionModel           string                      `json:"vision_model,omitempty"`
 	Deployments           map[string]DeploymentConfig `json:"deployments,omitempty"`
 	Routing               *RoutingPolicy              `json:"routing,omitempty"`
 	ModelSortCol          string                      `json:"model_sort_col,omitempty"`
@@ -141,23 +142,27 @@ func deploymentAwareConfigFromLegacyConfig(cfg Config) DeploymentAwareConfig {
 		Offerings:               defaultModelIDMigrationOfferings(),
 		ActiveSmartDefault:      defaultCanonicalActiveModel,
 		ExplorationSmartDefault: defaultCanonicalExplorationModel,
+		VisionSmartDefault:      defaultCanonicalVisionModel,
 	}).Config
 }
 
 const defaultCanonicalActiveModel = "openai/gpt-4.1-2025-04-14"
 const defaultCanonicalExplorationModel = "anthropic/claude-haiku-4-5"
+const defaultCanonicalVisionModel = defaultCanonicalActiveModel
 
 type DeploymentAwareConfigMigrationOptions struct {
 	Config                  Config
 	Offerings               []ModelIDMigrationOffering
 	ActiveSmartDefault      string
 	ExplorationSmartDefault string
+	VisionSmartDefault      string
 }
 
 type DeploymentAwareConfigMigrationResult struct {
 	Config           DeploymentAwareConfig
 	ActiveModel      ModelIDMigrationResult
 	ExplorationModel ModelIDMigrationResult
+	VisionModel      ModelIDMigrationResult
 }
 
 func migrateDeploymentAwareConfigFromLegacyConfig(opts DeploymentAwareConfigMigrationOptions) DeploymentAwareConfigMigrationResult {
@@ -173,6 +178,10 @@ func migrateDeploymentAwareConfigFromLegacyConfig(opts DeploymentAwareConfigMigr
 	explorationDefault := opts.ExplorationSmartDefault
 	if explorationDefault == "" {
 		explorationDefault = activeDefault
+	}
+	visionDefault := opts.VisionSmartDefault
+	if visionDefault == "" {
+		visionDefault = activeDefault
 	}
 	active := ModelIDMigrationResult{}
 	if cfg.ActiveModel != "" {
@@ -190,11 +199,20 @@ func migrateDeploymentAwareConfigFromLegacyConfig(opts DeploymentAwareConfigMigr
 			smartDefault: explorationDefault,
 		})
 	}
+	vision := ModelIDMigrationResult{}
+	if cfg.VisionModel != "" {
+		vision = migrateStoredModelIDToCanonical(migrateStoredModelIDToCanonicalOptions{
+			savedModelID: cfg.VisionModel,
+			offerings:    offerings,
+			smartDefault: visionDefault,
+		})
+	}
 	result := DeploymentAwareConfig{
 		ConfigVersion:         hermConfigVersionDeploymentAware,
 		PasteCollapseMinChars: cfg.PasteCollapseMinChars,
 		ActiveModel:           active.CanonicalModelID,
 		ExplorationModel:      exploration.CanonicalModelID,
+		VisionModel:           vision.CanonicalModelID,
 		Deployments:           map[string]DeploymentConfig{},
 		ModelSortCol:          cfg.ModelSortCol,
 		ModelSortDirs:         cloneBoolMap(cfg.ModelSortDirs),
@@ -214,7 +232,7 @@ func migrateDeploymentAwareConfigFromLegacyConfig(opts DeploymentAwareConfigMigr
 	if len(result.Deployments) == 0 {
 		result.Deployments = nil
 	}
-	return DeploymentAwareConfigMigrationResult{Config: result, ActiveModel: active, ExplorationModel: exploration}
+	return DeploymentAwareConfigMigrationResult{Config: result, ActiveModel: active, ExplorationModel: exploration, VisionModel: vision}
 }
 
 func deploymentConfigsForStorage(cfg Config) map[string]DeploymentConfig {
@@ -357,6 +375,9 @@ func mergeDeploymentAwareProjectConfig(opts mergeDeploymentAwareProjectConfigOpt
 	if project.ExplorationModel != "" {
 		merged.ExplorationModel = project.ExplorationModel
 	}
+	if project.VisionModel != "" {
+		merged.VisionModel = project.VisionModel
+	}
 	if project.Personality != "" {
 		merged.Personality = project.Personality
 	}
@@ -415,6 +436,7 @@ func defaultModelIDMigrationOfferings() []ModelIDMigrationOffering {
 		{CanonicalModelID: "google/gemini-2.5-flash", DeploymentID: "gemini-direct", NativeModelID: "gemini-2.5-flash"},
 		{CanonicalModelID: "xai/grok-4-1-fast-reasoning", DeploymentID: "grok-direct", NativeModelID: "grok-4-1-fast-reasoning"},
 		{CanonicalModelID: "xai/grok-4-1-fast-non-reasoning", DeploymentID: "grok-direct", NativeModelID: "grok-4-1-fast-non-reasoning"},
+		{CanonicalModelID: "xai/grok-4.5", DeploymentID: "grok-direct", NativeModelID: "grok-4.5"},
 		{CanonicalModelID: "z-ai/glm-4.5-air:free", DeploymentID: "openrouter", NativeModelID: "z-ai/glm-4.5-air:free"},
 	}
 	offerings = append(offerings, embeddedCatalogModelIDMigrationOfferings()...)

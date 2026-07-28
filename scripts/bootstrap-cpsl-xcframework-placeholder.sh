@@ -28,4 +28,11 @@ if ! cpsl_xcframework_restore_tracked_placeholder "$herm_root" "$xcframework_pat
 	mkdir -p "$out_dir"
 	cpsl_xcframework_bootstrap_placeholder "$xcframework_path" "$header_source"
 fi
+
+# Xcode can scan the tracked XCFramework before the CPSL build target runs.
+# Keep every bootstrap slice's import surface in sync with the canonical stub
+# header so that early Swift module generation sees the CPSL C API.
+for slice_header in "$xcframework_path"/*/Headers/cpsl.h; do
+	cp "$header_source" "$slice_header"
+done
 printf 'Bootstrapped CPSL XCFramework placeholder: %s\n' "$xcframework_path"

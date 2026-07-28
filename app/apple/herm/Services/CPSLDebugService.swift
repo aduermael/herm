@@ -48,6 +48,50 @@ private nonisolated final class CPSLLocationCallbackBox: @unchecked Sendable {
     }
 }
 
+private nonisolated enum CPSLFileMutationError: LocalizedError {
+    case destinationContainsSource
+    case destinationExists
+    case destinationUnavailable
+    case duplicateName
+    case overlappingSelection
+    case protectedLocation
+    case readOnly
+
+    var errorDescription: String? {
+        switch self {
+        case .destinationContainsSource:
+            return "A folder cannot be moved inside itself."
+        case .destinationExists:
+            return "An item with the same name already exists in that folder."
+        case .destinationUnavailable:
+            return "Choose a folder inside Home, Attachments, Temporary, or a writable iCloud folder."
+        case .duplicateName:
+            return "The selected items include duplicate names."
+        case .overlappingSelection:
+            return "Select either a folder or items inside it, not both."
+        case .protectedLocation:
+            return "This location cannot be moved or deleted."
+        case .readOnly:
+            return "This iCloud folder is read-only in Herm."
+        }
+    }
+}
+
+private nonisolated final class CPSLVisionCallbackBox: @unchecked Sendable {
+    let client: CPSLVisionClient?
+    let configurationError: String?
+
+    init() {
+        do {
+            client = CPSLVisionClient(config: try CPSLAgentConfig.load())
+            configurationError = nil
+        } catch {
+            client = nil
+            configurationError = error.localizedDescription
+        }
+    }
+}
+
 private typealias CPSLFileActivityHandleFunction = @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafePointer<CChar>?,
@@ -80,6 +124,25 @@ private typealias CPSLLocationUserDataFreeFunction = @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Void
 
+private typealias CPSLVisionHandleFunction = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafeRawPointer?,
+    UInt,
+    UnsafePointer<CChar>?,
+    UnsafeMutableRawPointer?
+) -> Void
+
+private typealias CPSLVisionUserDataFreeFunction = @convention(c) (
+    UnsafeMutableRawPointer?
+) -> Void
+
+private typealias CPSLVisionRespondFunction = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafeRawPointer?,
+    UInt,
+    UInt8
+) -> Void
+
 private nonisolated struct CPSLFileActivityCallbacks {
     var user_data: UnsafeMutableRawPointer?
     var handle_activity: CPSLFileActivityHandleFunction?
@@ -97,6 +160,19 @@ private nonisolated struct CPSLLocationCallbacks {
     var handle_json: CPSLLocationHandleJSONFunction?
     var string_free: CPSLLocationStringFreeFunction?
     var user_data_free: CPSLLocationUserDataFreeFunction?
+}
+
+private nonisolated struct CPSLVisionInputFFI {
+    var data: UnsafeRawPointer?
+    var data_len: UInt
+    var filename: UnsafePointer<CChar>?
+    var media_type: UnsafePointer<CChar>?
+}
+
+private nonisolated struct CPSLVisionCallbacks {
+    var user_data: UnsafeMutableRawPointer?
+    var handle: CPSLVisionHandleFunction?
+    var user_data_free: CPSLVisionUserDataFreeFunction?
 }
 
 private typealias CPSLSessionNewWithCallbacksFunction = @convention(c) (
@@ -120,6 +196,14 @@ private typealias CPSLSessionNewWithHostCallbacksV2Function = @convention(c) (
     UnsafeRawPointer?
 ) -> OpaquePointer?
 
+private typealias CPSLSessionNewWithHostCallbacksV3Function = @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafePointer<cpsl_webbrowser_callbacks_t>?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?
+) -> OpaquePointer?
 private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
     private let lock = NSLock()
     private var value: String
@@ -135,6 +219,24 @@ private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Senda
     }
 
     func get() -> String {
+        lock.lock()
+        let value = value
+        lock.unlock()
+        return value
+    }
+}
+
+private nonisolated final class CPSLVisionCallbackResponse: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Result<String, Error>?
+
+    func set(_ value: Result<String, Error>) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+
+    func get() -> Result<String, Error>? {
         lock.lock()
         let value = value
         lock.unlock()
@@ -271,6 +373,107 @@ private nonisolated let cpslCalendarActivityUserDataFree: CPSLCalendarActivityUs
     Unmanaged<CPSLCalendarActivityCallbackBox>.fromOpaque(userData).release()
 }
 
+private nonisolated let cpslVisionHandle: CPSLVisionHandleFunction = {
+    userData, rawInputs, inputCount, queryPointer, responseContext in
+    guard let respond = cpslVisionRespondFunction(), let responseContext else {
+        return
+    }
+
+    func complete(_ value: String, isError: Bool) {
+        let data = Data(value.utf8)
+        data.withUnsafeBytes { bytes in
+            respond(responseContext, bytes.baseAddress, UInt(bytes.count), isError ? 1 : 0)
+        }
+    }
+
+    guard let userData, let queryPointer else {
+        complete("vision callback received NULL input", isError: true)
+        return
+    }
+    guard !Thread.isMainThread else {
+        complete("vision callback cannot run on the main thread", isError: true)
+        return
+    }
+    guard inputCount == 0 || rawInputs != nil else {
+        complete("vision callback received a NULL input array", isError: true)
+        return
+    }
+    guard inputCount <= UInt(Int.max) else {
+        complete("vision callback received too many inputs", isError: true)
+        return
+    }
+
+    let callbackBox = Unmanaged<CPSLVisionCallbackBox>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+    guard let client = callbackBox.client else {
+        complete(
+            callbackBox.configurationError ?? "Vision model configuration is unavailable.",
+            isError: true
+        )
+        return
+    }
+
+    let inputsPointer = rawInputs?.assumingMemoryBound(to: CPSLVisionInputFFI.self)
+    var inputs: [CPSLVisionInput] = []
+    inputs.reserveCapacity(Int(inputCount))
+    for index in 0..<Int(inputCount) {
+        guard let ffiInput = inputsPointer?[index],
+              ffiInput.data_len == 0 || ffiInput.data != nil,
+              ffiInput.data_len <= UInt(Int.max),
+              let mediaTypePointer = ffiInput.media_type
+        else {
+            complete("vision callback received an invalid input", isError: true)
+            return
+        }
+        let data = ffiInput.data_len == 0
+            ? Data()
+            : Data(bytes: ffiInput.data!, count: Int(ffiInput.data_len))
+        inputs.append(CPSLVisionInput(
+            data: data,
+            mediaType: String(cString: mediaTypePointer)
+        ))
+    }
+
+    let query = String(cString: queryPointer)
+    let response = CPSLVisionCallbackResponse()
+    let semaphore = DispatchSemaphore(value: 0)
+    let task = Task {
+        do {
+            response.set(.success(try await client.read(
+                inputs: inputs,
+                query: query
+            )))
+        } catch {
+            response.set(.failure(error))
+        }
+        semaphore.signal()
+    }
+
+    if semaphore.wait(timeout: .now() + .seconds(55)) == .timedOut {
+        task.cancel()
+        complete("vision callback timed out", isError: true)
+        return
+    }
+    guard let result = response.get() else {
+        complete("vision callback did not complete", isError: true)
+        return
+    }
+    switch result {
+    case .success(let text):
+        complete(text, isError: false)
+    case .failure(let error):
+        complete(error.localizedDescription, isError: true)
+    }
+}
+
+private nonisolated let cpslVisionUserDataFree: CPSLVisionUserDataFreeFunction = { userData in
+    guard let userData else {
+        return
+    }
+    Unmanaged<CPSLVisionCallbackBox>.fromOpaque(userData).release()
+}
+
 private nonisolated func cpslSessionNewWithCallbacksFunction() -> CPSLSessionNewWithCallbacksFunction? {
 #if canImport(Darwin)
     let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
@@ -316,6 +519,36 @@ private nonisolated func cpslSessionNewWithHostCallbacksV2Function() -> CPSLSess
     return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksV2Function.self)
 }
 
+private nonisolated func cpslSessionNewWithHostCallbacksV3Function() -> CPSLSessionNewWithHostCallbacksV3Function? {
+#if canImport(Darwin)
+    let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
+#else
+    let lookupHandle: UnsafeMutableRawPointer? = nil
+#endif
+    let symbol = "cpsl_session_new_with_host_callbacks_v3".withCString { name in
+        dlsym(lookupHandle, name)
+    }
+    guard let symbol else {
+        return nil
+    }
+    return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksV3Function.self)
+}
+
+private nonisolated func cpslVisionRespondFunction() -> CPSLVisionRespondFunction? {
+#if canImport(Darwin)
+    let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
+#else
+    let lookupHandle: UnsafeMutableRawPointer? = nil
+#endif
+    let symbol = "cpsl_vision_respond".withCString { name in
+        dlsym(lookupHandle, name)
+    }
+    guard let symbol else {
+        return nil
+    }
+    return unsafeBitCast(symbol, to: CPSLVisionRespondFunction.self)
+}
+
 private nonisolated func cpslWebBrowserOwnedErrorCString(_ message: String) -> UnsafeMutablePointer<CChar>? {
     let object: [String: Any] = ["ok": false, "error": message]
     guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
@@ -355,9 +588,13 @@ actor CPSLDebugService {
     private let location: CPSLLocationService
     private let calendarActivityNotifier: CPSLCalendarActivityNotifier
     private let fileActivityNotifier: CPSLFileActivityNotifier
+    private var iCloudMountManager: CPSLICloudMountManager?
     private var session: CPSLSessionHandle?
+    private var sessionMountRevision: UInt64?
     private var nextSessionID = 0
+    private var isInitializingSession = false
     private var evaluatingSessionID: Int?
+    private var detachedEvaluations: [CPSLEvalRaceBox] = []
     private var sandboxURLs: CPSLSandboxURLs?
     private var currentVirtualDirectory = CPSLVirtualPath.initialDirectory
 
@@ -436,7 +673,12 @@ actor CPSLDebugService {
         }
         let attachmentsRoot = sandboxURLs.root
             .appendingPathComponent("attachments", isDirectory: true)
-        let url = hostURL(forVirtualPath: attachment.path, sandboxURLs: sandboxURLs)
+        guard let url = try? hostURL(
+            forVirtualPath: attachment.path,
+            sandboxURLs: sandboxURLs
+        ) else {
+            return
+        }
         guard url != attachmentsRoot,
               Self.isHostURL(url, inside: attachmentsRoot)
         else {
@@ -470,7 +712,19 @@ actor CPSLDebugService {
         do {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
-            let hostURL = hostURL(forVirtualPath: virtualPath, sandboxURLs: sandboxURLs)
+            let normalizedPath = Self.normalizedVirtualPath(virtualPath)
+            if normalizedPath == CPSLVirtualPath.iCloudRoot {
+                let entries = try ensureICloudMountManager().mounts.map {
+                    CPSLFileEntry(name: $0.label, path: $0.virtualPath, isDirectory: true)
+                }
+                return CPSLDirectoryListing(entries: entries, error: nil)
+            }
+            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
+            defer { mountUseLease?.release() }
+            let hostURL = try hostURL(forVirtualPath: normalizedPath, sandboxURLs: sandboxURLs)
+            guard isBrowserHostURLAllowed(hostURL, sandboxURLs: sandboxURLs) else {
+                throw CPSLFileAccessError.outsideFilesystem
+            }
 
             let fileManager = FileManager.default
             let urls = try fileManager.contentsOfDirectory(
@@ -478,7 +732,6 @@ actor CPSLDebugService {
                 includingPropertiesForKeys: [.isDirectoryKey],
                 options: []
             )
-            let normalizedPath = Self.normalizedVirtualPath(virtualPath)
             let entries = try urls.map { url in
                 let values = try url.resourceValues(forKeys: [.isDirectoryKey])
                 return CPSLFileEntry(
@@ -507,7 +760,12 @@ actor CPSLDebugService {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             let normalizedPath = Self.normalizedVirtualPath(virtualPath)
-            let hostURL = hostURL(forVirtualPath: normalizedPath, sandboxURLs: sandboxURLs)
+            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
+            defer { mountUseLease?.release() }
+            let hostURL = try hostURL(
+                forVirtualPath: normalizedPath,
+                sandboxURLs: sandboxURLs
+            )
             guard FileManager.default.fileExists(atPath: hostURL.path) else {
                 return CPSLFileEntryLookup(entry: nil, error: "File does not exist.")
             }
@@ -528,6 +786,123 @@ actor CPSLDebugService {
         }
     }
 
+    func deleteFileEntries(_ entries: [CPSLFileEntry]) throws {
+        guard !entries.isEmpty else {
+            return
+        }
+
+        let sandboxURLs = try ensureSandboxURLs()
+        self.sandboxURLs = sandboxURLs
+        let paths = entries.map { Self.normalizedVirtualPath($0.path) }
+        try paths.forEach(validateFileMutationSource)
+        try validateNonoverlappingSelection(entries)
+        let mountUseLease = try iCloudWriteUseLease(forVirtualPaths: paths)
+        defer { mountUseLease?.release() }
+
+        let urls = try paths.map { path in
+            let url = try hostURL(forVirtualPath: path, sandboxURLs: sandboxURLs)
+            guard isBrowserHostURLAllowed(url, sandboxURLs: sandboxURLs) else {
+                throw CPSLFileAccessError.outsideFilesystem
+            }
+            return (path, url)
+        }
+
+        for (path, url) in urls {
+            try FileManager.default.removeItem(at: url)
+            fileActivityNotifier.notify(CPSLFileActivity(path: path, operation: "delete"))
+        }
+    }
+
+    func moveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) throws {
+        guard !entries.isEmpty else {
+            return
+        }
+
+        let sandboxURLs = try ensureSandboxURLs()
+        self.sandboxURLs = sandboxURLs
+        let normalizedDestination = Self.normalizedVirtualPath(destinationPath)
+        try validateFileMutationDestination(normalizedDestination)
+
+        let sourcePaths = entries.map { Self.normalizedVirtualPath($0.path) }
+        try sourcePaths.forEach(validateFileMutationSource)
+        try validateNonoverlappingSelection(entries)
+        let sourceNames = sourcePaths.map { URL(fileURLWithPath: $0).lastPathComponent }
+        guard Set(sourceNames.map { $0.lowercased() }).count == sourceNames.count else {
+            throw CPSLFileMutationError.duplicateName
+        }
+
+        for entry in entries where entry.isDirectory {
+            let sourcePath = Self.normalizedVirtualPath(entry.path)
+            if normalizedDestination == sourcePath ||
+                normalizedDestination.hasPrefix("\(sourcePath)/") {
+                throw CPSLFileMutationError.destinationContainsSource
+            }
+        }
+
+        let mountUseLease = try iCloudWriteUseLease(
+            forVirtualPaths: sourcePaths + [normalizedDestination]
+        )
+        defer { mountUseLease?.release() }
+
+        let destinationURL = try hostURL(
+            forVirtualPath: normalizedDestination,
+            sandboxURLs: sandboxURLs
+        )
+        guard isBrowserHostURLAllowed(destinationURL, sandboxURLs: sandboxURLs) else {
+            throw CPSLFileAccessError.outsideFilesystem
+        }
+        let destinationValues = try destinationURL.resourceValues(forKeys: [.isDirectoryKey])
+        guard destinationValues.isDirectory == true else {
+            throw CPSLFileMutationError.destinationUnavailable
+        }
+
+        let fileManager = FileManager.default
+        let moves = try zip(sourcePaths, sourceNames).map { sourcePath, sourceName in
+            let sourceURL = try hostURL(
+                forVirtualPath: sourcePath,
+                sandboxURLs: sandboxURLs
+            )
+            guard isBrowserHostURLAllowed(sourceURL, sandboxURLs: sandboxURLs) else {
+                throw CPSLFileAccessError.outsideFilesystem
+            }
+            let targetURL = destinationURL.appendingPathComponent(sourceName)
+            guard !fileManager.fileExists(atPath: targetURL.path) else {
+                throw CPSLFileMutationError.destinationExists
+            }
+            return (sourcePath, sourceURL, targetURL)
+        }
+
+        for (sourcePath, sourceURL, targetURL) in moves {
+            try fileManager.moveItem(at: sourceURL, to: targetURL)
+            fileActivityNotifier.notify(
+                CPSLFileActivity(path: sourcePath, operation: "move")
+            )
+        }
+    }
+
+    func attachmentThumbnail(for attachment: CPSLAttachment) async -> Data? {
+        do {
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            let normalizedPath = Self.normalizedVirtualPath(attachment.path)
+            let mountUseLease = try iCloudUseLease(forVirtualPath: normalizedPath)
+            defer { mountUseLease?.release() }
+            if mountUseLease != nil {
+                try await ensureICloudMountManager().materializeFile(at: normalizedPath)
+            }
+            let url = try hostURL(forVirtualPath: normalizedPath, sandboxURLs: sandboxURLs)
+            guard isBrowserHostURLAllowed(url, sandboxURLs: sandboxURLs) else {
+                return nil
+            }
+            return Self.thumbnailData(for: url, maximumPixelSize: 96)
+        } catch {
+            return nil
+        }
+    }
+
     func previewFile(_ entry: CPSLFileEntry) async -> CPSLFilePreviewLoadResult {
         guard !entry.isDirectory else {
             return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
@@ -536,7 +911,17 @@ actor CPSLDebugService {
         do {
             let sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
-            let hostURL = hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
+            let mountUseLease = try iCloudUseLease(forVirtualPath: entry.path)
+            if mountUseLease != nil {
+                try await ensureICloudMountManager().materializeFile(at: entry.path)
+            }
+            let hostURL = try hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
+            guard isBrowserHostURLAllowed(hostURL, sandboxURLs: sandboxURLs) else {
+                return CPSLFilePreviewLoadResult(
+                    preview: nil,
+                    error: "File preview is only available inside the CPSL filesystem."
+                )
+            }
             let values = try hostURL.resourceValues(
                 forKeys: [
                     .contentModificationDateKey,
@@ -547,12 +932,6 @@ actor CPSLDebugService {
                     .localizedTypeDescriptionKey,
                 ]
             )
-            guard Self.isHostURL(hostURL, inside: sandboxURLs.root) else {
-                return CPSLFilePreviewLoadResult(
-                    preview: nil,
-                    error: "File preview is only available inside the CPSL filesystem."
-                )
-            }
             guard values.isDirectory != true else {
                 return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
             }
@@ -561,11 +940,12 @@ actor CPSLDebugService {
                 CPSLFileActivity(path: entry.path, operation: "read")
             )
             var metadata = Self.metadata(for: hostURL, values: values)
+            let result: CPSLFilePreviewLoadResult
             switch metadata.category {
             case .pdf:
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .pdf(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .pdf(hostURL))
             case .code(let language):
-                return try Self.textualPreview(
+                result = try Self.textualPreview(
                     hostURL: hostURL,
                     entry: entry,
                     metadata: metadata,
@@ -574,7 +954,7 @@ actor CPSLDebugService {
                     .code(text, language: language)
                 }
             case .text:
-                return try Self.textualPreview(
+                result = try Self.textualPreview(
                     hostURL: hostURL,
                     entry: entry,
                     metadata: metadata,
@@ -584,18 +964,30 @@ actor CPSLDebugService {
                 }
             case .image:
                 metadata.dimensions = Self.imageDimensions(for: hostURL)
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .image(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .image(hostURL))
             case .audio:
                 metadata.durationSeconds = await Self.mediaDuration(for: hostURL)
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .audio(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .audio(hostURL))
             case .video:
                 let mediaInfo = await Self.videoInfo(for: hostURL)
                 metadata.durationSeconds = mediaInfo.durationSeconds
                 metadata.dimensions = mediaInfo.dimensions
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .video(hostURL))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .video(hostURL))
             case .archive, .data, .file:
-                return Self.previewResult(entry: entry, metadata: metadata, kind: .file(reason: nil))
+                result = Self.previewResult(entry: entry, metadata: metadata, kind: .file(reason: nil))
             }
+            let lifetimeToken: AnyObject?
+            switch metadata.category {
+            case .pdf, .image, .audio, .video:
+                lifetimeToken = mountUseLease?.releaseGateRetainingScopes()
+            case .archive, .code, .data, .file, .text:
+                lifetimeToken = nil
+            }
+            return CPSLFilePreviewLoadResult(
+                preview: result.preview,
+                error: result.error,
+                lifetimeToken: lifetimeToken
+            )
         } catch {
             return CPSLFilePreviewLoadResult(preview: nil, error: error.localizedDescription)
         }
@@ -667,6 +1059,47 @@ actor CPSLDebugService {
             }
         }
         return nil
+    }
+
+    private nonisolated static func thumbnailData(
+        for url: URL,
+        maximumPixelSize: Int
+    ) -> Data? {
+#if canImport(ImageIO) && canImport(UniformTypeIdentifiers)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else {
+            return nil
+        }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return nil
+        }
+        CGImageDestinationAddImage(destination, thumbnail, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            return nil
+        }
+        return data as Data
+#else
+        _ = url
+        _ = maximumPixelSize
+        return nil
+#endif
     }
 
     private nonisolated static func metadata(
@@ -761,6 +1194,43 @@ actor CPSLDebugService {
         currentVirtualDirectory
     }
 
+    func activeICloudMounts() -> [CPSLICloudMount] {
+        iCloudMountManager?.mounts ?? []
+    }
+
+    func prepareICloudMounts() throws -> [CPSLICloudMount] {
+        try ensureICloudMountManager().mounts
+    }
+
+    func connectICloudDirectory(
+        from sourceURL: URL,
+        accessMode: CPSLICloudMountAccessMode,
+        progress: @escaping @Sendable (CPSLICloudImportProgress) -> Void
+    ) async throws -> CPSLICloudMount {
+        guard !isSessionBusy else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        let iCloudMountManager = try ensureICloudMountManager()
+        self.sandboxURLs = try ensureSandboxURLs()
+        let mount = try await iCloudMountManager.connectDirectory(
+            from: sourceURL,
+            accessMode: accessMode,
+            progress: progress
+        )
+        resetSessionIfMountRevisionChanged(to: iCloudMountManager.currentRevision)
+        return mount
+    }
+
+    func removeICloudMount(at virtualPath: String) throws {
+        guard !isSessionBusy else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        let iCloudMountManager = try ensureICloudMountManager()
+        let normalizedPath = Self.normalizedVirtualPath(virtualPath)
+        try iCloudMountManager.removeMount(at: normalizedPath)
+        resetSessionIfMountRevisionChanged(to: iCloudMountManager.currentRevision)
+    }
+
     func availableSkills() -> [CPSLAgentSkill] {
         let userRootURL: URL?
         do {
@@ -787,16 +1257,43 @@ actor CPSLDebugService {
     }
 
     private func evaluate(_ input: String, language: String) async -> CPSLEvalServiceResult {
+        if Task.isCancelled {
+            return Self.cancellationFailure()
+        }
+        let mountUseLease: CPSLICloudMountUseLease
+        do {
+            let manager = try ensureICloudMountManager()
+            guard let lease = try manager.beginSessionUse() else {
+                return Self.ffiFailure("An iCloud folder is already in use")
+            }
+            mountUseLease = lease
+            try await manager.materializeMountsForAccess()
+        } catch is CancellationError {
+            return Self.cancellationFailure()
+        } catch {
+            return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
+        }
+        if session != nil, sessionMountRevision != mountUseLease.revision {
+            resetSessionForMountChange()
+        }
         let sandboxURLs: CPSLSandboxURLs
         do {
             sandboxURLs = try ensureSandboxURLs()
             self.sandboxURLs = sandboxURLs
             await webBrowser.setSandboxRoot(sandboxURLs.root)
+        } catch is CancellationError {
+            return Self.cancellationFailure()
         } catch {
             return Self.ffiFailure("Workspace setup failed: \(error.localizedDescription)")
         }
+        if Task.isCancelled {
+            return Self.cancellationFailure()
+        }
 
-        if let sessionError = await initializeSessionIfNeeded(sandboxURLs: sandboxURLs) {
+        if let sessionError = await initializeSessionIfNeeded(
+            sandboxURLs: sandboxURLs,
+            mountRevision: mountUseLease.revision
+        ) {
             return Self.ffiFailure("Session init: \(sessionError)")
         }
 
@@ -815,10 +1312,16 @@ actor CPSLDebugService {
         evaluatingSessionID = activeSession.id
         let request = CPSLBlockingEvalRequest(
             session: activeSession.pointer,
-            requestJSON: requestJSON
+            requestJSON: requestJSON,
+            lifetimeToken: mountUseLease
         )
 
-        switch await Self.performBlockingEvalWithTimeout(request) {
+        let evaluation = await Self.performBlockingEvalWithTimeout(request) {
+            Task {
+                await self.pruneFinishedDetachedEvaluations()
+            }
+        }
+        switch evaluation.result {
         case .completed(let result):
             if evaluatingSessionID == activeSession.id {
                 evaluatingSessionID = nil
@@ -828,9 +1331,12 @@ actor CPSLDebugService {
             }
             return result
         case .timedOut:
+            retainDetachedEvaluationIfRunning(evaluation.race)
             if session?.id == activeSession.id {
-                // cpsl_eval may still be blocked; abandon and intentionally leak this session.
+                // cpsl_eval may still be blocked. The worker owns this session
+                // until the native call returns and it is safe to release.
                 session = nil
+                sessionMountRevision = nil
                 currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
             if evaluatingSessionID == activeSession.id {
@@ -838,10 +1344,15 @@ actor CPSLDebugService {
             }
             return Self.timeoutFailure()
         case .cancelled:
+            if evaluation.race.didStartEvaluation {
+                retainDetachedEvaluationIfRunning(evaluation.race)
+            } else {
+                cpsl_session_free(activeSession.pointer)
+            }
             if session?.id == activeSession.id {
-                // cpsl_eval cannot be interrupted safely; abandon this session and let its
-                // background call finish without blocking the cancelled agent task.
+                // A started worker releases the session after cpsl_eval returns.
                 session = nil
+                sessionMountRevision = nil
                 currentVirtualDirectory = CPSLVirtualPath.initialDirectory
             }
             if evaluatingSessionID == activeSession.id {
@@ -851,8 +1362,15 @@ actor CPSLDebugService {
         }
     }
 
-    private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) -> URL {
+    private func hostURL(forVirtualPath virtualPath: String, sandboxURLs: CPSLSandboxURLs) throws -> URL {
         let normalized = Self.normalizedVirtualPath(virtualPath)
+        if let resolved = iCloudMountManager?.hostURL(for: normalized) {
+            return resolved
+        }
+        if normalized == CPSLVirtualPath.iCloudRoot ||
+            normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") {
+            throw CPSLICloudMountError.mountNotFound
+        }
         return Self.appendingVirtualPath(normalized.dropFirst(), to: sandboxURLs.root)
     }
 
@@ -1010,18 +1528,68 @@ actor CPSLDebugService {
         return path == rootPath || path.hasPrefix("\(rootPath)/")
     }
 
+    private func isBrowserHostURLAllowed(_ url: URL, sandboxURLs: CPSLSandboxURLs) -> Bool {
+        if Self.isHostURL(url, inside: sandboxURLs.root) {
+            return true
+        }
+        return iCloudMountManager?.containsHostURL(url) == true
+    }
+
     private nonisolated static func virtualChildPath(parent: String, child: String) -> String {
         parent == "/" ? "/\(child)" : "\(parent)/\(child)"
     }
 
-    private func initializeSessionIfNeeded(sandboxURLs: CPSLSandboxURLs) async -> String? {
+    private func resetSessionForMountChange() {
+        if let session {
+            cpsl_session_free(session.pointer)
+        }
+        session = nil
+        sessionMountRevision = nil
+        evaluatingSessionID = nil
+        currentVirtualDirectory = CPSLVirtualPath.initialDirectory
+    }
+
+    private func resetSessionIfMountRevisionChanged(to revision: UInt64) {
+        guard session != nil, sessionMountRevision != revision else {
+            return
+        }
+        resetSessionForMountChange()
+    }
+
+    private var isSessionBusy: Bool {
+        pruneFinishedDetachedEvaluations()
+        return isInitializingSession ||
+            iCloudMountManager?.isUpdating == true ||
+            evaluatingSessionID != nil ||
+            !detachedEvaluations.isEmpty
+    }
+
+    private func retainDetachedEvaluationIfRunning(_ race: CPSLEvalRaceBox) {
+        if race.isDetachedEvaluationRunning {
+            detachedEvaluations.append(race)
+        }
+    }
+
+    private func pruneFinishedDetachedEvaluations() {
+        detachedEvaluations.removeAll { !$0.isDetachedEvaluationRunning }
+    }
+
+    private func initializeSessionIfNeeded(
+        sandboxURLs: CPSLSandboxURLs,
+        mountRevision: UInt64
+    ) async -> String? {
         guard session == nil else {
             return nil
         }
+        guard !isInitializingSession else {
+            return "CPSL session is already initializing"
+        }
+        isInitializingSession = true
+        defer {
+            isInitializingSession = false
+        }
         await webBrowser.setSandboxRoot(sandboxURLs.root)
-        guard let configJSON = makeSessionConfigJSON(
-            rootPath: sandboxURLs.root.resolvingSymlinksInPath().path
-        ) else {
+        guard let configJSON = makeSessionConfigJSON(sandboxURLs: sandboxURLs) else {
             return "Could not encode session config JSON"
         }
 
@@ -1029,12 +1597,14 @@ actor CPSLDebugService {
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
         let calendarActivityCallbackBox = CPSLCalendarActivityCallbackBox(notifier: calendarActivityNotifier)
         let locationCallbackBox = CPSLLocationCallbackBox(service: location)
+        let visionCallbackBox = CPSLVisionCallbackBox()
         let result = await Self.performBlockingSessionInit(
             configJSON: configJSON,
             callbackBox: callbackBox,
             fileActivityCallbackBox: fileActivityCallbackBox,
             calendarActivityCallbackBox: calendarActivityCallbackBox,
-            locationCallbackBox: locationCallbackBox
+            locationCallbackBox: locationCallbackBox,
+            visionCallbackBox: visionCallbackBox
         )
         guard let newSession = result.pointer else {
             return result.errorMessage ?? "cpsl_session_new returned NULL"
@@ -1046,8 +1616,105 @@ actor CPSLDebugService {
 
         nextSessionID += 1
         session = CPSLSessionHandle(id: nextSessionID, pointer: newSession)
+        sessionMountRevision = mountRevision
         currentVirtualDirectory = CPSLVirtualPath.initialDirectory
         return nil
+    }
+
+    private func iCloudUseLease(
+        forVirtualPath virtualPath: String
+    ) throws -> CPSLICloudMountUseLease? {
+        let normalized = Self.normalizedVirtualPath(virtualPath)
+        guard normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") else {
+            return nil
+        }
+        guard let lease = try ensureICloudMountManager().beginReadUse(for: normalized) else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        return lease
+    }
+
+    private func iCloudWriteUseLease(
+        forVirtualPaths virtualPaths: [String]
+    ) throws -> CPSLICloudMountUseLease? {
+        let iCloudPaths = virtualPaths
+            .map { Self.normalizedVirtualPath($0) }
+            .filter { $0.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") }
+        guard !iCloudPaths.isEmpty else {
+            return nil
+        }
+
+        let manager = try ensureICloudMountManager()
+        for path in iCloudPaths {
+            guard let mount = CPSLICloudMountResolver.mount(
+                containing: path,
+                in: manager.mounts
+            ) else {
+                throw CPSLICloudMountError.mountNotFound
+            }
+            guard mount.accessMode == .readWrite else {
+                throw CPSLFileMutationError.readOnly
+            }
+        }
+        guard let lease = try manager.beginSessionUse() else {
+            throw CPSLICloudMountError.sessionBusy
+        }
+        return lease
+    }
+
+    private func validateFileMutationSource(_ virtualPath: String) throws {
+        let normalized = Self.normalizedVirtualPath(virtualPath)
+        guard Self.isFileMutationPathAllowed(normalized) else {
+            throw CPSLFileMutationError.destinationUnavailable
+        }
+        let isMountRoot: Bool
+        if normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") {
+            isMountRoot = try ensureICloudMountManager().mounts.contains {
+                $0.virtualPath == normalized
+            }
+        } else {
+            isMountRoot = false
+        }
+        guard normalized != CPSLVirtualPath.home,
+              normalized != CPSLVirtualPath.attachments,
+              normalized != CPSLVirtualPath.temporary,
+              normalized != CPSLVirtualPath.iCloudRoot,
+              !isMountRoot
+        else {
+            throw CPSLFileMutationError.protectedLocation
+        }
+    }
+
+    private func validateFileMutationDestination(_ virtualPath: String) throws {
+        let normalized = Self.normalizedVirtualPath(virtualPath)
+        guard Self.isFileMutationPathAllowed(normalized),
+              normalized != CPSLVirtualPath.root,
+              normalized != CPSLVirtualPath.iCloudRoot
+        else {
+            throw CPSLFileMutationError.destinationUnavailable
+        }
+    }
+
+    private func validateNonoverlappingSelection(_ entries: [CPSLFileEntry]) throws {
+        let directoryPaths = entries
+            .filter(\.isDirectory)
+            .map { Self.normalizedVirtualPath($0.path) }
+        let allPaths = entries.map { Self.normalizedVirtualPath($0.path) }
+        for directoryPath in directoryPaths where allPaths.contains(where: {
+            $0 != directoryPath && $0.hasPrefix("\(directoryPath)/")
+        }) {
+            throw CPSLFileMutationError.overlappingSelection
+        }
+    }
+
+    private nonisolated static func isFileMutationPathAllowed(_ virtualPath: String) -> Bool {
+        virtualPath == CPSLVirtualPath.home ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.home)/") ||
+            virtualPath == CPSLVirtualPath.attachments ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.attachments)/") ||
+            virtualPath == CPSLVirtualPath.temporary ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.temporary)/") ||
+            virtualPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/")
     }
 
     private func ensureSandboxURLs() throws -> CPSLSandboxURLs {
@@ -1066,10 +1733,47 @@ actor CPSLDebugService {
         let appURL = supportURL.appendingPathComponent(bundleID, isDirectory: true)
         let sandboxURL = appURL.appendingPathComponent("CPSLDebugSandbox", isDirectory: true)
         let rootURL = sandboxURL.appendingPathComponent("root", isDirectory: true)
-        let sandboxURLs = CPSLSandboxURLs(root: rootURL)
+        let sandboxURLs = CPSLSandboxURLs(
+            root: rootURL,
+            iCloudNamespace: sandboxURL.appendingPathComponent("icloud", isDirectory: true),
+            iCloudMountStorage: sandboxURL.appendingPathComponent(
+                "iCloudMounts",
+                isDirectory: true
+            ),
+            legacyICloudRecovery: rootURL.appendingPathComponent(
+                "home/herm/recovered-icloud-copies",
+                isDirectory: true
+            )
+        )
 
         try ensureSandboxScaffold(sandboxURLs)
+        let iCloudMountManager = CPSLICloudMountManager.shared(
+            storageRoot: sandboxURLs.iCloudMountStorage,
+            legacyRecoveryRoot: sandboxURLs.legacyICloudRecovery
+        )
+        do {
+            try iCloudMountManager.prepare()
+        } catch {
+            if iCloudMountManager.hasPreparedState {
+                self.iCloudMountManager = iCloudMountManager
+                self.sandboxURLs = sandboxURLs
+            }
+            throw error
+        }
+        self.iCloudMountManager = iCloudMountManager
+        self.sandboxURLs = sandboxURLs
         return sandboxURLs
+    }
+
+    private func ensureICloudMountManager() throws -> CPSLICloudMountManager {
+        if let iCloudMountManager {
+            return iCloudMountManager
+        }
+        _ = try ensureSandboxURLs()
+        guard let iCloudMountManager else {
+            throw CPSLICloudMountError.savedMountUnavailable
+        }
+        return iCloudMountManager
     }
 
     private func ensureSandboxScaffold(_ sandboxURLs: CPSLSandboxURLs) throws {
@@ -1092,6 +1796,10 @@ actor CPSLDebugService {
             let url = name.isEmpty ? sandboxURLs.root : sandboxURLs.root.appendingPathComponent(name, isDirectory: true)
             try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
         }
+        try fileManager.createDirectory(
+            at: sandboxURLs.iCloudNamespace,
+            withIntermediateDirectories: true
+        )
 
         try writeFileIfMissing(
             sandboxURLs.root.appendingPathComponent("etc/hosts", isDirectory: false),
@@ -1110,7 +1818,8 @@ actor CPSLDebugService {
         try contents.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func makeSessionConfigJSON(rootPath: String) -> String? {
+    private func makeSessionConfigJSON(sandboxURLs: CPSLSandboxURLs) -> String? {
+        let rootPath = sandboxURLs.root.resolvingSymlinksInPath().path
         var mounts: [[String: Any]] = [
             [
                 "host": rootPath,
@@ -1122,6 +1831,11 @@ actor CPSLDebugService {
                     .appendingPathComponent("attachments", isDirectory: true).path,
                 "virtual": CPSLVirtualPath.attachments,
                 "mode": "ro"
+            ],
+            [
+                "host": sandboxURLs.iCloudNamespace.resolvingSymlinksInPath().path,
+                "virtual": CPSLVirtualPath.iCloudRoot,
+                "mode": "ro"
             ]
         ]
         for mount in CPSLSkillCatalog.systemSkillMounts() {
@@ -1131,19 +1845,28 @@ actor CPSLDebugService {
                 "mode": "ro"
             ])
         }
+        let iCloudMounts = iCloudMountManager?.mounts ?? []
+        for mount in iCloudMounts {
+            mounts.append([
+                "host": mount.hostURL.resolvingSymlinksInPath().path,
+                "virtual": mount.virtualPath,
+                "mode": mount.accessMode.rawValue
+            ])
+        }
 
+        let allowedDomains = ["*"]
         let config: [String: Any] = [
             "mounts": mounts,
             "initial_cwd": CPSLVirtualPath.initialDirectory,
             "language": "luau",
             "http": [
                 "mode": "policy",
-                "allow_domains": ["*"],
+                "allow_domains": allowedDomains,
                 "deny_domains": [] as [String]
             ],
             "webbrowser": [
                 "mode": "policy",
-                "allow_domains": ["*"],
+                "allow_domains": allowedDomains,
                 "deny_domains": [] as [String]
             ]
         ]
@@ -1172,10 +1895,11 @@ actor CPSLDebugService {
 
     private nonisolated static func performBlockingSessionInit(
         configJSON: String,
-        callbackBox: CPSLWebBrowserCallbackBox,
+        callbackBox: CPSLWebBrowserCallbackBox?,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
-        locationCallbackBox: CPSLLocationCallbackBox
+        locationCallbackBox: CPSLLocationCallbackBox,
+        visionCallbackBox: CPSLVisionCallbackBox
     ) async -> CPSLSessionInitResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .default).async {
@@ -1184,7 +1908,8 @@ actor CPSLDebugService {
                     callbackBox: callbackBox,
                     fileActivityCallbackBox: fileActivityCallbackBox,
                     calendarActivityCallbackBox: calendarActivityCallbackBox,
-                    locationCallbackBox: locationCallbackBox
+                    locationCallbackBox: locationCallbackBox,
+                    visionCallbackBox: visionCallbackBox
                 ))
             }
         }
@@ -1192,19 +1917,13 @@ actor CPSLDebugService {
 
     private nonisolated static func createSession(
         configJSON: String,
-        callbackBox: CPSLWebBrowserCallbackBox,
+        callbackBox: CPSLWebBrowserCallbackBox?,
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
-        locationCallbackBox: CPSLLocationCallbackBox
+        locationCallbackBox: CPSLLocationCallbackBox,
+        visionCallbackBox: CPSLVisionCallbackBox
     ) -> CPSLSessionInitResult {
         configureCPSLLibraryDirectory()
-        let userData = Unmanaged.passRetained(callbackBox).toOpaque()
-        var callbacks = cpsl_webbrowser_callbacks_t(
-            user_data: userData,
-            handle_json: cpslWebBrowserHandleJSON,
-            string_free: cpslWebBrowserStringFree,
-            user_data_free: cpslWebBrowserUserDataFree
-        )
         let fileActivityUserData = Unmanaged.passRetained(fileActivityCallbackBox).toOpaque()
         var fileActivityCallbacks = CPSLFileActivityCallbacks(
             user_data: fileActivityUserData,
@@ -1224,68 +1943,126 @@ actor CPSLDebugService {
             string_free: cpslLocationStringFree,
             user_data_free: cpslLocationUserDataFree
         )
-        let pointer: OpaquePointer?
-        let fallback: String
-        if let sessionNewWithHostCallbacksV2 = cpslSessionNewWithHostCallbacksV2Function() {
-            pointer = configJSON.withCString { configPointer in
-                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
-                    withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+        let visionUserData = Unmanaged.passRetained(visionCallbackBox).toOpaque()
+        var visionCallbacks = CPSLVisionCallbacks(
+            user_data: visionUserData,
+            handle: cpslVisionHandle,
+            user_data_free: cpslVisionUserDataFree
+        )
+
+        func createPointer(
+            webBrowserCallbacks: UnsafePointer<cpsl_webbrowser_callbacks_t>?
+        ) -> (pointer: OpaquePointer?, fallback: String) {
+            if let sessionNewWithHostCallbacksV3 = cpslSessionNewWithHostCallbacksV3Function(),
+               cpslVisionRespondFunction() != nil {
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                        withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+                            withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                                withUnsafePointer(to: &visionCallbacks) { visionCallbacksPointer in
+                                    sessionNewWithHostCallbacksV3(
+                                        configPointer,
+                                        webBrowserCallbacks,
+                                        UnsafeRawPointer(fileActivityCallbacksPointer),
+                                        UnsafeRawPointer(calendarActivityCallbacksPointer),
+                                        UnsafeRawPointer(locationCallbacksPointer),
+                                        UnsafeRawPointer(visionCallbacksPointer)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                return (pointer, "cpsl_session_new_with_host_callbacks_v3 returned NULL")
+            }
+
+            cpslVisionUserDataFree(visionUserData)
+            if let sessionNewWithHostCallbacksV2 = cpslSessionNewWithHostCallbacksV2Function() {
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                        withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+                            withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                                sessionNewWithHostCallbacksV2(
+                                    configPointer,
+                                    webBrowserCallbacks,
+                                    UnsafeRawPointer(fileActivityCallbacksPointer),
+                                    UnsafeRawPointer(calendarActivityCallbacksPointer),
+                                    UnsafeRawPointer(locationCallbacksPointer)
+                                )
+                            }
+                        }
+                    }
+                }
+                return (pointer, "cpsl_session_new_with_host_callbacks_v2 returned NULL")
+            }
+
+            if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
+                cpslCalendarActivityUserDataFree(calendarActivityUserData)
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
                         withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
-                            sessionNewWithHostCallbacksV2(
+                            sessionNewWithHostCallbacks(
                                 configPointer,
-                                &callbacks,
+                                webBrowserCallbacks,
                                 UnsafeRawPointer(fileActivityCallbacksPointer),
-                                UnsafeRawPointer(calendarActivityCallbacksPointer),
                                 UnsafeRawPointer(locationCallbacksPointer)
                             )
                         }
                     }
                 }
+                return (pointer, "cpsl_session_new_with_host_callbacks returned NULL")
             }
-            fallback = "cpsl_session_new_with_host_callbacks_v2 returned NULL"
-        } else if let sessionNewWithHostCallbacks = cpslSessionNewWithHostCallbacksFunction() {
-            cpslCalendarActivityUserDataFree(calendarActivityUserData)
-            pointer = configJSON.withCString { configPointer in
-                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
-                    withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
-                        sessionNewWithHostCallbacks(
+
+            if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
+                cpslCalendarActivityUserDataFree(calendarActivityUserData)
+                cpslLocationUserDataFree(locationUserData)
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                        sessionNewWithCallbacks(
                             configPointer,
-                            &callbacks,
-                            UnsafeRawPointer(fileActivityCallbacksPointer),
-                            UnsafeRawPointer(locationCallbacksPointer)
+                            webBrowserCallbacks,
+                            UnsafeRawPointer(fileActivityCallbacksPointer)
                         )
                     }
                 }
+                return (pointer, "cpsl_session_new_with_callbacks returned NULL")
             }
-            fallback = "cpsl_session_new_with_host_callbacks returned NULL"
-        } else if let sessionNewWithCallbacks = cpslSessionNewWithCallbacksFunction() {
-            cpslCalendarActivityUserDataFree(calendarActivityUserData)
-            cpslLocationUserDataFree(locationUserData)
-            pointer = configJSON.withCString { configPointer in
-                withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
-                    sessionNewWithCallbacks(
-                        configPointer,
-                        &callbacks,
-                        UnsafeRawPointer(fileActivityCallbacksPointer)
-                    )
-                }
-            }
-            fallback = "cpsl_session_new_with_callbacks returned NULL"
-        } else {
+
             cpslFileActivityUserDataFree(fileActivityUserData)
             cpslCalendarActivityUserDataFree(calendarActivityUserData)
             cpslLocationUserDataFree(locationUserData)
-            pointer = configJSON.withCString { configPointer in
-                cpsl_session_new_with_webbrowser_callbacks(configPointer, &callbacks)
+            if let webBrowserCallbacks {
+                let pointer = configJSON.withCString { configPointer in
+                    cpsl_session_new_with_webbrowser_callbacks(configPointer, webBrowserCallbacks)
+                }
+                return (pointer, "cpsl_session_new_with_webbrowser_callbacks returned NULL")
             }
-            fallback = "cpsl_session_new_with_webbrowser_callbacks returned NULL"
+            let pointer = configJSON.withCString { configPointer in
+                cpsl_session_new(configPointer)
+            }
+            return (pointer, "cpsl_session_new returned NULL")
         }
-        guard let pointer else {
+
+        let creationResult: (pointer: OpaquePointer?, fallback: String)
+        if let callbackBox {
+            let userData = Unmanaged.passRetained(callbackBox).toOpaque()
+            var callbacks = cpsl_webbrowser_callbacks_t(
+                user_data: userData,
+                handle_json: cpslWebBrowserHandleJSON,
+                string_free: cpslWebBrowserStringFree,
+                user_data_free: cpslWebBrowserUserDataFree
+            )
+            creationResult = withUnsafePointer(to: &callbacks) { callbacksPointer in
+                createPointer(webBrowserCallbacks: callbacksPointer)
+            }
+        } else {
+            creationResult = createPointer(webBrowserCallbacks: nil)
+        }
+
+        guard let pointer = creationResult.pointer else {
             return CPSLSessionInitResult(
                 pointer: nil,
-                errorMessage: lastErrorMessage(
-                    fallback: fallback
-                )
+                errorMessage: lastErrorMessage(fallback: creationResult.fallback)
             )
         }
         return CPSLSessionInitResult(pointer: pointer, errorMessage: nil)
@@ -1300,20 +2077,25 @@ actor CPSLDebugService {
     }
 
     private nonisolated static func performBlockingEvalWithTimeout(
-        _ request: CPSLBlockingEvalRequest
-    ) async -> CPSLEvalRaceResult {
+        _ request: CPSLBlockingEvalRequest,
+        onDetachedEvaluationFinished: @escaping @Sendable () -> Void
+    ) async -> (result: CPSLEvalRaceResult, race: CPSLEvalRaceBox) {
         let race = CPSLEvalRaceBox()
-        return await withTaskCancellationHandler {
+        let result = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 race.install(continuation)
-                guard !Task.isCancelled else {
+                guard !Task.isCancelled, race.startEvaluationIfPending() else {
                     race.resume(.cancelled)
                     return
                 }
 
                 DispatchQueue.global(qos: .userInitiated).async {
                     let result = performBlockingEval(request)
-                    race.resume(.completed(result))
+                    if !race.resume(.completed(result)) {
+                        cpsl_session_free(request.session)
+                        race.finishDetachedEvaluation()
+                        onDetachedEvaluationFinished()
+                    }
                 }
 
                 DispatchQueue.global().asyncAfter(
@@ -1325,13 +2107,16 @@ actor CPSLDebugService {
         } onCancel: {
             race.resume(.cancelled)
         }
+        return (result, race)
     }
 
     private nonisolated static func performBlockingEval(
         _ request: CPSLBlockingEvalRequest
     ) -> CPSLEvalServiceResult {
-        let responsePointer = request.requestJSON.withCString { requestPointer in
-            cpsl_eval(request.session, requestPointer)
+        let responsePointer = withExtendedLifetime(request.lifetimeToken) {
+            request.requestJSON.withCString { requestPointer in
+                cpsl_eval(request.session, requestPointer)
+            }
         }
         guard let responsePointer else {
             return ffiFailure(lastErrorMessage(fallback: "cpsl_eval returned NULL"))

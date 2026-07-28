@@ -873,8 +873,8 @@
         <p class="hero-subtitle">Open-source coding agent. Containerized, multi-provider, written in Go.</p>
 
         <div class="hero-install">
-            <code><span class="prompt">$ </span>curl -fsSL hermagent.com/install.sh | bash</code>
-            <button class="hero-copy" onclick="copyInstall(this, 'curl -fsSL hermagent.com/install.sh | bash')" aria-label="Copy">
+            <code><span class="prompt">$ </span>curl -fsSL https://hermagent.com/install.sh | sh</code>
+            <button class="hero-copy" onclick="copyInstall(this, 'curl -fsSL https://hermagent.com/install.sh | sh')" aria-label="Copy">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
         </div>
@@ -889,9 +889,9 @@
                         <span class="demo-dot"></span>
                         <span class="demo-titlebar-text">herm</span>
                     </div>
-                    <video autoplay loop muted playsinline poster="img/demo-cropped.gif">
-                        <source src="img/demo-cropped.mp4" type="video/mp4">
-                        <img src="img/demo-cropped.gif" alt="herm terminal demo">
+                    <video autoplay loop muted playsinline poster="img/demo.gif">
+                        <source src="img/demo.mp4" type="video/mp4">
+                        <img src="img/demo.gif" alt="herm terminal demo">
                     </video>
                 </div>
             </div>
@@ -945,8 +945,8 @@
         <div class="install-commands">
             <div class="install-row">
                 <span class="install-label">curl</span>
-                <code class="install-cmd"><span class="c-bin">curl</span> <span class="c-flag">-fsSL</span> <span class="c-url">hermagent.com/install.sh</span> <span class="c-op">|</span> <span class="c-bin">bash</span></code>
-                <button class="install-copy" onclick="copyInstall(this, 'curl -fsSL hermagent.com/install.sh | bash')" aria-label="Copy">
+                <code class="install-cmd"><span class="c-bin">curl</span> <span class="c-flag">-fsSL</span> <span class="c-url">https://hermagent.com/install.sh</span> <span class="c-op">|</span> <span class="c-bin">sh</span></code>
+                <button class="install-copy" onclick="copyInstall(this, 'curl -fsSL https://hermagent.com/install.sh | sh')" aria-label="Copy">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                 </button>
             </div>
@@ -1074,7 +1074,6 @@
                 <a href="https://github.com/aduermael/herm" target="_blank" rel="noopener">GitHub</a>
                 <a href="https://discord.gg/WFjcymwtZU" target="_blank" rel="noopener">Discord</a>
                 <a href="https://x.com/herm_agent" target="_blank" rel="noopener">𝕏 / Twitter</a>
-                <a href="https://langdag.com" target="_blank" rel="noopener">Built on langdag</a>
             </div>
             <div class="footer-meta">
                 <span>MIT License</span>

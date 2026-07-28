@@ -7,17 +7,32 @@ on:
       - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
+  redispatch-tag:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Redispatch tagged deployment from the default branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          gh workflow run pages.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$DEFAULT_BRANCH"
+
   deploy:
+    if: github.ref_type != 'tag'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -46,11 +61,23 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Resolved website version: $VERSION"
 
-      - name: Inject version
+      - name: Stage website assets
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          set -euo pipefail
+          # Root install.sh is the source of truth; always publish it on Pages so
+          # https://hermagent.com/install.sh stays in sync with the repo root.
+          if [[ ! -f install.sh ]]; then
+            echo "error: install.sh missing at repository root" >&2
+            exit 1
+          fi
+          cp -f install.sh docs/install.sh
+          chmod +x docs/install.sh
           sed -i "s|__VERSION__|$VERSION|g" docs/index.html
+          # Sanity-check the published installer is present in the site tree.
+          test -x docs/install.sh
+          head -n 1 docs/install.sh | grep -q '^#!'
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -64,4 +91,4 @@ jobs:
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5

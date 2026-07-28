@@ -6,9 +6,10 @@ deployment and native model ID at call time.
 
 ## Config V2
 
-Deployment-aware config uses `config_version: 2`, top-level `active_model` and
-`exploration_model`, global `deployments`, and global `routing`. Project config
-can override active/exploration model and non-secret behavior only. Deployment
+Deployment-aware config uses `config_version: 2`, top-level `active_model`,
+`exploration_model`, and `vision_model`, global `deployments`, and global
+`routing`. Project config can override active/exploration/vision models and
+non-secret behavior only. Deployment
 credentials, deployment-scoped `model_mappings`, and routing are global-only.
 Existing non-secret global settings such as model sort preferences, turn limits,
 personality, history limits, debug mode, and thinking remain top-level config
@@ -38,6 +39,7 @@ Example:
 {
   "config_version": 2,
   "active_model": "openai/gpt-4.1-2025-04-14",
+  "vision_model": "google/gemini-2.5-pro",
   "deployments": {
     "openai-direct": {
       "api_key": "sk-..."
@@ -59,6 +61,14 @@ Example:
   }
 }
 ```
+
+`vision_model` is the provider-agnostic model used by CPSL `doc.read` vision
+mode. It may point to a different configured provider than `active_model`; when
+unset, it follows `active_model`. Select a model that accepts image input. The
+same field is allowed in project config.
+Images and PDFs use vision by default when the host callback is available;
+other supported document types use structural parsing by default. Callers can
+override an individual read with `mode="vision"` or `mode="structural"`.
 
 Environment variables remain fallback input when config fields are empty:
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `XAI_API_KEY`,

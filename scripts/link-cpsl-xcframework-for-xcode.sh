@@ -8,10 +8,15 @@ herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 placeholder_dir="$herm_root/scripts/cpsl-xcframework-placeholder"
 link_path="$placeholder_dir/cpsl.xcframework"
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
-cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || {
-	printf '%s\n' "error: failed to resolve CPSL Cargo profile" >&2
+build_system=$(cpsl_apple_build_system_from_environment) || {
+	printf '%s\n' "error: failed to resolve CPSL Apple build system" >&2
 	exit 1
 }
+if [ "$build_system" = bazel ]; then
+	build_mode=$(cpsl_apple_bazel_compilation_mode_from_environment) || exit 1
+else
+	build_mode=$(cpsl_apple_cargo_profile_from_environment) || exit 1
+fi
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 built_path="$out_dir/cpsl.xcframework"
 link_stamp="$out_dir/.xcode-linked-xcframework.stamp"
@@ -170,7 +175,8 @@ cpsl_xcode_link_stamp_content() {
 	printf 'IOS_DEVICE_TARGETS=%s\n' "$ios_device_targets"
 	printf 'IOS_SIMULATOR_TARGETS=%s\n' "$ios_simulator_targets"
 	printf 'MACOS_TARGETS=%s\n' "$macos_targets"
-	printf 'CARGO_PROFILE=%s\n' "$cargo_profile"
+	printf 'BUILD_SYSTEM=%s\n' "$build_system"
+	printf 'BUILD_MODE=%s\n' "$build_mode"
 	printf 'ARTIFACT_FINGERPRINT_BEGIN\n'
 	printf '%s\n' "$artifact_fingerprint"
 	printf 'ARTIFACT_FINGERPRINT_END\n'
@@ -391,6 +397,10 @@ cpsl_xcode_overlay_built_slice() {
 	prepared_dir="$tmp_dir/prepared-$dest_id"
 	rm -rf "$prepared_dir"
 	cp -R "$source_dir" "$prepared_dir"
+	# Bazel outputs are read-only. The validation overlay may replace this file
+	# after adding placeholder-only architectures, so make the private copy
+	# writable first.
+	chmod u+w "$prepared_dir/libcpsl.dylib"
 	cpsl_xcode_make_overlay_validation_safe "$category" "$prepared_dir/libcpsl.dylib"
 
 	mkdir -p "$dest_dir/Headers"

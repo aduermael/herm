@@ -4,155 +4,92 @@
 [![Prompt Length](https://github.com/aduermael/herm/actions/workflows/prompt-length.yml/badge.svg)](https://github.com/aduermael/herm/actions/workflows/prompt-length.yml)
 [![CI Checks](https://github.com/aduermael/herm/actions/workflows/ci-checks.yml/badge.svg)](https://github.com/aduermael/herm/actions/workflows/ci-checks.yml)
 
-A coding agent CLI that's containerized by default. Every command runs inside a Docker container, nothing touches your host. No approval prompts, no "are you sure?" dialogs. Just let it work.
+Herm is a model-agnostic, general-purpose AI agent built for safe, flexible execution. It natively supports multiple isolation methods (containers, in-process Unix-like sandboxes, and host sandboxes such as `sandbox_exec` on macOS or `bubblewrap` on Linux).
+
+The Herm CLI defaults to containers with self-building environments, so you can run anything safely without approval interruptions.
+
+The logo and mascot feature a hermit crab called Herm, representing the hermetic nature of the agent. 🐚
+
+## Herm CLI
 
 ![demo](img/demo.gif)
 
-## Why herm?
+**Containerized by default:** Use the CLI on your host; the agent itself runs inside Docker containers and can only access files from your current work directory. No permission prompts.
 
-**Containerized by default** — The agent runs inside Docker containers with full control: installing packages, editing files, running builds. Your host machine stays untouched. No permission prompts, ever.
+**Multi-provider** — Anthropic, OpenAI, Gemini, Grok, OpenRouter, Ollama, Azure OpenAI, Vertex AI, or Bedrock… You can mix and match models, like Grok as the main agent, Haiku for exploration, and Gemini for vision.
 
-**Multi-provider** — Use Anthropic, OpenAI, Gemini, Grok, OpenRouter, Ollama, Azure OpenAI, Vertex AI, or Bedrock. Switch canonical models on the fly while herm resolves the configured deployment.
+**Self-building dev environments** — Herm extends container environments by writing Dockerfiles dynamically. Environments are scoped per project (current work directory).
 
-**Self-building dev environments** — Need Python but it's not installed? herm extends its own container by writing Dockerfiles dynamically. Dev environments are scoped per project (git repo) and survive container restarts — the rebuilt image persists across sessions.
+**100% open-source** — Everything is open: system prompts, skills, tools. No hidden instructions, no black boxes. You can fork it to make it your own.
 
-**100% open-source** — Everything is open, including the system prompts. No hidden instructions, no black boxes. Read them, fork them, change them.
-
-## Requirements
+### Requirements
 
 - macOS or Linux (arm64 and amd64)
-- Docker installed and running for the default container backend
-- For CPSL local sandbox mode: native build tools, Go, and Rust
-- For naked host mode (`--naked`): `sandbox-exec` on macOS or `bwrap` (bubblewrap) on Linux
+- Docker (through [Docker Desktop](https://www.docker.com/products/docker-desktop/) or [OrbStack](https://orbstack.dev)) when using the default container-based isolation
 
-## Install
+### Install
 
-### Quick install
+Use the install method that suits you:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/aduermael/herm/main/install.sh | bash
+curl -fsSL https://hermagent.com/install.sh | sh
 ```
-
-### Homebrew
 
 ```sh
 brew tap aduermael/herm
 brew install herm
 ```
 
-### From source
+Or read the instructions to [build from source](CONTRIBUTING.md#setup).
 
-Requires Go 1.24+.
+### Run
 
-```sh
-git clone https://github.com/aduermael/herm
-cd herm
-git submodule update --init external/langdag external/cpsl
-go build -o herm ./cmd/herm
-./herm
 ```
-
-If you already cloned without submodules, run this before building:
-
-```sh
-git submodule update --init external/langdag external/cpsl
-```
-
-To build Herm with a native CPSL local sandbox library instead of Docker, see
-[`CPSL_BUILD.md`](CPSL_BUILD.md).
-
-To run directly on the host without Docker or CPSL, use `herm --naked`. Naked
-mode runs host shell commands through a workspace-scoped sandbox. New command
-segments, outside-workspace paths, and host network access require approval.
-Always-approved exact commands, `command_prefixes`, outside-workspace paths,
-requested read/write paths, and network access are recorded in
-`.herm/permissions.json`. Users can edit that file to add `command_regexes` or
-`path_regexes`.
-
-## Quick Start
-
-```sh
 herm
 ```
 
-You'll need a configured deployment such as Anthropic, OpenAI, OpenRouter, Gemini, Grok, Azure OpenAI, or local Ollama. Add credentials with `/config` on first run.
+## Herm app for iOS/macOS
 
-Herm stores model choices as canonical IDs like `openai/gpt-4.1-2025-04-14`.
-Langdag resolves those IDs through your configured deployments and routing
-policy at request time, so newly published catalog models can appear without a
-new herm build when they use an already-supported API.
-Routing rules are scoped provider/model overrides; models that do not match a
-rule keep using automatic deployment selection.
+Herm is also distributed as a native iOS and macOS application. It cannot be used as a coding agent in that context, but it has an in-process Unix-like sandbox and a Luau-scriptable runtime that allow it to accomplish a wide variety of tasks fully on-device. Herm can even write programs for itself in that environment, mount file storage, and leverage OS frameworks for web browsing, location, calendars, and more.
+
+Herm for iOS/macOS is not yet available on the App Store, but is in active development in this repository.
 
 ## Roadmap
 
-Rough priority order — subject to change.
+Rough priority order, subject to change.
 
-1. **Credential-free third-party APIs** — let herm call any external API without ever seeing your credentials.
-2. **Benchmarks** — measure herm against Claude Code and other coding agents on standard coding tasks.
-3. **Skills & `herm.md`** — first-class skills and a project config file. Optional import from other agents' configs (e.g. `CLAUDE.md`).
-4. **PR review bot** — a herm bot that reviews pull requests.
-5. **Dynamic model catalog** — keep expanding deployment-aware refresh, pricing, and routing diagnostics.
+1. **Benchmarks:** measure Herm against Claude Code, Codex, Grok Build and other coding agents.
+2. **PR review bot:** Herm bot (GitHub Action) that reviews pull requests.
+3. **Safe connectivity:** Let Herm talk to external APIs and databases without ever seeing your credentials. (We'll probably use [SFAE](https://sfae.io) for this)
 
 ## Project Structure
 
 ```
 herm/
+├── app/apple/                 iOS and macOS app (SwiftUI)
 ├── cmd/
-│   ├── herm/                  Main application
-│   │   ├── prompts/           System prompt templates (embedded)
-│   │   └── dockerfiles/       Base container definition (embedded)
+│   ├── herm/                  Herm CLI
 │   └── debug/                 Debug utilities
+├── prompts/                   System prompts and tool docs (embedded)
 ├── scripts/                   Build helpers
-├── .herm/
-│   └── skills/                Skill definitions (e.g. devenv)
+├── tools/                     Repo tooling
+├── docs/                      Website (GitHub Pages → hermagent.com)
 ├── external/
-│   ├── langdag/               langdag submodule
-│   └── cpsl/                  CPSL backend submodule
-├── .herm-cpsl/                Ignored CPSL build artifacts and cache
+│   ├── langdag/               LLM client/orchestration submodule
+│   └── cpsl/                  Native sandbox backend submodule
 ├── img/                       Demo assets
-├── plans/                     Project planning docs
-├── CPSL_BUILD.md              Native CPSL local sandbox build guide
+├── install.sh                 Installer (published at hermagent.com/install.sh)
+├── THIRD-PARTY-NOTICES        Third-party license attributions
+├── CPSL_BUILD.md
+├── CONTRIBUTING.md
 ├── go.mod
 ├── LICENSE
 └── README.md
 ```
 
-## Test
+## Contributing
 
-```sh
-go test ./...
-```
-
-## FAQ
-
-<details>
-<summary>How is it different from Claude Code?</summary>
-
-> Claude Code runs directly on your host and needs your approval for every potentially dangerous action. herm runs everything in containers, so the agent can act freely without risking your system. herm also supports multiple model providers and ships its system prompts in the open.
-</details>
-
-<details>
-<summary>How is it different from OpenCode?</summary>
-
-> OpenCode is a great terminal AI assistant, but it runs on your host like most coding agents. herm's core idea is that containerization should be the default — not an afterthought. If the agent can't break anything, you don't need permission prompts.
-</details>
-
-<details>
-<summary>How is it different from Pi Coding Agent?</summary>
-
-> [Pi](https://github.com/badlogic/pi-mono) focuses on extensibility through TypeScript plugins and a large ecosystem of community packages. herm takes a different bet: safety through containerization. Instead of asking users to manage permissions, herm sandboxes everything by default so the agent can operate autonomously.
-</details>
-
-<details>
-<summary>What is the logo supposed to represent?</summary>
-
-> It's an hermit crab called Herm, short for Herman. It represents the hermetic nature of the agent — everything sealed inside its shell.
-</details>
-
-## Dependencies
-
-herm is built on top of [langdag](https://langdag.com), a Go library for managing LLM conversations as directed acyclic graphs with multi-provider support. This project originally started as a way to dogfood langdag.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, tests, CI checks, coding standards, and pull request expectations.
 
 ## Community
 
@@ -160,4 +97,6 @@ Join the [Discord](https://discord.gg/WFjcymwtZU) to chat, ask questions, or sha
 
 ## License
 
-[MIT](LICENSE)
+Herm is distributed under the [MIT License](LICENSE).
+
+Third-party software included with Herm is redistributed under its own licenses. See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES) for attributions, required NOTICE excerpts, and license texts.

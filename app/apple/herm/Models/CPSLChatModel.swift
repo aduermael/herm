@@ -1,5 +1,5 @@
-import Combine
 import Foundation
+import Observation
 
 private enum CPSLTransientActivity {
     case file
@@ -8,30 +8,58 @@ private enum CPSLTransientActivity {
 }
 
 @MainActor
-final class CPSLChatModel: ObservableObject {
-    @Published var promptText = ""
-    @Published private(set) var composerAttachments: [CPSLAttachment] = []
-    @Published private(set) var isImportingAttachment = false
-    @Published var comingSoonMessage: String?
-    @Published var messages: [CPSLChatMessage] = []
-    @Published private(set) var conversations: [CPSLConversationSummary] = []
-    @Published private(set) var selectedConversationID: String?
-    @Published private(set) var isRunning = false
-    @Published private(set) var isDrawerOpen = false
-    @Published private(set) var isFileBrowserOpen = false
-    @Published private(set) var browserPath = "/"
-    @Published private(set) var browserEntries: [CPSLFileEntry] = []
-    @Published private(set) var childEntriesByPath: [String: [CPSLFileEntry]] = [:]
-    @Published private(set) var expandedFilePaths: Set<String> = []
-    @Published private(set) var loadingFilePaths: Set<String> = []
-    @Published private(set) var fileBrowserError: String?
-    @Published private(set) var filePreview: CPSLFilePreview?
-    @Published private(set) var isWebBrowserOpen = false
-    @Published private(set) var isFileActivityActive = false
-    @Published private(set) var isCalendarOpen = false
-    @Published private(set) var isCalendarActivityActive = false
-    @Published private(set) var isLocationOpen = false
-    @Published private(set) var isLocationActivityActive = false
+@Observable
+final class CPSLChatModel {
+    var promptText = ""
+    private(set) var composerAttachments: [CPSLAttachment] = []
+    private(set) var isImportingAttachment = false
+    var comingSoonMessage: String?
+    var messages: [CPSLChatMessage] = []
+    private(set) var conversations: [CPSLConversationSummary] = []
+    private(set) var selectedConversationID: String?
+    private(set) var isRunning = false
+    private(set) var isDrawerOpen = false
+    private(set) var isFileBrowserOpen = false
+    private(set) var browserPath = "/"
+    private(set) var browserEntries: [CPSLFileEntry] = []
+    private(set) var childEntriesByPath: [String: [CPSLFileEntry]] = [:]
+    private(set) var expandedFilePaths: Set<String> = []
+    private(set) var loadingFilePaths: Set<String> = []
+    private(set) var fileBrowserError: String?
+    private(set) var isManagingFiles = false
+    private(set) var filePreview: CPSLFilePreview? {
+        didSet {
+            if filePreview == nil {
+                isFileInfoOpen = false
+                activeFileNavigationRequestID = nil
+                activeFilePreviewRequestID = nil
+                filePreviewLoadTask?.cancel()
+                filePreviewLoadTask = nil
+                retireFilePreviewLifetimeToken()
+            } else if oldValue?.path != filePreview?.path {
+                isFileInfoOpen = false
+            }
+        }
+    }
+    /// File metadata pushed one level deeper in the Files route stack (not a popover/drawer).
+    private(set) var isFileInfoOpen = false
+    private(set) var isWebBrowserOpen = false
+    private(set) var isFileActivityActive = false
+    private(set) var isCalendarOpen = false
+    private(set) var isCalendarActivityActive = false
+    private(set) var isLocationOpen = false
+    private(set) var isLocationActivityActive = false
+    private(set) var iCloudMounts: [CPSLICloudMount] = []
+    private(set) var isUpdatingICloudMounts = true
+    private(set) var iCloudImportProgress: CPSLICloudImportProgress?
+    private(set) var allTags: [CPSLTag] = []
+    var searchText: String = ""
+    private(set) var activeTagIDs: Set<String> = []
+    private(set) var showingArchived = false
+
+    var isBusy: Bool {
+        isRunning || isUpdatingICloudMounts || isManagingFiles
+    }
 
     let service: CPSLDebugService
     let webBrowser: CPSLWebBrowserService
@@ -40,27 +68,40 @@ final class CPSLChatModel: ObservableObject {
     let dictation = CPSLDictationService()
     private let fileActivityNotifier = CPSLFileActivityNotifier()
     private let calendarActivityNotifier = CPSLCalendarActivityNotifier()
-    private var store: CPSLConversationStore?
-    private var storeLoadTask: Task<CPSLConversationStore, Error>?
-    private var activeRunTask: Task<Void, Never>?
-    var currentNodeID: String?
-    private var currentSystemPrompt: String?
+    @ObservationIgnored private var store: CPSLConversationStore?
+    @ObservationIgnored private var storeLoadTask: Task<CPSLConversationStore, Error>?
+    @ObservationIgnored private var activeRunTask: Task<Void, Never>?
+    @ObservationIgnored var currentNodeID: String?
+    @ObservationIgnored private var currentSystemPrompt: String?
     var streamingAssistantMessageID: UUID?
-    var isSuppressingAssistantStream = false
-    var typewriterBuffer = ""
-    var typewriterTask: Task<Void, Never>?
+    @ObservationIgnored var isSuppressingAssistantStream = false
+    @ObservationIgnored var typewriterBuffer = ""
+    @ObservationIgnored var typewriterTask: Task<Void, Never>?
+    @ObservationIgnored private var iCloudImportTask: Task<Void, Never>?
+    @ObservationIgnored private var activeICloudImportID: UUID?
+    @ObservationIgnored private var activeFileNavigationRequestID: UUID?
+    @ObservationIgnored private var activeFilePreviewRequestID: UUID?
+    @ObservationIgnored private var filePreviewLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var filePreviewLifetimeToken: AnyObject?
+    @ObservationIgnored private var retiredFilePreviewLifetimeTokens: [UUID: AnyObject] = [:]
+    @ObservationIgnored private var attachmentThumbnailCache: [String: Data] = [:]
+    @ObservationIgnored private var attachmentsWithoutThumbnails: Set<String> = []
+    @ObservationIgnored private var iCloudMountChangeObserver: NSObjectProtocol?
     let estimatedBytesPerToken = 4
     let toolResultClearThreshold = 0.80
     let recentToolResultsToKeep = 4
     var activeToolStatusNodeID: String?
-    var activeToolStatusPayload: CPSLToolStatusPayload?
-    var activeToolStatusStore: CPSLConversationStore?
-    private var fileActivityClearTask: Task<Void, Never>?
-    private var calendarActivityClearTask: Task<Void, Never>?
-    private var locationActivityClearTask: Task<Void, Never>?
-    private var draftConversationID = UUID().uuidString
-    private var attachmentImportCount = 0
+    @ObservationIgnored var activeToolStatusConversationID: String?
+    @ObservationIgnored var activeToolStatusPayload: CPSLToolStatusPayload?
+    @ObservationIgnored var activeToolStatusStore: CPSLConversationStore?
+    @ObservationIgnored var activeToolStatusRevision = 0
+    @ObservationIgnored private var fileActivityClearTask: Task<Void, Never>?
+    @ObservationIgnored private var calendarActivityClearTask: Task<Void, Never>?
+    @ObservationIgnored private var locationActivityClearTask: Task<Void, Never>?
+    @ObservationIgnored private var draftConversationID = UUID().uuidString
+    @ObservationIgnored private var attachmentImportCount = 0
     private let activityPulseDuration: TimeInterval = 1.6
+    private static let filePreviewRetirementNanoseconds: UInt64 = 300_000_000
 
     var isToolOverlayOpen: Bool {
         isFileBrowserOpen
@@ -79,10 +120,11 @@ final class CPSLChatModel: ObservableObject {
     For tasks involving a website or online service—including account actions, private messages, posts, forms, and file uploads or downloads—the webbrowser skill is relevant and you must read it before deciding how to proceed. The native browser uses persistent WebKit state, so the user may already be signed in. When the user explicitly requests a specific action, try to complete it through the site's normal browser interface on their behalf. Keep ordinary browser work in the background; hand the browser to the user only when authentication, consent, CAPTCHA, payment, or subjective confirmation requires them.
     Use authenticated websites only through their normal browser flow. Do not unhide, relabel, restyle, or inject page controls to manufacture an interaction target. Do not replace normal browser typing with stacked JavaScript input, paste, or synthetic keyboard-event strategies. After a consequential action is confirmed, do not repeat it or send a corrective follow-up unless the user explicitly asks; report every side effect accurately. Never extract, print, copy, or reuse authentication tokens, cookies, or other session secrets from browser storage or page JavaScript, and never use those secrets to call a site's private API.
     Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Preparing document", "Checking export", or "Saving result". Do not mention code, sandbox details, paths, module names, tool names, API names, file extensions, HTTP, or implementation details in intent.
+    Every agent call must also include intent: a short user-facing description of its expected work. Describe the action itself; never mention a helper, agent, delegation, tool, code, paths, or implementation details.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
-    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs.
-    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Do not use require or package-style imports for filesystem or document work.
-    Treat help output as human-readable documentation. Call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
+    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures. Use signatures documented by a relevant loaded skill directly. Call help() or a module's help function only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
+    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list.
+    Treat help output as human-readable documentation. When help is actually needed, call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
     Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed.
     Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
     If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available through CPSL.
@@ -112,6 +154,26 @@ final class CPSLChatModel: ObservableObject {
         """
     }
 
+    func addingICloudMountContext(to basePrompt: String) -> String {
+        guard !iCloudMounts.isEmpty else {
+            return basePrompt
+        }
+        let mountLines = iCloudMounts.map { mount in
+            "- `\(mount.virtualPath)`: \(mount.accessMode.promptDescription) iCloud Drive folder"
+        }.joined(separator: "\n")
+        return basePrompt + """
+
+
+        ## iCloud Mounts
+
+        The user connected these original iCloud Drive folders to CPSL:
+
+        \(mountLines)
+
+        Treat content under `/icloud/*` as personal data. Read from those mounts only as needed for the task. Do not modify read-only mounts. Changes made in read-write mounts affect the original files; iCloud Drive uploads those changes asynchronously.
+        """
+    }
+
     init() {
         let webBrowser = CPSLWebBrowserService()
         self.webBrowser = webBrowser
@@ -121,6 +183,15 @@ final class CPSLChatModel: ObservableObject {
             calendarActivityNotifier: calendarActivityNotifier,
             fileActivityNotifier: fileActivityNotifier
         )
+        iCloudMountChangeObserver = NotificationCenter.default.addObserver(
+            forName: CPSLICloudMountStore.didChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.refreshICloudMountsAfterChange()
+            }
+        }
         fileActivityNotifier.setHandler { [weak self] _ in
             self?.markFileActivity()
         }
@@ -156,7 +227,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func startNewConversation() {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -175,6 +246,7 @@ final class CPSLChatModel: ObservableObject {
         filePreview = nil
         closeWebBrowser()
         isDrawerOpen = false
+        setArchivedScope(false)
     }
 
     func toggleDrawer() {
@@ -200,7 +272,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func selectConversation(id: String) {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -219,7 +291,7 @@ final class CPSLChatModel: ObservableObject {
     }
 
     func deleteConversation(id: String) {
-        guard !isRunning else {
+        guard !isBusy else {
             return
         }
 
@@ -228,12 +300,99 @@ final class CPSLChatModel: ObservableObject {
         }
     }
 
+    private func mutate(
+        errorTitle: String,
+        _ op: @escaping (CPSLConversationStore) async throws -> Void
+    ) {
+        Task {
+            guard let store = try? await loadStore() else { return }
+            do {
+                try await op(store)
+            } catch {
+                appendErrorMessage(title: errorTitle, body: error.localizedDescription)
+            }
+            await reloadConversations()
+        }
+    }
+
+    func setPinned(id: String, pinned: Bool) {
+        mutate(errorTitle: "Conversation") { try await $0.setPinned(conversationID: id, pinned: pinned) }
+    }
+
+    func renameConversation(id: String, title: String) {
+        mutate(errorTitle: "Rename") { try await $0.renameConversation(id: id, title: title) }
+    }
+
+    func archiveConversation(id: String) {
+        // Only block archiving the conversation that is actively running.
+        if isRunning, id == selectedConversationID { return }
+        Task {
+            do {
+                let store = try await loadStore()
+                try await store.setArchived(conversationID: id, archived: true)
+            } catch {
+                appendErrorMessage(title: "Conversation", body: error.localizedDescription)
+                return
+            }
+
+            let archivedActiveConversation = (id == selectedConversationID)
+            if archivedActiveConversation {
+                discardComposerAttachments(removingScope: nil)
+                selectedConversationID = nil
+                currentNodeID = nil
+                currentSystemPrompt = nil
+                messages = []
+            }
+            await reloadConversations()
+            // Select the most recent conversation only when this call deselected the active one.
+            if archivedActiveConversation, selectedConversationID == nil, let first = conversations.first {
+                await loadConversation(id: first.id)
+            }
+        }
+    }
+
+    func unarchiveConversation(id: String) {
+        mutate(errorTitle: "Conversation") { try await $0.setArchived(conversationID: id, archived: false) }
+    }
+
+    func assignTags(conversationID: String, tagIDs: Set<String>) {
+        mutate(errorTitle: "Tag") { try await $0.setTags(conversationID: conversationID, tagIDs: tagIDs) }
+    }
+
+    @discardableResult
+    func createTag(name: String, color: String) async -> CPSLTag? {
+        guard let store = try? await loadStore() else { return nil }
+        do {
+            let tag = try await store.createTag(name: name, color: color)
+            await reloadConversations()
+            return tag
+        } catch {
+            appendErrorMessage(title: "Tag", body: error.localizedDescription)
+            return nil
+        }
+    }
+
+    func renameTag(id: String, name: String) {
+        mutate(errorTitle: "Tag") { try await $0.renameTag(id: id, name: name) }
+    }
+
+    func deleteTag(id: String) {
+        mutate(errorTitle: "Tag") { try await $0.deleteTag(id: id) }
+    }
+
+    func tagIDs(for conversationID: String) async -> Set<String> {
+        guard let store = try? await loadStore() else { return [] }
+        return (try? await store.tagIDs(forConversation: conversationID)) ?? []
+    }
+
 #if DEBUG
     func makeConversationJSONTraceShareFile() async -> URL? {
         let conversationID = selectedConversationID
         do {
             let json = try await conversationDebugJSON(conversationID: conversationID)
-            return try Self.writeConversationJSONTraceFile(json, conversationID: conversationID)
+            return try await Task.detached(priority: .utility) {
+                try Self.writeConversationJSONTraceFile(json, conversationID: conversationID)
+            }.value
         } catch {
             appendErrorMessage(title: "Debug", body: error.localizedDescription)
             return nil
@@ -243,7 +402,7 @@ final class CPSLChatModel: ObservableObject {
 
     func submitPrompt() {
         let input = promptText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!input.isEmpty || !composerAttachments.isEmpty), !isRunning else {
+        guard (!input.isEmpty || !composerAttachments.isEmpty), !isBusy else {
             return
         }
 
@@ -255,6 +414,7 @@ final class CPSLChatModel: ObservableObject {
             }
             dictation.cancel()
             promptText = ""
+            dismissOverlaysForRun()
             runCommand(command)
             return
         }
@@ -267,27 +427,34 @@ final class CPSLChatModel: ObservableObject {
         dictation.cancel()
         promptText = ""
         composerAttachments = []
-        isFileBrowserOpen = false
-        isCalendarOpen = false
-        isLocationOpen = false
-        filePreview = nil
-        closeWebBrowser()
-        isDrawerOpen = false
+        dismissOverlaysForRun()
         isRunning = true
         activeRunTask = Task {
             await runAgent(prompt: prompt)
         }
     }
 
+    private func dismissOverlaysForRun() {
+        isFileBrowserOpen = false
+        isCalendarOpen = false
+        isLocationOpen = false
+        filePreview = nil
+        closeWebBrowser()
+        isDrawerOpen = false
+    }
+
     func stopAgent() {
         guard isRunning else {
             return
         }
+        // Cancel the run task first so nested awaits (provider streams, sub-agents,
+        // eval race) observe cooperative cancellation immediately.
         activeRunTask?.cancel()
         isSuppressingAssistantStream = true
         typewriterTask?.cancel()
         typewriterTask = nil
         typewriterBuffer = ""
+        discardStreamingAssistantIfNeeded()
     }
 
     func addAttachment(from url: URL) {
@@ -390,6 +557,7 @@ final class CPSLChatModel: ObservableObject {
             isCalendarOpen = false
             isLocationOpen = false
             filePreview = nil
+            // Directory listing runs async on the debug-service actor; keep open snappy.
             loadBrowserPath(browserPath)
         } else {
             filePreview = nil
@@ -442,22 +610,44 @@ final class CPSLChatModel: ObservableObject {
         closeWebBrowser()
         isCalendarOpen = false
         isLocationOpen = false
-        isFileBrowserOpen = true
         filePreview = nil
+        let navigationID = UUID()
+        activeFileNavigationRequestID = navigationID
 
-        Task {
+        Task { [weak self, service] in
             let lookup = await service.fileEntry(at: normalized)
+            guard let self,
+                  self.activeFileNavigationRequestID == navigationID
+            else {
+                return
+            }
             guard let entry = lookup.entry else {
-                loadBrowserPath(parentPath(of: normalized))
-                fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
+                self.activeFileNavigationRequestID = nil
+                self.loadBrowserPath(self.parentPath(of: normalized))
+                self.fileBrowserError = "\(normalized): \(lookup.error ?? "File does not exist.")"
+                self.isFileBrowserOpen = true
                 return
             }
 
             if entry.isDirectory {
-                loadBrowserPath(entry.path)
+                self.activeFileNavigationRequestID = nil
+                self.loadBrowserPath(entry.path)
+                self.isFileBrowserOpen = true
             } else {
-                loadBrowserPath(parentPath(of: entry.path))
-                await loadPreview(for: entry)
+                let previewResult = await service.previewFile(entry)
+                guard self.activeFileNavigationRequestID == navigationID else {
+                    return
+                }
+                self.activeFileNavigationRequestID = nil
+                self.loadBrowserPath(self.parentPath(of: entry.path))
+                if let preview = previewResult.preview {
+                    self.filePreviewLifetimeToken = previewResult.lifetimeToken
+                    self.filePreview = preview
+                } else {
+                    let message = previewResult.error ?? "Preview is not available for this file."
+                    self.fileBrowserError = "\(entry.path): \(message)"
+                }
+                self.isFileBrowserOpen = true
             }
         }
     }
@@ -474,7 +664,7 @@ final class CPSLChatModel: ObservableObject {
         isLocationOpen = false
         closeWebBrowser()
         isCalendarOpen = true
-        Task {
+        Task(priority: .userInitiated) {
             let access = await calendar.loadUpcomingEvents()
             if access == .denied {
                 comingSoonMessage = "Calendar access is denied. Enable Calendar access for Herm in iOS Settings or macOS System Settings."
@@ -497,8 +687,9 @@ final class CPSLChatModel: ObservableObject {
         filePreview = nil
         isCalendarOpen = false
         closeWebBrowser()
+        // Open chrome immediately; location fetch/MapKit work must not gate presentation.
         isLocationOpen = true
-        Task {
+        Task(priority: .userInitiated) {
             let access = await location.loadCurrentLocation()
             if access == .denied {
                 comingSoonMessage = location.locationError
@@ -524,13 +715,14 @@ final class CPSLChatModel: ObservableObject {
         expandedFilePaths.removeAll()
         childEntriesByPath.removeAll()
 
+        if isChangingPath {
+            filePreview = nil
+            browserEntries = []
+        }
+
         guard normalized != CPSLVirtualPath.root else {
             browserEntries = []
             return
-        }
-
-        if isChangingPath {
-            browserEntries = []
         }
 
         Task {
@@ -575,14 +767,127 @@ final class CPSLChatModel: ObservableObject {
         if entry.isDirectory {
             loadBrowserPath(entry.path)
         } else {
-            Task {
-                await loadPreview(for: entry)
-            }
+            requestFilePreview(for: entry)
         }
     }
 
     func closeFilePreview() {
+        isFileInfoOpen = false
         filePreview = nil
+    }
+
+    func openFileInfo() {
+        guard filePreview != nil else {
+            return
+        }
+        isFileInfoOpen = true
+    }
+
+    func closeFileInfo() {
+        isFileInfoOpen = false
+    }
+
+    func isFileReadOnly(_ path: String) -> Bool {
+        iCloudMount(containing: path)?.accessMode == .readOnly
+    }
+
+    func isICloudMountRoot(_ path: String) -> Bool {
+        iCloudMounts.contains { $0.virtualPath == normalizedPath(path) }
+    }
+
+    func canMoveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) -> Bool {
+        let destination = normalizedPath(destinationPath)
+        guard !entries.isEmpty,
+              destination != CPSLVirtualPath.root,
+              destination != CPSLVirtualPath.iCloudRoot,
+              isBrowserPathAllowed(destination),
+              !isFileReadOnly(destination)
+        else {
+            return false
+        }
+
+        for entry in entries {
+            let source = normalizedPath(entry.path)
+            if isICloudMountRoot(source) ||
+                isFileReadOnly(source) ||
+                parentPath(of: source) == destination ||
+                source == destination ||
+                (entry.isDirectory && destination.hasPrefix("\(source)/")) {
+                return false
+            }
+        }
+        return true
+    }
+
+    func deleteFileEntries(_ entries: [CPSLFileEntry]) {
+        guard !entries.isEmpty, !isBusy else {
+            return
+        }
+        fileBrowserError = nil
+        isManagingFiles = true
+        Task { [weak self, service] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.isManagingFiles = false
+            }
+            let operationError: String?
+            do {
+                try await service.deleteFileEntries(entries)
+                operationError = nil
+            } catch {
+                operationError = "Files: \(error.localizedDescription)"
+            }
+            self.loadBrowserPath(self.browserPath)
+            self.fileBrowserError = operationError
+        }
+    }
+
+    func moveFileEntries(
+        _ entries: [CPSLFileEntry],
+        toDirectory destinationPath: String
+    ) {
+        guard canMoveFileEntries(entries, toDirectory: destinationPath), !isBusy else {
+            return
+        }
+        fileBrowserError = nil
+        isManagingFiles = true
+        Task { [weak self, service] in
+            guard let self else {
+                return
+            }
+            defer {
+                self.isManagingFiles = false
+            }
+            let operationError: String?
+            do {
+                try await service.moveFileEntries(entries, toDirectory: destinationPath)
+                operationError = nil
+            } catch {
+                operationError = "Files: \(error.localizedDescription)"
+            }
+            self.loadBrowserPath(self.browserPath)
+            self.fileBrowserError = operationError
+        }
+    }
+
+    func attachmentThumbnail(for attachment: CPSLAttachment) async -> Data? {
+        if let cached = attachmentThumbnailCache[attachment.id] {
+            return cached
+        }
+        guard !attachmentsWithoutThumbnails.contains(attachment.id) else {
+            return nil
+        }
+        guard let data = await service.attachmentThumbnail(for: attachment) else {
+            attachmentsWithoutThumbnails.insert(attachment.id)
+            return nil
+        }
+        attachmentThumbnailCache[attachment.id] = data
+        return data
     }
 
     func markFileActivity() {
@@ -646,8 +951,154 @@ final class CPSLChatModel: ObservableObject {
         }
     }
 
+    func importICloudDirectory(
+        _ url: URL,
+        accessMode: CPSLICloudMountAccessMode
+    ) {
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before adding an iCloud folder."
+            return
+        }
+
+        fileBrowserError = nil
+        isUpdatingICloudMounts = true
+        iCloudImportProgress = .preparing
+        let importID = UUID()
+        activeICloudImportID = importID
+        iCloudImportTask = Task { [weak self, service] in
+            defer {
+                if let self, self.activeICloudImportID == importID {
+                    self.activeICloudImportID = nil
+                    self.iCloudImportTask = nil
+                    self.iCloudImportProgress = nil
+                    self.isUpdatingICloudMounts = false
+                }
+            }
+            do {
+                let mount = try await service.connectICloudDirectory(
+                    from: url,
+                    accessMode: accessMode
+                ) { [weak self] progress in
+                    Task { @MainActor [weak self] in
+                        self?.applyICloudImportProgress(progress, importID: importID)
+                    }
+                }
+                let mounts = await service.activeICloudMounts()
+                self?.iCloudMounts = mounts
+                self?.loadBrowserPath(mount.virtualPath)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.fileBrowserError = "iCloud: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func cancelICloudImport() {
+        if let progress = iCloudImportProgress {
+            iCloudImportProgress = progress.cancelling
+        }
+        iCloudImportTask?.cancel()
+    }
+
+    deinit {
+        iCloudImportTask?.cancel()
+        filePreviewLoadTask?.cancel()
+        if let iCloudMountChangeObserver {
+            NotificationCenter.default.removeObserver(iCloudMountChangeObserver)
+        }
+    }
+
+    private func refreshICloudMountsAfterChange() async {
+        let updatedMounts = await service.activeICloudMounts()
+        let previousBrowserPath = browserPath
+        let previewPath = filePreview?.path
+        iCloudMounts = updatedMounts
+
+        if let previewPath,
+           previewPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/"),
+           CPSLICloudMountResolver.mount(containing: previewPath, in: updatedMounts) == nil {
+            filePreview = nil
+        }
+
+        guard previousBrowserPath == CPSLVirtualPath.iCloudRoot ||
+                previousBrowserPath.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/")
+        else {
+            return
+        }
+        if previousBrowserPath != CPSLVirtualPath.iCloudRoot,
+           CPSLICloudMountResolver.mount(
+               containing: previousBrowserPath,
+               in: updatedMounts
+           ) == nil {
+            loadBrowserPath(CPSLVirtualPath.iCloudRoot)
+        } else if isFileBrowserOpen {
+            loadBrowserPath(previousBrowserPath)
+        }
+    }
+
+    private func applyICloudImportProgress(
+        _ progress: CPSLICloudImportProgress,
+        importID: UUID
+    ) {
+        guard activeICloudImportID == importID else {
+            return
+        }
+        guard iCloudImportProgress?.phase != .cancelling else {
+            return
+        }
+        if let current = iCloudImportProgress, current.phase == progress.phase {
+            switch progress.phase {
+            case .downloading:
+                guard progress.completedBytes >= current.completedBytes,
+                      progress.completedItems >= current.completedItems
+                else {
+                    return
+                }
+            case .preparing, .cancelling:
+                break
+            }
+        }
+        iCloudImportProgress = progress
+    }
+
+    func reportICloudImportError(_ error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain &&
+            nsError.code == CocoaError.Code.userCancelled.rawValue {
+            return
+        }
+        fileBrowserError = "iCloud: \(error.localizedDescription)"
+    }
+
+    func removeICloudMount(_ entry: CPSLFileEntry) {
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before removing an iCloud folder."
+            return
+        }
+
+        fileBrowserError = nil
+        isUpdatingICloudMounts = true
+        Task {
+            defer {
+                isUpdatingICloudMounts = false
+            }
+            do {
+                try await service.removeICloudMount(at: entry.path)
+                iCloudMounts = await service.activeICloudMounts()
+                loadBrowserPath(iCloudMounts.isEmpty ? CPSLVirtualPath.root : CPSLVirtualPath.iCloudRoot)
+            } catch {
+                fileBrowserError = "iCloud: \(error.localizedDescription)"
+            }
+        }
+    }
+
     func children(for path: String) -> [CPSLFileEntry] {
         childEntriesByPath[path] ?? []
+    }
+
+    func iCloudMount(containing path: String) -> CPSLICloudMount? {
+        CPSLICloudMountResolver.mount(containing: path, in: iCloudMounts)
     }
 
     func isExpanded(_ entry: CPSLFileEntry) -> Bool {
@@ -658,20 +1109,70 @@ final class CPSLChatModel: ObservableObject {
         loadingFilePaths.contains(path)
     }
 
+    var sectionGroups: [CPSLConversationSectionGroup] {
+        CPSLConversationGrouping.sections(
+            summaries: conversations,
+            searchText: searchText,
+            now: Date(),
+            calendar: .current
+        )
+    }
+
+    func setArchivedScope(_ on: Bool) {
+        guard showingArchived != on else { return }
+        showingArchived = on
+        Task { await reloadConversations() }
+    }
+
+    func toggleActiveTag(_ id: String) {
+        if activeTagIDs.contains(id) {
+            activeTagIDs.remove(id)
+        } else {
+            activeTagIDs.insert(id)
+        }
+        Task { await reloadConversations() }
+    }
+
+    func clearActiveTags() {
+        activeTagIDs = []
+        Task { await reloadConversations() }
+    }
+
+    private func reloadConversations() async {
+        guard let store = try? await loadStore() else { return }
+        let scope: CPSLArchiveScope = showingArchived ? .archived : .active
+        do {
+            conversations = try await store.fetchConversationSummaries(archiveScope: scope, tagIDs: activeTagIDs)
+            allTags = try await store.allTags()
+            // Reconcile: active tags deleted (locally or via iCloud) are dropped.
+            let validIDs = Set(allTags.map(\.id))
+            let reconciled = activeTagIDs.intersection(validIDs)
+            if reconciled != activeTagIDs {
+                activeTagIDs = reconciled
+                conversations = try await store.fetchConversationSummaries(archiveScope: scope, tagIDs: reconciled)
+            }
+        } catch {
+            appendErrorMessage(title: "Storage", body: error.localizedDescription)
+        }
+    }
+
     private func bootstrap() async {
+        do {
+            iCloudMounts = try await service.prepareICloudMounts()
+        } catch {
+            iCloudMounts = await service.activeICloudMounts()
+            appendErrorMessage(title: "iCloud", body: error.localizedDescription)
+        }
+
         do {
             try await service.prepareSandbox()
         } catch {
             appendErrorMessage(title: "Files", body: error.localizedDescription)
         }
-        do {
-            let store = try await loadStore()
-            conversations = try await store.loadSummaries()
-            if selectedConversationID == nil, messages.isEmpty, let first = conversations.first {
-                await loadConversation(id: first.id)
-            }
-        } catch {
-            appendErrorMessage(title: "Storage", body: error.localizedDescription)
+        isUpdatingICloudMounts = false
+        await reloadConversations()
+        if selectedConversationID == nil, messages.isEmpty, let first = conversations.first {
+            await loadConversation(id: first.id)
         }
     }
 
@@ -719,8 +1220,19 @@ final class CPSLChatModel: ObservableObject {
             selectedConversationID = conversation.summary.id
             currentNodeID = conversation.summary.currentNodeID
             currentSystemPrompt = conversation.systemPrompt.isEmpty ? systemPrompt : conversation.systemPrompt
-            messages = conversation.nodes.compactMap(\.chatMessage)
-            conversations = try await store.loadSummaries()
+            let nodes = conversation.nodes
+            let toolStatusNodeIDs = Self.toolStatusNodeIDsNeedingInvocations(in: nodes)
+            let toolStatusInvocations = try? await store.toolStatusInvocations(
+                conversationID: conversation.summary.id,
+                nodeIDs: toolStatusNodeIDs
+            )
+            messages = await Task.detached(priority: .userInitiated) {
+                Self.chatMessages(
+                    from: nodes,
+                    toolStatusInvocations: toolStatusInvocations ?? [:]
+                )
+            }.value
+            await reloadConversations()
             isDrawerOpen = false
             isFileBrowserOpen = false
             isCalendarOpen = false
@@ -728,6 +1240,42 @@ final class CPSLChatModel: ObservableObject {
             filePreview = nil
         } catch {
             appendErrorMessage(title: "Conversation", body: error.localizedDescription)
+        }
+    }
+
+    private nonisolated static func toolStatusNodeIDsNeedingInvocations(
+        in nodes: [CPSLStoredNode]
+    ) -> Set<String> {
+        Set(nodes.compactMap { node in
+            guard node.role == .toolStatus,
+                  let payload = CPSLToolStatusPayload.decode(from: node.body),
+                  payload.invocations.isEmpty
+            else {
+                return nil
+            }
+            return node.id
+        })
+    }
+
+    private nonisolated static func chatMessages(
+        from nodes: [CPSLStoredNode],
+        toolStatusInvocations: [String: [CPSLToolStatusInvocation]]
+    ) -> [CPSLChatMessage] {
+        nodes.compactMap { node in
+            guard var message = node.chatMessage else {
+                return nil
+            }
+            guard node.role == .toolStatus,
+                  var payload = CPSLToolStatusPayload.decode(from: message.body),
+                  payload.invocations.isEmpty,
+                  let invocations = toolStatusInvocations[node.id],
+                  !invocations.isEmpty
+            else {
+                return message
+            }
+            payload.invocations = invocations
+            message.body = payload.encodedBody()
+            return message
         }
     }
 
@@ -743,7 +1291,7 @@ final class CPSLChatModel: ObservableObject {
         do {
             try await store.deleteConversation(id: id)
             await service.removeAttachmentScope(conversationID: id)
-            conversations = try await store.loadSummaries()
+            await reloadConversations()
             if selectedConversationID == id {
                 selectedConversationID = nil
                 composerAttachments = []
@@ -767,6 +1315,7 @@ final class CPSLChatModel: ObservableObject {
         }
 
         let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(CPSLDebugConversationSnapshot(messages: messages))
         return String(decoding: data, as: UTF8.self)
@@ -829,7 +1378,8 @@ final class CPSLChatModel: ObservableObject {
         do {
             var conversationID: String
             var parentID: String
-            let promptForConversation = systemPrompt(with: await service.availableSkills())
+            let availableSkills = await service.availableSkills()
+            let promptForConversation = systemPrompt(with: availableSkills)
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -871,7 +1421,7 @@ final class CPSLChatModel: ObservableObject {
                 activeConversationID = conversationID
                 activeParentID = parentID
             }
-            conversations = try await store.loadSummaries()
+            await reloadConversations()
             try Task.checkCancellation()
 
             let config = try CPSLAgentConfig.load()
@@ -879,7 +1429,8 @@ final class CPSLChatModel: ObservableObject {
             activeModel = config.model
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            let replaySystemPrompt = currentSystemPrompt ?? promptForConversation
+            let replayBasePrompt = currentSystemPrompt ?? promptForConversation
+            let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,
@@ -895,8 +1446,15 @@ final class CPSLChatModel: ObservableObject {
             try Task.checkCancellation()
             parentID = providerLoopContext.parentID
             currentNodeID = parentID
-            conversations = try await store.loadSummaries()
+            await reloadConversations()
         } catch {
+            if let activeConversationID {
+                try? await store.recordError(
+                    conversationID: activeConversationID,
+                    message: error.localizedDescription,
+                    scope: "agent.run"
+                )
+            }
             let pendingContext = CPSLPendingConversationContext(
                 store: store,
                 conversationID: activeConversationID,
@@ -908,6 +1466,7 @@ final class CPSLChatModel: ObservableObject {
                 await markActiveToolStatusStopped()
                 currentNodeID = activeParentID
             } else {
+                await markActiveToolStatusFailed()
                 await appendAgentError(
                     error.localizedDescription,
                     context: CPSLPendingConversationContext(
@@ -918,9 +1477,7 @@ final class CPSLChatModel: ObservableObject {
                     )
                 )
             }
-            if let summaries = try? await store.loadSummaries() {
-                conversations = summaries
-            }
+            await reloadConversations()
         }
 
         await finishTypewriter()
@@ -1040,15 +1597,46 @@ final class CPSLChatModel: ObservableObject {
         fileBrowserError = "\(path): \(message)"
     }
 
-    private func loadPreview(for entry: CPSLFileEntry) async {
-        let result = await service.previewFile(entry)
-        if let preview = result.preview {
-            filePreview = preview
+    private func requestFilePreview(for entry: CPSLFileEntry) {
+        filePreview = nil
+        let requestID = UUID()
+        let requestedBrowserPath = browserPath
+        activeFilePreviewRequestID = requestID
+        filePreviewLoadTask = Task { [weak self, service] in
+            let result = await service.previewFile(entry)
+            guard !Task.isCancelled,
+                  let self,
+                  self.activeFilePreviewRequestID == requestID,
+                  self.isFileBrowserOpen,
+                  self.browserPath == requestedBrowserPath
+            else {
+                return
+            }
+            self.activeFilePreviewRequestID = nil
+            self.filePreviewLoadTask = nil
+            if let preview = result.preview {
+                self.filePreviewLifetimeToken = result.lifetimeToken
+                self.filePreview = preview
+                return
+            }
+
+            self.filePreview = nil
+            let message = result.error ?? "Preview is not available for this file."
+            self.fileBrowserError = "\(entry.path): \(message)"
+        }
+    }
+
+    private func retireFilePreviewLifetimeToken() {
+        guard let token = filePreviewLifetimeToken else {
             return
         }
-
-        let message = result.error ?? "Preview is not available for this file."
-        fileBrowserError = "\(entry.path): \(message)"
+        filePreviewLifetimeToken = nil
+        let retirementID = UUID()
+        retiredFilePreviewLifetimeTokens[retirementID] = token
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.filePreviewRetirementNanoseconds)
+            self?.retiredFilePreviewLifetimeTokens.removeValue(forKey: retirementID)
+        }
     }
 
     func appendErrorMessage(title: String?, body: String) {
@@ -1057,20 +1645,39 @@ final class CPSLChatModel: ObservableObject {
 
     func appendWebSearchVisit(_ visit: CPSLWebSearchVisit) {
         guard let nodeID = activeToolStatusNodeID,
+              let conversationID = activeToolStatusConversationID,
               let store = activeToolStatusStore,
               var payload = activeToolStatusPayload
         else {
             return
         }
         payload.webVisits.append(visit)
+        payload.webVisits = Array(payload.webVisits.suffix(12))
         activeToolStatusPayload = payload
+        activeToolStatusRevision += 1
+        let revision = activeToolStatusRevision
         let body = payload.encodedBody()
-        if let messageID = UUID(uuidString: nodeID),
-           let index = messages.firstIndex(where: { $0.id == messageID }) {
-            messages[index].body = body
-        }
-        Task {
-            try? await store.updateNodeBody(id: nodeID, body: body)
+        Task { [weak self] in
+            try? await store.recordWebVisit(
+                conversationID: conversationID,
+                nodeID: nodeID,
+                visit: visit
+            )
+            try? await store.updateNodeBody(
+                conversationID: conversationID,
+                id: nodeID,
+                body: body
+            )
+            guard let self,
+                  self.activeToolStatusNodeID == nodeID,
+                  self.activeToolStatusRevision == revision
+            else {
+                return
+            }
+            if let messageID = UUID(uuidString: nodeID),
+               let index = self.messages.firstIndex(where: { $0.id == messageID }) {
+                self.messages[index].body = body
+            }
         }
     }
 
@@ -1110,7 +1717,11 @@ final class CPSLChatModel: ObservableObject {
             normalized == CPSLVirtualPath.home ||
             normalized.hasPrefix("\(CPSLVirtualPath.home)/") ||
             normalized == CPSLVirtualPath.temporary ||
-            normalized.hasPrefix("\(CPSLVirtualPath.temporary)/")
+            normalized.hasPrefix("\(CPSLVirtualPath.temporary)/") ||
+            normalized == CPSLVirtualPath.iCloudRoot ||
+            iCloudMounts.contains { mount in
+                normalized == mount.virtualPath || normalized.hasPrefix("\(mount.virtualPath)/")
+            }
     }
 
     private func browserParentPath() -> String? {
@@ -1123,7 +1734,8 @@ final class CPSLChatModel: ObservableObject {
         }
         if normalized == CPSLVirtualPath.attachments ||
             normalized == CPSLVirtualPath.home ||
-            normalized == CPSLVirtualPath.temporary {
+            normalized == CPSLVirtualPath.temporary ||
+            normalized == CPSLVirtualPath.iCloudRoot {
             return CPSLVirtualPath.root
         }
         return parentPath(of: normalized)
@@ -1145,6 +1757,44 @@ final class CPSLChatModel: ObservableObject {
 
 #if DEBUG
 private nonisolated struct CPSLDebugConversationSnapshot: Encodable {
+    let format = "herm.debug-export"
+    let schemaVersion = 1
+    let generatedAt = Date()
+    let documentation = [
+        "overview": "Unsaved draft snapshot. Persisted exports also contain chronological conversationEvents and traceEvents.",
+        "jq": ".conversation.messages[] | {role, title, body}",
+    ]
+    let messages: [CPSLChatMessage]
+    let conversationEvents: [String] = []
+    let traceEvents: [String] = []
+
+    private enum CodingKeys: String, CodingKey {
+        case format
+        case schemaVersion
+        case generatedAt
+        case documentation
+        case conversation
+        case conversationEvents
+        case traceEvents
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(format, forKey: .format)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(generatedAt, forKey: .generatedAt)
+        try container.encode(documentation, forKey: .documentation)
+        try container.encode(
+            CPSLDebugDraftConversation(state: "draft", messages: messages),
+            forKey: .conversation
+        )
+        try container.encode(conversationEvents, forKey: .conversationEvents)
+        try container.encode(traceEvents, forKey: .traceEvents)
+    }
+}
+
+private nonisolated struct CPSLDebugDraftConversation: Encodable {
+    let state: String
     let messages: [CPSLChatMessage]
 }
 #endif

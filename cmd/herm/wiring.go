@@ -256,9 +256,17 @@ func modelCatalogCachePath() string {
 }
 
 func loadStartupModelCatalog() (*langdag.CatalogLoadResult, error) {
-	return langdag.LoadRuntimeModelCatalogWithOptions(langdag.CatalogLoadOptions{CachePath: modelCatalogCachePath()})
+	result, err := langdag.LoadRuntimeModelCatalogWithOptions(langdag.CatalogLoadOptions{CachePath: modelCatalogCachePath()})
+	if result != nil {
+		result.Catalog = ensureHermModelCatalogCompatibility(result.Catalog)
+	}
+	return result, err
 }
 
 func refreshStartupModelCatalog(ctx context.Context) (*langdag.CatalogRefreshResult, error) {
-	return langdag.RefreshModelCatalogCache(ctx, langdag.CatalogRefreshOptionsFromEnv(modelCatalogCachePath()))
+	result, err := langdag.RefreshModelCatalogCache(ctx, langdag.CatalogRefreshOptionsFromEnv(modelCatalogCachePath()))
+	if result != nil {
+		result.Catalog = ensureHermModelCatalogCompatibility(result.Catalog)
+	}
+	return result, err
 }

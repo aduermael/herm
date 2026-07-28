@@ -276,6 +276,7 @@ func TestSaveConfigPreservesUnknownCanonicalModels(t *testing.T) {
 	cfg := Config{
 		ActiveModel:      "openai/newly-refreshed-model",
 		ExplorationModel: "z-ai/new-openrouter-only:free",
+		VisionModel:      "google/new-vision-model",
 		Deployments: map[string]DeploymentConfig{
 			"openrouter": {APIKey: "sk-or"},
 		},
@@ -287,8 +288,8 @@ func TestSaveConfigPreservesUnknownCanonicalModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadConfigFrom: %v", err)
 	}
-	if loaded.ActiveModel != cfg.ActiveModel || loaded.ExplorationModel != cfg.ExplorationModel {
-		t.Fatalf("canonical model IDs should survive save/load, got active=%q exploration=%q", loaded.ActiveModel, loaded.ExplorationModel)
+	if loaded.ActiveModel != cfg.ActiveModel || loaded.ExplorationModel != cfg.ExplorationModel || loaded.VisionModel != cfg.VisionModel {
+		t.Fatalf("canonical model IDs should survive save/load, got active=%q exploration=%q vision=%q", loaded.ActiveModel, loaded.ExplorationModel, loaded.VisionModel)
 	}
 }
 
@@ -435,7 +436,7 @@ func TestCfgTabNamesStructure(t *testing.T) {
 func TestProjectTabFieldLabels(t *testing.T) {
 	a := &App{}
 	fields := a.projectTabFields()
-	wantLabels := []string{"Model", "Exploration", "Personality", "Sub-Agent Max Turns", "Thinking"}
+	wantLabels := []string{"Model", "Exploration", "Vision", "Personality", "Sub-Agent Max Turns", "Thinking"}
 	if len(fields) != len(wantLabels) {
 		t.Fatalf("projectTabFields returned %d fields, want %d", len(fields), len(wantLabels))
 	}
@@ -454,6 +455,7 @@ func TestProjectTabFieldGetSet(t *testing.T) {
 		cfgProjectDraft: ProjectConfig{
 			ActiveModel:      "test-model",
 			ExplorationModel: "explore-model",
+			VisionModel:      "vision-model",
 			Personality:      "brief",
 			SubAgentMaxTurns: 7,
 		},
@@ -467,10 +469,13 @@ func TestProjectTabFieldGetSet(t *testing.T) {
 	if v := fields[1].get(Config{}); v != "explore-model" {
 		t.Errorf("ExplorationModel get = %q, want %q", v, "explore-model")
 	}
-	if v := fields[2].get(Config{}); v != "brief" {
+	if v := fields[2].get(Config{}); v != "vision-model" {
+		t.Errorf("VisionModel get = %q, want %q", v, "vision-model")
+	}
+	if v := fields[3].get(Config{}); v != "brief" {
 		t.Errorf("Personality get = %q, want %q", v, "brief")
 	}
-	if v := fields[3].get(Config{}); v != "7" {
+	if v := fields[4].get(Config{}); v != "7" {
 		t.Errorf("SubAgentMaxTurns get = %q, want %q", v, "7")
 	}
 
@@ -483,11 +488,15 @@ func TestProjectTabFieldGetSet(t *testing.T) {
 	if a.cfgProjectDraft.ExplorationModel != "new-explore" {
 		t.Errorf("after set, ExplorationModel = %q, want %q", a.cfgProjectDraft.ExplorationModel, "new-explore")
 	}
-	fields[2].set(nil, "verbose")
+	fields[2].set(nil, "new-vision")
+	if a.cfgProjectDraft.VisionModel != "new-vision" {
+		t.Errorf("after set, VisionModel = %q, want %q", a.cfgProjectDraft.VisionModel, "new-vision")
+	}
+	fields[3].set(nil, "verbose")
 	if a.cfgProjectDraft.Personality != "verbose" {
 		t.Errorf("after set, Personality = %q, want %q", a.cfgProjectDraft.Personality, "verbose")
 	}
-	fields[3].set(nil, "20")
+	fields[4].set(nil, "20")
 	if a.cfgProjectDraft.SubAgentMaxTurns != 20 {
 		t.Errorf("after set, SubAgentMaxTurns = %d, want 20", a.cfgProjectDraft.SubAgentMaxTurns)
 	}
@@ -760,7 +769,7 @@ func TestRoutingTabHasSelectableActions(t *testing.T) {
 func TestProjectTabSubAgentClearsOnEmpty(t *testing.T) {
 	a := &App{cfgProjectDraft: ProjectConfig{SubAgentMaxTurns: 10}}
 	fields := a.projectTabFields()
-	fields[3].set(nil, "") // Sub-Agent Max Turns is at index 3 now
+	fields[4].set(nil, "")
 	if a.cfgProjectDraft.SubAgentMaxTurns != 0 {
 		t.Errorf("SubAgentMaxTurns = %d, want 0 after clearing", a.cfgProjectDraft.SubAgentMaxTurns)
 	}
@@ -1034,10 +1043,12 @@ func TestEnterConfigModeClearsStaleProjectModelsWhenNoProviders(t *testing.T) {
 		globalConfig: Config{
 			ActiveModel:      "orphan/global-active",
 			ExplorationModel: "orphan/global-explore",
+			VisionModel:      "orphan/global-vision",
 		},
 		projectConfig: ProjectConfig{
 			ActiveModel:      "anthropic/claude-opus-4-6",
 			ExplorationModel: "anthropic/claude-haiku-4-5",
+			VisionModel:      "google/gemini-vision",
 			Personality:      "kept",
 		},
 		models:   defaultTestModels(),
@@ -1048,11 +1059,11 @@ func TestEnterConfigModeClearsStaleProjectModelsWhenNoProviders(t *testing.T) {
 	app.enterConfigMode()
 	app.stopConfigTicker()
 
-	if app.cfgDraft.ActiveModel != "" || app.cfgDraft.ExplorationModel != "" {
-		t.Fatalf("global draft models = %q/%q, want cleared", app.cfgDraft.ActiveModel, app.cfgDraft.ExplorationModel)
+	if app.cfgDraft.ActiveModel != "" || app.cfgDraft.ExplorationModel != "" || app.cfgDraft.VisionModel != "" {
+		t.Fatalf("global draft models = %q/%q/%q, want cleared", app.cfgDraft.ActiveModel, app.cfgDraft.ExplorationModel, app.cfgDraft.VisionModel)
 	}
-	if app.cfgProjectDraft.ActiveModel != "" || app.cfgProjectDraft.ExplorationModel != "" {
-		t.Fatalf("project draft models = %q/%q, want cleared", app.cfgProjectDraft.ActiveModel, app.cfgProjectDraft.ExplorationModel)
+	if app.cfgProjectDraft.ActiveModel != "" || app.cfgProjectDraft.ExplorationModel != "" || app.cfgProjectDraft.VisionModel != "" {
+		t.Fatalf("project draft models = %q/%q/%q, want cleared", app.cfgProjectDraft.ActiveModel, app.cfgProjectDraft.ExplorationModel, app.cfgProjectDraft.VisionModel)
 	}
 	if app.cfgProjectDraft.Personality != "kept" {
 		t.Fatalf("Personality = %q, want unrelated project fields preserved", app.cfgProjectDraft.Personality)
@@ -1061,8 +1072,8 @@ func TestEnterConfigModeClearsStaleProjectModelsWhenNoProviders(t *testing.T) {
 	app.cfgDraft.Deployments = map[string]DeploymentConfig{"openrouter": {APIKey: "sk-test"}}
 	app.exitConfigMode(true)
 
-	if app.projectConfig.ActiveModel != "" || app.projectConfig.ExplorationModel != "" {
-		t.Fatalf("saved project models = %q/%q, want cleared after adding provider", app.projectConfig.ActiveModel, app.projectConfig.ExplorationModel)
+	if app.projectConfig.ActiveModel != "" || app.projectConfig.ExplorationModel != "" || app.projectConfig.VisionModel != "" {
+		t.Fatalf("saved project models = %q/%q/%q, want cleared after adding provider", app.projectConfig.ActiveModel, app.projectConfig.ExplorationModel, app.projectConfig.VisionModel)
 	}
 	if app.projectConfig.Personality != "kept" {
 		t.Fatalf("saved Personality = %q, want preserved", app.projectConfig.Personality)
@@ -1260,6 +1271,25 @@ func TestResolveExplorationModel_NoKeyForProvider(t *testing.T) {
 	// gpt-4o provider has no key, so it's not in available models — falls back
 	if got != "claude-sonnet" {
 		t.Errorf("resolveExplorationModel = %q, want %q (no key for exploration model provider)", got, "claude-sonnet")
+	}
+}
+
+func TestResolveVisionModel(t *testing.T) {
+	models := explorationTestModels()
+	fallback := Config{AnthropicAPIKey: "key", ActiveModel: "claude-sonnet"}
+	if got := fallback.resolveVisionModel(models); got != "claude-sonnet" {
+		t.Errorf("resolveVisionModel unset = %q, want active model", got)
+	}
+
+	dedicated := fallback
+	dedicated.VisionModel = "claude-haiku"
+	if got := dedicated.resolveVisionModel(models); got != "claude-haiku" {
+		t.Errorf("resolveVisionModel configured = %q, want claude-haiku", got)
+	}
+
+	dedicated.VisionModel = "nonexistent-model"
+	if got := dedicated.resolveVisionModel(models); got != "claude-sonnet" {
+		t.Errorf("resolveVisionModel invalid = %q, want active fallback", got)
 	}
 }
 
@@ -2134,6 +2164,9 @@ func TestConfigChangeLabelForProjectTabUsesProjectLabels(t *testing.T) {
 	}
 	if got := configChangeLabelForField(configChangeLabelForFieldOptions{field: fields[1], projectTab: true}); got != uiConfigLabelProjectExplorationModel {
 		t.Fatalf("exploration model label = %q, want %q", got, uiConfigLabelProjectExplorationModel)
+	}
+	if got := configChangeLabelForField(configChangeLabelForFieldOptions{field: fields[2], projectTab: true}); got != uiConfigLabelProjectVisionModel {
+		t.Fatalf("vision model label = %q, want %q", got, uiConfigLabelProjectVisionModel)
 	}
 	if got := configChangeLabelForField(configChangeLabelForFieldOptions{field: fields[0], projectTab: false}); got != uiConfigLabelActiveModel {
 		t.Fatalf("global tab should keep field label = %q", got)

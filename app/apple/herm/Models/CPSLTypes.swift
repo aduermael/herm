@@ -4,87 +4,18 @@ import SwiftUI
 import UniformTypeIdentifiers
 #endif
 
-typealias CPSLEvalServiceResult = (
-    rawJSON: String?,
-    stdout: String,
-    stderr: String,
-    exitCode: Int?,
-    ok: Bool?,
-    cwd: String?,
-    errorCode: String?,
-    errorMessage: String?,
-    warnings: [String],
-    ffiError: String?
-)
-
-nonisolated struct CPSLSessionHandle {
-    let id: Int
-    let pointer: OpaquePointer
-}
-
-nonisolated struct CPSLSessionInitResult: @unchecked Sendable {
-    let pointer: OpaquePointer?
-    let errorMessage: String?
-}
-
-nonisolated struct CPSLBlockingEvalRequest: @unchecked Sendable {
-    let session: OpaquePointer
-    let requestJSON: String
-}
-
-nonisolated enum CPSLEvalRaceResult: Sendable {
-    case completed(CPSLEvalServiceResult)
-    case timedOut
-    case cancelled
-}
-
-nonisolated final class CPSLEvalRaceBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var didResume = false
-    private var pendingResult: CPSLEvalRaceResult?
-    private var continuation: CheckedContinuation<CPSLEvalRaceResult, Never>?
-
-    func install(_ continuation: CheckedContinuation<CPSLEvalRaceResult, Never>) {
-        lock.lock()
-        if let pendingResult, !didResume {
-            didResume = true
-            self.pendingResult = nil
-            lock.unlock()
-            continuation.resume(returning: pendingResult)
-            return
-        }
-        if !didResume {
-            self.continuation = continuation
-        }
-        lock.unlock()
-    }
-
-    func resume(_ result: CPSLEvalRaceResult) {
-        lock.lock()
-        guard !didResume, pendingResult == nil else {
-            lock.unlock()
-            return
-        }
-        if let continuation {
-            didResume = true
-            self.continuation = nil
-            lock.unlock()
-            continuation.resume(returning: result)
-        } else {
-            pendingResult = result
-            lock.unlock()
-        }
-    }
-}
-
 struct CPSLSandboxURLs {
     let root: URL
+    let iCloudNamespace: URL
+    let iCloudMountStorage: URL
+    let legacyICloudRecovery: URL
 }
 
 nonisolated enum CPSLVirtualPath {
     static let root = "/"
     static let attachments = "/attachments"
     static let home = "/home/herm"
+    static let iCloudRoot = "/icloud"
     static let temporary = "/tmp"
     static let initialDirectory = home
 }
@@ -113,6 +44,7 @@ enum CPSLFeatureAccessState: String, Equatable, Sendable {
 
 nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     case assistant
+    case thought
     case user
     case command
     case output
@@ -125,7 +57,7 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     }
 
     var isFullWidth: Bool {
-        self == .assistant || self == .command || self == .toolStatus
+        self == .assistant || self == .thought || self == .command || self == .toolStatus
     }
 
     var usesMonospaceBody: Bool {
@@ -141,7 +73,7 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
     }
 
     var displaysTitle: Bool {
-        self != .assistant
+        self != .assistant && self != .thought
     }
 
     var isVisible: Bool {
@@ -153,6 +85,8 @@ nonisolated enum CPSLChatRole: String, Codable, Equatable, Sendable {
         switch self {
         case .assistant:
             return .clear
+        case .thought:
+            return CPSLTheme.surface
         case .user:
             return CPSLTheme.elevated
         case .command:
@@ -754,9 +688,20 @@ struct CPSLFilePreview: Identifiable, Equatable, Sendable {
     let kind: CPSLFilePreviewKind
 }
 
-struct CPSLFilePreviewLoadResult: Sendable {
+nonisolated struct CPSLFilePreviewLoadResult: @unchecked Sendable {
     let preview: CPSLFilePreview?
     let error: String?
+    let lifetimeToken: AnyObject?
+
+    init(
+        preview: CPSLFilePreview?,
+        error: String?,
+        lifetimeToken: AnyObject? = nil
+    ) {
+        self.preview = preview
+        self.error = error
+        self.lifetimeToken = lifetimeToken
+    }
 }
 
 extension CPSLFileEntry {

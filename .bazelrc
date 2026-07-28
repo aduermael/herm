@@ -1,0 +1,5 @@
+# Keep the default CPSL target small on non-Apple hosts. The Apple builder sets
+# this define explicitly when it requests the app's embedded-agent profile.
+common --experimental_sibling_repository_layout
+build:cpsl-apple --define=CPSL_PROFILE=apple-app
+build:cpsl-minimum --define=CPSL_PROFILE=minimum

@@ -1,5 +1,7 @@
 import Foundation
-import Combine
+import CoreGraphics
+import ImageIO
+import Observation
 import SwiftUI
 
 #if canImport(AVFoundation)
@@ -8,15 +10,9 @@ import SwiftUI
 #if canImport(AVKit)
 @preconcurrency import AVKit
 #endif
-#if os(macOS) && canImport(AppKit)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
 #if canImport(PDFKit)
-import PDFKit
+@preconcurrency import PDFKit
 #endif
-
 struct CPSLFilePreviewContentView: View {
     let preview: CPSLFilePreview
 
@@ -77,7 +73,13 @@ private struct CPSLHighlightedCodeText: View {
     let language: CPSLCodeLanguage
 
     var body: some View {
-        Text(CPSLCodeHighlighter.highlight(text, language: language))
+        if text.utf8.count <= 32_768 {
+            Text(CPSLCodeHighlighter.highlight(text, language: language))
+        } else {
+            Text(text)
+                .font(CPSLTheme.monospacedBodyFont)
+                .foregroundStyle(CPSLTheme.text)
+        }
     }
 }
 
@@ -85,28 +87,135 @@ private struct CPSLPDFFilePreview: View {
     let url: URL
 
     var body: some View {
-        #if os(macOS) && canImport(PDFKit)
+        #if (os(macOS) || canImport(UIKit)) && canImport(PDFKit)
             CPSLPDFKitView(url: url)
-        #elseif canImport(UIKit) && canImport(PDFKit)
-            CPSLPDFKitView(url: url)
+                .equatable()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         #else
-            CPSLUnsupportedPDFPreview()
+            CPSLPDFPreviewUnavailable(message: "PDF preview is not available on this platform.")
         #endif
     }
 }
 
-private struct CPSLUnsupportedPDFPreview: View {
+private struct CPSLPDFPreviewUnavailable: View {
+    let message: String
+
     var body: some View {
         VStack(spacing: CPSLTheme.small) {
             Image(systemName: "doc.richtext")
                 .font(CPSLTheme.iconLargeFont)
                 .foregroundStyle(CPSLTheme.secondaryText)
-            Text("PDF preview is not available on this platform.")
+            Text(message)
                 .font(CPSLTheme.supportingFont)
                 .foregroundStyle(CPSLTheme.secondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+#if canImport(PDFKit)
+private nonisolated struct CPSLSendablePDFDocument: @unchecked Sendable {
+    let value: PDFDocument?
+}
+
+@MainActor
+private final class CPSLPDFKitCoordinator {
+    private var representedURL: URL?
+    private var loadTask: Task<Void, Never>?
+
+    func load(url: URL, into pdfView: PDFView) {
+        guard representedURL != url else {
+            return
+        }
+        representedURL = url
+        loadTask?.cancel()
+        pdfView.document = nil
+        loadTask = Task { @MainActor [weak self, weak pdfView] in
+            let document = await Task.detached(priority: .userInitiated) {
+                CPSLSendablePDFDocument(value: PDFDocument(url: url))
+            }.value
+            guard !Task.isCancelled,
+                  self?.representedURL == url,
+                  let pdfView
+            else {
+                return
+            }
+            pdfView.document = document.value
+            pdfView.autoScales = true
+        }
+    }
+
+    func cancel() {
+        loadTask?.cancel()
+        loadTask = nil
+        representedURL = nil
+    }
+}
+
+@MainActor
+private enum CPSLPDFKitConfiguration {
+    static func makeView() -> PDFView {
+        let pdfView = PDFView()
+        pdfView.autoScales = true
+        pdfView.displayBox = .cropBox
+        pdfView.displayDirection = .vertical
+        pdfView.displayMode = .singlePageContinuous
+        pdfView.displaysPageBreaks = true
+        return pdfView
+    }
+}
+
+#if os(macOS)
+private struct CPSLPDFKitView: NSViewRepresentable, Equatable {
+    let url: URL
+
+    func makeCoordinator() -> CPSLPDFKitCoordinator {
+        CPSLPDFKitCoordinator()
+    }
+
+    func makeNSView(context: Context) -> PDFView {
+        let pdfView = CPSLPDFKitConfiguration.makeView()
+        context.coordinator.load(url: url, into: pdfView)
+        return pdfView
+    }
+
+    func updateNSView(_ pdfView: PDFView, context: Context) {
+        context.coordinator.load(url: url, into: pdfView)
+    }
+
+    static func dismantleNSView(_ pdfView: PDFView, coordinator: CPSLPDFKitCoordinator) {
+        coordinator.cancel()
+        pdfView.document = nil
+    }
+}
+#elseif canImport(UIKit)
+private struct CPSLPDFKitView: UIViewRepresentable, Equatable {
+    let url: URL
+
+    func makeCoordinator() -> CPSLPDFKitCoordinator {
+        CPSLPDFKitCoordinator()
+    }
+
+    func makeUIView(context: Context) -> PDFView {
+        let pdfView = CPSLPDFKitConfiguration.makeView()
+        context.coordinator.load(url: url, into: pdfView)
+        return pdfView
+    }
+
+    func updateUIView(_ pdfView: PDFView, context: Context) {
+        context.coordinator.load(url: url, into: pdfView)
+    }
+
+    static func dismantleUIView(_ pdfView: PDFView, coordinator: CPSLPDFKitCoordinator) {
+        coordinator.cancel()
+        pdfView.document = nil
+    }
+}
+#endif
+#endif
+
+private nonisolated struct CPSLSendableCGImage: @unchecked Sendable {
+    let value: CGImage
 }
 
 private struct CPSLImageFilePreview: View {
@@ -316,53 +425,42 @@ private enum CPSLFilePreviewFormatting {
     }
 }
 
-#if os(macOS) && canImport(AppKit)
-private typealias CPSLPlatformPreviewImage = NSImage
-
 private enum CPSLPlatformImageLoader {
-    static func image(for url: URL) -> CPSLPlatformPreviewImage? {
-        NSImage(contentsOf: url)
+    static func image(for url: URL) async -> CPSLSendableCGImage? {
+        await Task.detached(priority: .userInitiated) {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                return nil
+            }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 2_400,
+                kCGImageSourceShouldCacheImmediately: true,
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                options as CFDictionary
+            ) else {
+                return nil
+            }
+            return CPSLSendableCGImage(value: image)
+        }.value
     }
 }
 
-private struct CPSLPlatformImageView: View {
-    let image: CPSLPlatformPreviewImage
-
-    var body: some View {
-        Image(nsImage: image)
-            .resizable()
-    }
-}
-#elseif canImport(UIKit)
-private typealias CPSLPlatformPreviewImage = UIImage
-
-private enum CPSLPlatformImageLoader {
-    static func image(for url: URL) -> CPSLPlatformPreviewImage? {
-        UIImage(contentsOfFile: url.path)
-    }
-}
-
-private struct CPSLPlatformImageView: View {
-    let image: CPSLPlatformPreviewImage
-
-    var body: some View {
-        Image(uiImage: image)
-            .resizable()
-    }
-}
-#endif
-
-#if (os(macOS) && canImport(AppKit)) || canImport(UIKit)
 private struct CPSLPlatformImageFilePreview: View {
     let url: URL
     let preview: CPSLFilePreview
-    @State private var image: CPSLPlatformPreviewImage?
+    @Environment(\.displayScale) private var displayScale
+    @State private var image: CGImage?
     @State private var didAttemptLoad = false
 
     var body: some View {
         ZStack {
             if let image {
-                CPSLPlatformImageView(image: image)
+                Image(decorative: image, scale: displayScale, orientation: .up)
+                    .resizable()
                     .scaledToFit()
                     .padding(CPSLTheme.large)
             } else if didAttemptLoad {
@@ -373,7 +471,9 @@ private struct CPSLPlatformImageFilePreview: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: url) {
-            image = CPSLPlatformImageLoader.image(for: url)
+            image = nil
+            didAttemptLoad = false
+            image = await CPSLPlatformImageLoader.image(for: url)?.value
             didAttemptLoad = true
         }
     }
@@ -398,17 +498,16 @@ private struct CPSLImageLoadFailurePreview: View {
         .scrollBounceBehavior(.basedOnSize)
     }
 }
-#endif
 
 #if canImport(AVFoundation) && canImport(AVKit)
 private struct CPSLAudioPlayerPreview: View {
     let preview: CPSLFilePreview
-    @StateObject private var playback: CPSLMediaPlaybackModel
+    @State private var playback: CPSLMediaPlaybackModel
 
     init(url: URL, preview: CPSLFilePreview) {
         self.preview = preview
-        _playback = StateObject(
-            wrappedValue: CPSLMediaPlaybackModel(
+        _playback = State(
+            initialValue: CPSLMediaPlaybackModel(
                 url: url,
                 duration: preview.metadata.durationSeconds
             )
@@ -430,12 +529,12 @@ private struct CPSLAudioPlayerPreview: View {
 
 private struct CPSLVideoPlayerPreview: View {
     let preview: CPSLFilePreview
-    @StateObject private var playback: CPSLMediaPlaybackModel
+    @State private var playback: CPSLMediaPlaybackModel
 
     init(url: URL, preview: CPSLFilePreview) {
         self.preview = preview
-        _playback = StateObject(
-            wrappedValue: CPSLMediaPlaybackModel(
+        _playback = State(
+            initialValue: CPSLMediaPlaybackModel(
                 url: url,
                 duration: preview.metadata.durationSeconds
             )
@@ -467,7 +566,7 @@ private struct CPSLVideoPlayerPreview: View {
 }
 
 private struct CPSLMediaControlsView: View {
-    @ObservedObject var playback: CPSLMediaPlaybackModel
+    let playback: CPSLMediaPlaybackModel
 
     var body: some View {
         VStack(spacing: CPSLTheme.small) {
@@ -509,14 +608,17 @@ private struct CPSLMediaControlsView: View {
 }
 
 @MainActor
-private final class CPSLMediaPlaybackModel: ObservableObject {
-    @Published private(set) var currentTime: Double = 0
-    @Published private(set) var duration: Double
-    @Published private(set) var isPlaying = false
+@Observable
+private final class CPSLMediaPlaybackModel {
+    private(set) var currentTime: Double = 0
+    private(set) var duration: Double
+    private(set) var isPlaying = false
 
     let player: AVPlayer
 
+    @ObservationIgnored
     private var timeObserver: Any?
+    @ObservationIgnored
     private var endObserver: NSObjectProtocol?
 
     init(url: URL, duration: Double?) {
@@ -570,8 +672,22 @@ private final class CPSLMediaPlaybackModel: ObservableObject {
         if duration > 0 && currentTime >= duration - 0.25 {
             seek(to: 0)
         }
+        // Match Music: .playback ignores the hardware silent switch so media is audible.
+        Self.activatePlaybackAudioSession()
         player.play()
         isPlaying = true
+    }
+
+    private static func activatePlaybackAudioSession() {
+        #if os(iOS) || os(tvOS) || os(visionOS)
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true, options: [])
+        } catch {
+            // Playback still attempts; silent-switch behavior depends on session success.
+        }
+        #endif
     }
 
     func seek(to seconds: Double) {
@@ -603,48 +719,6 @@ private final class CPSLMediaPlaybackModel: ObservableObject {
     private func finishPlayback() {
         isPlaying = false
         currentTime = duration
-    }
-}
-#endif
-
-#if os(macOS) && canImport(PDFKit)
-private struct CPSLPDFKitView: NSViewRepresentable {
-    let url: URL
-
-    func makeNSView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        configure(pdfView)
-        return pdfView
-    }
-
-    func updateNSView(_ pdfView: PDFView, context: Context) {
-        configure(pdfView)
-    }
-
-    private func configure(_ pdfView: PDFView) {
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePageContinuous
-        pdfView.document = PDFDocument(url: url)
-    }
-}
-#elseif canImport(UIKit) && canImport(PDFKit)
-private struct CPSLPDFKitView: UIViewRepresentable {
-    let url: URL
-
-    func makeUIView(context: Context) -> PDFView {
-        let pdfView = PDFView()
-        configure(pdfView)
-        return pdfView
-    }
-
-    func updateUIView(_ pdfView: PDFView, context: Context) {
-        configure(pdfView)
-    }
-
-    private func configure(_ pdfView: PDFView) {
-        pdfView.autoScales = true
-        pdfView.displayMode = .singlePageContinuous
-        pdfView.document = PDFDocument(url: url)
     }
 }
 #endif

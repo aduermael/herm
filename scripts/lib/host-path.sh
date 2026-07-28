@@ -22,3 +22,9 @@ herm_ensure_rust_path() {
 	fi
 	herm_prepend_path "${HOME:-}/.cargo/bin"
 }
+
+herm_ensure_host_tools_path() {
+	herm_prepend_path /opt/homebrew/bin
+	herm_prepend_path /usr/local/bin
+	herm_ensure_rust_path
+}

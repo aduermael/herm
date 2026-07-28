@@ -23,6 +23,12 @@ main agent to spawn one helper level. Set it to `0` to remove the `agent` tool
 from provider requests. `HERM_EXPLORE_SUBAGENT_TURNS` and
 `HERM_GENERAL_SUBAGENT_TURNS` control the turn budget for helper agents.
 
+Round limits are fail-safe ceilings, not targets. Herm starts nudging the main
+agent to synthesize at rounds 8 and 12, reserves the last helper turn for a
+tool-free result, and clears stale tool output when replay reaches four output
+budgets (or 80% of a configured context window, whichever comes first). This
+keeps routine runs short without cutting off an unusually long task.
+
 Local credential files are ignored by git and excluded from the Xcode target:
 
 - `.env`

@@ -18,7 +18,8 @@ by accident.
 Common requirements:
 
 - Go 1.24 or newer
-- Rust and Cargo
+- Rust 1.95.0 and Cargo (automatically selected by `rust-toolchain.toml` when
+  Rust is installed with rustup)
 - Native C and C++ build tools (`cc` and `c++`)
 - Git, unless `CPSL_ROOT` points at an existing CPSL checkout
 - Herm submodules initialized with
@@ -53,19 +54,22 @@ By default the script builds CPSL from Herm's submodule:
 external/cpsl
 ```
 
-The current submodule points at CPSL commit
-`4376c3bc49045177f8096688f9e350423a79b9b4`, which includes the HTTP policy and
-composed mount integration used by Herm. Override the source when testing a
-local CPSL checkout:
+The tracked CPSL revision includes the HTTP policy and composed mount
+integration used by Herm. The exact revision is recorded in each generated
+`build-manifest.txt`; inspect it before comparing or publishing artifacts.
+Override the source when testing a local CPSL checkout:
 
 ```sh
 CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-image.sh
 ```
 
-Before compiling CPSL, Herm applies tracked integration patches from
-`scripts/cpsl-patches/` to the selected checkout. These patches keep the pinned
-CPSL dependency aligned with Herm's app/runtime integration. When a patch is
-already present in the submodule commit, the patch helper skips it.
+Before compiling CPSL, Herm applies the tracked integration patches listed in
+`scripts/cpsl-patches/series` to the selected checkout, in manifest order.
+These patches keep the pinned CPSL dependency aligned with Herm's app/runtime
+integration. Unlisted local files are ignored. When a listed patch is already
+present in the submodule commit, the patch helper skips it. The helper also
+rejects custom checkouts that lack the web-view PDF network policy required to
+keep personal mounts isolated.
 
 The default host-native build is the minimal CPSL FFI profile. It compiles
 `fs`, `json`, `csv`, `http`, and `grep`.
@@ -84,6 +88,9 @@ artifact directory at `libs/pdfium/lib/<platform library>`. If
 `PDFIUM_DYNAMIC_LIB_PATH` is set, that library is copied into the artifact;
 otherwise the script reuses CPSL's `core/scripts/download-pdfium.sh` helper.
 That helper may require `curl` and network access.
+Herm verifies downloaded PDFium archives against the SHA-256 checksums tracked
+for every supported target. Selecting an unrecognized PDFium version or target
+fails before extraction until its trusted checksum is added to the CPSL patch.
 Use the default profile unless you need a specific extra CPSL module.
 
 ## Output
@@ -97,18 +104,24 @@ under Herm's ignored `.herm-cpsl` directory:
 .herm-cpsl/artifacts/linux-amd64/
   herm
   libcpsl.so
+  build-manifest.txt
   include/cpsl.h
   libs/pdfium/lib/libpdfium.so   # --all only
 
 .herm-cpsl/artifacts/macos-arm64/
   herm
   libcpsl.dylib
+  build-manifest.txt
   include/cpsl.h
   libs/pdfium/lib/libpdfium.dylib # --all only
 ```
 
 The exact output directory depends on the host OS and CPU. Override it with
 `OUT_DIR=/path/to/artifacts` if needed.
+
+`build-manifest.txt` records the build profile, target, source revisions,
+compiler versions, and SHA-256 hashes for the generated Herm, CPSL, header, and
+PDFium artifacts that are present.
 
 The script prints a ready-to-run command, for example:
 
@@ -133,9 +146,9 @@ scripts/build-cpsl-apple-xcframework.sh
 ```
 
 Direct CLI use follows the same source dependency model as the host-native
-helper: Herm builds from `external/cpsl` unless `CPSL_ROOT` points at an
-existing checkout. Xcode auto-builds are stricter and always build from Herm's
-`external/cpsl` submodule, ignoring any `CPSL_ROOT` in the user's environment.
+helper only when the Cargo fallback is selected. The default Bazel build and
+Xcode auto-builds always use Herm's `external/cpsl` submodule because the Bazel
+graph models that checkout directly.
 
 The script builds CPSL's FFI crate for iOS device, iOS simulator, and macOS
 targets by default, then packages the dynamic libraries plus `cpsl.h` into one
@@ -144,28 +157,37 @@ XCFramework:
 ```text
 .herm-cpsl/artifacts/apple/
   cpsl.xcframework
+  build-manifest.txt
   include/cpsl.h
 ```
 
-Direct CLI builds use Cargo's release profile by default. When invoked from
-Xcode, the helper follows Xcode's `CONFIGURATION`: `Debug` uses Cargo's debug
-profile and `Release` uses Cargo's release profile.
-
-Install Rust with [rustup](https://rustup.rs/), then add the Apple targets before
-building:
+Apple XCFrameworks use Bazel by default. Install Bazelisk (recommended) or
+Bazel before building:
 
 ```sh
-rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios aarch64-apple-darwin x86_64-apple-darwin
+brew install bazelisk
 ```
 
-Xcode run scripts do not use your login-shell `PATH`. The CPSL build scripts
-source `~/.cargo/env` and prepend `~/.cargo/bin` automatically. If Xcode still
-cannot find `cargo`, restart Xcode after installing Rust.
+Direct CLI builds use Bazel's optimized mode by default. When invoked from
+Xcode, `Debug` uses Bazel's `dbg` mode and `Release` uses `opt`. Bazel downloads
+the pinned Rust toolchains and all five Apple targets declared in
+`MODULE.bazel`; no host `rustup target add` step is required. Xcode run scripts
+also search Homebrew's standard Apple Silicon and Intel binary directories, so
+Bazelisk installed with Homebrew is available outside a login shell.
 
-Override the source or output path the same way as the host-native helper:
+The previous Cargo path remains available as an explicit fallback:
 
 ```sh
-CPSL_ROOT=/path/to/cpsl scripts/build-cpsl-apple-xcframework.sh
+CPSL_APPLE_BUILD_SYSTEM=cargo scripts/build-cpsl-apple-xcframework.sh
+```
+
+The fallback requires Rust and the selected Apple targets. It accepts
+`CPSL_ROOT`, `CPSL_TARGET_DIR`, and `CARGO_INCREMENTAL` as before. The Bazel
+path rejects a `CPSL_ROOT` outside Herm's submodule.
+
+Override the output path or platform selection as needed:
+
+```sh
 OUT_DIR=/tmp/cpsl-apple scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=ios scripts/build-cpsl-apple-xcframework.sh
 APPLE_PLATFORMS=macos scripts/build-cpsl-apple-xcframework.sh
@@ -239,20 +261,23 @@ The helper target is built as a dependency of `herm`, so it receives the same
 `PLATFORM_NAME`/`SDK_NAME`, `ARCHS`, and `CONFIGURATION` values as the app
 build and finishes before `ProcessXCFramework` runs. Its declared output is a
 DerivedData stamp file so Xcode does not create a dependency cycle with the
-linked XCFramework path. It is marked always-out-of-date so Xcode invokes the
-script each build, but the ensure script itself is cheap when nothing changed:
+linked XCFramework path. The phase is marked `alwaysOutOfDate`, so Xcode invokes
+it on every build even while its stamp output exists. This is required because
+the app's later PDFium copy phase restores the source-tree bootstrap placeholder
+after every successful build. The ensure script itself is cheap when nothing
+changed:
 it reuses
 `.herm-cpsl/artifacts/apple/Debug/cpsl.xcframework` or
-`.herm-cpsl/artifacts/apple/Release/cpsl.xcframework` when it contains the
-platform and architectures selected by Xcode's `PLATFORM_NAME`/`SDK_NAME` and
-`ARCHS`, and staleness inputs are not newer than `Info.plist`. For Xcode
-auto-builds, reuse also requires the adjacent `.cpsl-source.stamp` to show that
-the artifact was built from Herm's `external/cpsl` submodule at the current
-revision and matching Cargo profile. It rebuilds when the artifact is missing,
-lacks the requested slice, was built from another CPSL checkout, revision, or
-Cargo profile, or is stale because files under `scripts/cpsl-patches/`,
-`scripts/build-cpsl-apple-xcframework.sh`, `scripts/lib/cpsl-xcframework.sh`,
-or `scripts/apply-cpsl-patches.sh` changed.
+`.herm-cpsl/artifacts/apple/Release/cpsl.xcframework` only when its adjacent
+`.cpsl-apple-build.stamp` exactly matches the current request. The content-based
+identity includes the selected platform and Rust target triples, Cargo profile
+or Bazel compilation mode, deployment targets, CPSL source revision plus local
+changes, the ordered patch inputs, Bazel graph and lock files, build-script
+content, PDFium version, and Bazel/Xcode versions. Cargo fallback identities
+also include `RUSTFLAGS` and Rust/Cargo versions. It therefore rebuilds when any
+effective input changes even if file mtimes move backwards, and it does not
+reuse a universal artifact for a single-architecture request. A build is left
+unstamped and retried if its inputs change while compilation is running.
 
 Xcode keeps Debug and Release CPSL artifacts separate:
 
@@ -266,7 +291,7 @@ Xcode keeps Debug and Release CPSL artifacts separate:
   libs/pdfium/
 ```
 
-Xcode builds produce only the selected platform and architectures. For example,
+Xcode builds produce exactly the selected platform and architectures. For example,
 an Apple Silicon iPhone simulator build creates `aarch64-apple-ios-sim` and the
 simulator PDFium sidecar; it does not also build x86_64 simulator, iOS device,
 or macOS slices. A later build for another destination rebuilds the cached
@@ -303,9 +328,8 @@ The first CPSL XCFramework build for a destination may take several minutes.
 You need:
 
 - **Full Xcode** installed and selected (Command Line Tools alone is not enough)
-- The Rust Apple target(s) for the selected Xcode destination, or all targets
-  listed in [Apple XCFramework](#apple-xcframework) if you want the direct CLI
-  default output
+- **Bazelisk or Bazel** available on `PATH`; the pinned Rust Apple toolchains
+  are downloaded by Bazel
 
 Initialize Xcode from Terminal if needed:
 
@@ -315,7 +339,7 @@ sudo xcodebuild -runFirstLaunch
 ```
 
 The `herm` target sets `ENABLE_USER_SCRIPT_SANDBOXING = NO` so the run-script
-phase can invoke Cargo, Git, `xcodebuild`, and write under `.herm-cpsl/`.
+phase can invoke Bazel, Git, `xcodebuild`, and write under `.herm-cpsl/`.
 
 ### Force rebuild
 
@@ -336,11 +360,11 @@ early in the ensure script with a clear error before any Rust build starts.
 `scripts/dev-apple-macos.sh` and `scripts/dev-apple-ios.sh` call the same
 ensure script. Use `--skip-cpsl` to require an existing matching XCFramework
 without building, or `--rebuild-cpsl` to set `HERM_CPSL_REBUILD=1` before the
-ensure step. The `--full-cpsl` flag is deprecated; the ensure script builds the
-framework slices requested by its environment. These terminal launchers pass
-their selected `--configuration` into CPSL preflight, so a Debug launcher build
-uses the Debug CPSL artifact and a Release launcher build uses the Release CPSL
-artifact.
+ensure step. The `--full-cpsl` and `--universal-cpsl` flags are deprecated;
+the ensure script builds the exact destination and architectures selected for
+the Xcode build. These terminal launchers also pass their selected
+`--configuration` into CPSL preflight, so a Debug launcher build uses the Debug
+CPSL artifact and a Release launcher build uses the Release CPSL artifact.
 
 ## macOS App From Terminal
 
@@ -385,10 +409,10 @@ For a build-only check:
 scripts/dev-apple-macos.sh --build-only
 ```
 
-By default, the launcher ensures the full iOS+macOS CPSL XCFramework via the
-shared ensure script. Use `--universal-cpsl` when you want both arm64 and
-x86_64 macOS slices. Use `--project-signing` if you want Xcode's configured
-team/signing settings instead of local ad hoc signing.
+The launcher passes its macOS destination and host architecture through the
+same Xcode target resolver before starting `xcodebuild`, so the dependency
+target reuses that exact artifact. Use `--project-signing` if you want Xcode's
+configured team/signing settings instead of local ad hoc signing.
 
 ## Options
 
@@ -407,6 +431,46 @@ script run already checks that Herm accepts the generated CPSL library path and
 that the CPSL worker can load the library, create a session, and run a simple
 Luau eval. With `--all`, the normal probe also checks `doc.pdfInfo()` and
 structural `doc.read()` against CPSL's PDF fixture.
+
+## Build measurements
+
+Run an isolated cold build followed by a warm build with the same Cargo target
+directory:
+
+```sh
+scripts/measure-cpsl-build.sh
+```
+
+The command keeps the build and a tab-separated `benchmark.tsv` report under
+`.herm-cpsl/benchmarks/`. It does not clear or reuse the normal developer Cargo
+target directory. Use `--all` to measure the broad profile.
+
+The Linux CI exercises Apple request resolution and the complete ensure/build
+pipeline without invoking Xcode:
+
+```sh
+scripts/test-cpsl-xcframework.sh
+scripts/test-cpsl-apple-build-integration.sh
+```
+
+The integration test uses deterministic fake Apple tools to verify Bazel
+Debug/Release mode selection, the Cargo fallback, warm no-ops, source staleness,
+corrupt-binary recovery, and exact architecture replacement. The macOS CI job
+separately builds the real Herm Xcode scheme twice.
+
+To report the observed success/failure ratio for recent GitHub Actions runs:
+
+```sh
+scripts/measure-ci-reliability.sh
+```
+
+This reports failures, not confirmed infrastructure flakes. Pass a repository,
+workflow file, and sample size to override the defaults; the public API limits
+one report to at most 100 runs. The initial measurement is recorded in
+[`docs/CPSL_BUILD_BASELINE.md`](docs/CPSL_BUILD_BASELINE.md).
+
+The Bazel CPSL graph and the history of the initial Linux-only experiment are
+documented in [`docs/BAZEL_EXPERIMENT.md`](docs/BAZEL_EXPERIMENT.md).
 
 ## macOS From Linux
 

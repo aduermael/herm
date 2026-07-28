@@ -3,15 +3,8 @@ import Foundation
 @MainActor
 extension CPSLChatModel {
     func runProviderLoop(_ context: inout CPSLProviderLoopContext) async throws {
-        var toolStatusNodeID: String?
-        var toolStatus = CPSLToolStatusPayload.running()
-        var hasUnresolvedToolFailure = false
+        var pendingFailures: [CPSLToolStatusInvocation] = []
         clearActiveToolStatus()
-        defer {
-            if !Task.isCancelled {
-                clearActiveToolStatus()
-            }
-        }
 
         for iteration in 0..<context.config.maxToolRounds {
             try Task.checkCancellation()
@@ -27,24 +20,44 @@ extension CPSLChatModel {
                 )
             )
             try Task.checkCancellation()
-            isSuppressingAssistantStream = false
-            let completion = try await context.client.streamChat(
-                CPSLOpenAIStreamRequest(
-                    messages: requestMessages,
-                    tools: CPSLOpenAITool.availableTools(
-                        allowsSubagents: context.config.maxAgentDepth > 0,
-                        currentDirectory: sandboxDirectory
-                    ),
-                    maxTokens: context.config.maxOutputTokens
-                )
-            ) { event in
+            let tools = CPSLOpenAITool.availableTools(
+                allowsSubagents: context.config.maxAgentDepth > 0,
+                currentDirectory: sandboxDirectory
+            )
+            isSuppressingAssistantStream = !tools.isEmpty
+            let request = CPSLOpenAIStreamRequest(
+                messages: requestMessages,
+                tools: tools,
+                maxTokens: context.config.maxOutputTokens
+            )
+            try await context.store.recordProviderRequest(
+                conversationID: context.conversationID,
+                model: context.config.model,
+                messages: request.messages,
+                tools: tools,
+                maxTokens: request.maxTokens,
+                scope: "main.turn.\(iteration + 1)"
+            )
+            let completion = try await context.client.streamChat(request) { event in
                 self.handleProviderStreamEvent(event)
             }
+            try await context.store.recordProviderResponse(
+                conversationID: context.conversationID,
+                completion: completion,
+                scope: "main.turn.\(iteration + 1)"
+            )
             try Task.checkCancellation()
 
+            presentCompletedAssistantIfNeeded(completion)
             await finishTypewriter()
             if !completion.toolCalls.isEmpty {
                 discardStreamingAssistantIfNeeded()
+                try await appendUniqueThoughtIfNeeded(
+                    completion.text,
+                    toolCalls: completion.toolCalls,
+                    model: completion.model,
+                    context: &context
+                )
             }
 
             if !completion.text.isEmpty && completion.toolCalls.isEmpty {
@@ -70,65 +83,47 @@ extension CPSLChatModel {
             }
 
             guard !completion.toolCalls.isEmpty else {
-                if hasUnresolvedToolFailure, let toolStatusNodeID {
-                    toolStatus.state = .failed
-                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+                if !pendingFailures.isEmpty {
+                    try await finishActiveToolStatus(as: .failed)
                 }
                 if completion.text.isEmpty {
                     try await appendProviderLoopError("Provider returned an empty response.", context: &context)
                 }
+                clearActiveToolStatus()
                 return
             }
 
-            var statusSummary = completion.toolCalls.first.map {
-                CPSLAgentToolFormatting.statusSummary(for: $0, assistantText: completion.text)
-            } ?? CPSLAgentToolFormatting.defaultStatusSummary
+            var statusSummary = CPSLAgentToolFormatting.defaultStatusSummary
             let assistantToolMessage = CPSLOpenAIMessage.assistant(
                 content: completion.text.isEmpty ? nil : completion.text,
                 toolCalls: completion.toolCalls
             )
-
-            if let toolStatusNodeID {
-                toolStatus.state = .running
-                toolStatus.summary = statusSummary
-                try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
-            } else {
-                toolStatus = CPSLToolStatusPayload.running(summary: statusSummary)
-                let statusNode = try await context.store.appendNode(
-                    conversationID: context.conversationID,
-                    parentID: context.parentID,
-                    draft: CPSLNodeAppendDraft(
-                        role: .toolStatus,
-                        title: nil,
-                        body: toolStatus.encodedBody(),
-                        model: completion.model,
-                        providerMessage: nil
-                    )
-                )
-                toolStatusNodeID = statusNode.id
-                activeToolStatusNodeID = statusNode.id
-                activeToolStatusPayload = toolStatus
-                activeToolStatusStore = context.store
-                context.parentID = statusNode.id
-                context.onParentIDChange(context.parentID)
-                if let message = statusNode.chatMessage {
-                    messages.append(message)
-                }
-            }
-
             var executedToolCalls: [(toolCall: CPSLOpenAIToolCall, result: CPSLToolExecutionResult)] = []
 
             for toolCall in completion.toolCalls {
                 try Task.checkCancellation()
+                let retryPresentation: (webVisits: [CPSLWebSearchVisit], activityID: UUID)
+                if pendingFailures.isEmpty {
+                    retryPresentation = ([], UUID())
+                } else {
+                    retryPresentation = try await supersedeActiveToolStatus()
+                }
                 statusSummary = CPSLAgentToolFormatting.statusSummary(
                     for: toolCall,
                     assistantText: completion.text
                 )
-                toolStatus.state = .running
-                toolStatus.summary = statusSummary
-                if let toolStatusNodeID {
-                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
-                }
+                var toolStatus = CPSLToolStatusPayload(
+                    state: .running,
+                    summary: statusSummary,
+                    invocations: pendingFailures,
+                    webVisits: retryPresentation.webVisits,
+                    activityID: retryPresentation.activityID
+                )
+                let toolStatusNodeID = try await appendToolStatus(
+                    toolStatus,
+                    model: completion.model,
+                    context: &context
+                )
 
                 let toolResult = await executeToolCall(
                     toolCall,
@@ -136,25 +131,34 @@ extension CPSLChatModel {
                         client: context.client,
                         config: context.config,
                         agentDepth: 0,
-                        requestDirectory: sandboxDirectory
+                        requestDirectory: sandboxDirectory,
+                        traceStore: context.store,
+                        conversationID: context.conversationID
                     )
                 )
                 try Task.checkCancellation()
                 executedToolCalls.append((toolCall, toolResult))
+                toolStatus.invocations.append(
+                    CPSLToolStatusInvocation(traceInvocation: toolResult.traceInvocation)
+                )
+                toolStatus.invocations = Array(toolStatus.invocations.suffix(recentToolResultsToKeep))
                 if toolResult.isError {
-                    hasUnresolvedToolFailure = true
+                    pendingFailures = toolStatus.invocations
                     toolStatus.state = .running
                 } else {
-                    hasUnresolvedToolFailure = false
+                    pendingFailures.removeAll(keepingCapacity: true)
                     toolStatus.state = .succeeded
                 }
-#if DEBUG
-                toolStatus.invocations.append(toolResult.debugInvocation)
                 toolStatus.summary = statusSummary
-                if let toolStatusNodeID {
-                    try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+                try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+                if !toolResult.isError {
+                    clearActiveToolStatus()
                 }
-#endif
+                try await context.store.recordToolInvocation(
+                    conversationID: context.conversationID,
+                    nodeID: toolStatusNodeID,
+                    invocation: toolResult.traceInvocation
+                )
             }
 
             try await appendToolReplayBlock(
@@ -166,19 +170,62 @@ extension CPSLChatModel {
                 ),
                 context: &context
             )
-            toolStatus.summary = statusSummary
-            toolStatus.state = hasUnresolvedToolFailure ? .running : .succeeded
-            if let toolStatusNodeID {
-                try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
-            }
         }
 
         try Task.checkCancellation()
-        if hasUnresolvedToolFailure, let toolStatusNodeID {
-            toolStatus.state = .failed
-            try await updateToolStatus(toolStatus, nodeID: toolStatusNodeID, store: context.store)
+        if !pendingFailures.isEmpty {
+            try await finishActiveToolStatus(as: .failed)
         }
         try await synthesizeAfterToolLimit(&context)
+        clearActiveToolStatus()
+    }
+
+    private func appendToolStatus(
+        _ payload: CPSLToolStatusPayload,
+        model: String,
+        context: inout CPSLProviderLoopContext
+    ) async throws -> String {
+        let statusNode = try await context.store.appendNode(
+            conversationID: context.conversationID,
+            parentID: context.parentID,
+            draft: CPSLNodeAppendDraft(
+                role: .toolStatus,
+                title: nil,
+                body: payload.encodedBody(),
+                model: model,
+                providerMessage: nil
+            )
+        )
+        activeToolStatusNodeID = statusNode.id
+        activeToolStatusConversationID = context.conversationID
+        activeToolStatusPayload = payload
+        activeToolStatusStore = context.store
+        context.parentID = statusNode.id
+        context.onParentIDChange(statusNode.id)
+        if let message = statusNode.chatMessage {
+            messages.append(message)
+        }
+        return statusNode.id
+    }
+
+    private func supersedeActiveToolStatus() async throws -> (
+        webVisits: [CPSLWebSearchVisit],
+        activityID: UUID
+    ) {
+        guard let nodeID = activeToolStatusNodeID,
+              var payload = activeToolStatusPayload,
+              let store = activeToolStatusStore
+        else {
+            clearActiveToolStatus()
+            return ([], UUID())
+        }
+        payload.isSuperseded = true
+        try await updateToolStatus(payload, nodeID: nodeID, store: store)
+        let presentation = (
+            webVisits: payload.webVisits,
+            activityID: payload.activityID ?? UUID(uuidString: nodeID) ?? UUID()
+        )
+        return presentation
     }
 
     private func appendToolReplayBlock(
@@ -260,15 +307,28 @@ extension CPSLChatModel {
             )
         )
         isSuppressingAssistantStream = false
-        let completion = try await context.client.streamChat(
-            CPSLOpenAIStreamRequest(
-                messages: requestMessages,
-                tools: [],
-                maxTokens: context.config.maxOutputTokens
-            )
-        ) { event in
+        let request = CPSLOpenAIStreamRequest(
+            messages: requestMessages,
+            tools: [],
+            maxTokens: context.config.maxOutputTokens
+        )
+        try await context.store.recordProviderRequest(
+            conversationID: context.conversationID,
+            model: context.config.model,
+            messages: request.messages,
+            tools: [],
+            maxTokens: request.maxTokens,
+            scope: "main.synthesis"
+        )
+        let completion = try await context.client.streamChat(request) { event in
             self.handleProviderStreamEvent(event)
         }
+        try await context.store.recordProviderResponse(
+            conversationID: context.conversationID,
+            completion: completion,
+            scope: "main.synthesis"
+        )
+        presentCompletedAssistantIfNeeded(completion)
         await finishTypewriter()
 
         guard !completion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -314,8 +374,22 @@ extension CPSLChatModel {
         activeToolStatusNodeID = nodeID
         activeToolStatusPayload = effectivePayload
         activeToolStatusStore = store
+        activeToolStatusRevision += 1
+        let revision = activeToolStatusRevision
         let body = effectivePayload.encodedBody()
-        try await store.updateNodeBody(id: nodeID, body: body)
+        guard let conversationID = activeToolStatusConversationID else {
+            return
+        }
+        try await store.updateNodeBody(
+            conversationID: conversationID,
+            id: nodeID,
+            body: body
+        )
+        guard activeToolStatusNodeID == nodeID,
+              activeToolStatusRevision == revision
+        else {
+            return
+        }
         guard let messageID = UUID(uuidString: nodeID),
                 let index = messages.firstIndex(where: { $0.id == messageID })
         else {
@@ -324,13 +398,48 @@ extension CPSLChatModel {
         messages[index].body = body
     }
 
+    private func appendUniqueThoughtIfNeeded(
+        _ assistantText: String,
+        toolCalls: [CPSLOpenAIToolCall],
+        model: String,
+        context: inout CPSLProviderLoopContext
+    ) async throws {
+        guard let thought = CPSLAgentToolFormatting.uniqueThought(
+            from: assistantText,
+            toolCalls: toolCalls
+        ) else {
+            return
+        }
+        let node = try await context.store.appendNode(
+            conversationID: context.conversationID,
+            parentID: context.parentID,
+            draft: CPSLNodeAppendDraft(
+                role: .thought,
+                title: nil,
+                body: thought,
+                model: model,
+                providerMessage: nil
+            )
+        )
+        context.parentID = node.id
+        context.onParentIDChange(node.id)
+        if let message = node.chatMessage {
+            messages.append(message)
+        }
+    }
+
     private func clearActiveToolStatus() {
+        activeToolStatusRevision += 1
         activeToolStatusNodeID = nil
+        activeToolStatusConversationID = nil
         activeToolStatusPayload = nil
         activeToolStatusStore = nil
     }
 
-    func markActiveToolStatusStopped() async {
+    private func finishActiveToolStatus(
+        as state: CPSLToolStatusState,
+        summary: String? = nil
+    ) async throws {
         guard let nodeID = activeToolStatusNodeID,
               var payload = activeToolStatusPayload,
               let store = activeToolStatusStore
@@ -338,17 +447,48 @@ extension CPSLChatModel {
             clearActiveToolStatus()
             return
         }
-        payload.state = .failed
-        payload.summary = String(localized: "Stopped")
-        try? await updateToolStatus(payload, nodeID: nodeID, store: store)
+        payload.state = state
+        payload.isSuperseded = false
+        if let summary {
+            payload.summary = summary
+        }
+        try await updateToolStatus(payload, nodeID: nodeID, store: store)
         clearActiveToolStatus()
+    }
+
+    func markActiveToolStatusStopped() async {
+        do {
+            try await finishActiveToolStatus(
+                as: .interrupted,
+                summary: String(localized: "Stopped")
+            )
+        } catch {
+            clearActiveToolStatus()
+        }
+    }
+
+    func markActiveToolStatusFailed() async {
+        guard activeToolStatusPayload?.invocations.last?.isError == true else {
+            clearActiveToolStatus()
+            return
+        }
+        do {
+            try await finishActiveToolStatus(as: .failed)
+        } catch {
+            clearActiveToolStatus()
+        }
     }
 
     private func preparedRequestMessages(_ preparation: CPSLRequestPreparation) async -> [CPSLOpenAIMessage] {
         let estimatedBytesPerTokenValue = estimatedBytesPerToken
         let toolResultClearThresholdValue = toolResultClearThreshold
         let recentToolResultsToKeepValue = recentToolResultsToKeep
-        return await Task.detached(priority: .userInitiated) {
+        // Detached work does not inherit cancellation; check before and after so Stop
+        // still aborts between provider turns promptly.
+        guard !Task.isCancelled else {
+            return []
+        }
+        let messages = await Task.detached(priority: .userInitiated) {
             CPSLAgentRequestPreparationBuilder.preparedRequestMessages(
                 preparation,
                 estimatedBytesPerToken: estimatedBytesPerTokenValue,
@@ -356,6 +496,7 @@ extension CPSLChatModel {
                 recentToolResultsToKeep: recentToolResultsToKeepValue
             )
         }.value
+        return Task.isCancelled ? [] : messages
     }
 
     private func appendProviderLoopError(
@@ -466,6 +607,17 @@ extension CPSLChatModel {
         }
     }
 
+    private func presentCompletedAssistantIfNeeded(_ completion: CPSLOpenAICompletion) {
+        guard completion.toolCalls.isEmpty,
+              streamingAssistantMessageID == nil,
+              !completion.text.isEmpty
+        else {
+            return
+        }
+        isSuppressingAssistantStream = false
+        queueAssistantDelta(completion.text)
+    }
+
     private func handleProviderStreamEvent(_ event: CPSLOpenAIStreamEvent) {
         switch event {
         case .textDelta(let delta):
@@ -534,7 +686,7 @@ extension CPSLChatModel {
         messages[index] = persistedMessage
     }
 
-    private func discardStreamingAssistantIfNeeded() {
+    func discardStreamingAssistantIfNeeded() {
         guard let id = streamingAssistantMessageID else {
             return
         }
@@ -549,6 +701,9 @@ extension CPSLChatModel {
         _ toolCall: CPSLOpenAIToolCall,
         context: CPSLToolExecutionContext
     ) async -> CPSLToolExecutionResult {
+        if Task.isCancelled {
+            return cancelledToolExecutionResult(for: toolCall)
+        }
         if let requestDirectory = context.requestDirectory,
             let restoreError = await restoreCurrentDirectory(requestDirectory, for: toolCall) {
             return restoreError
@@ -567,13 +722,25 @@ extension CPSLChatModel {
                 providerContent: #"{"ok":false,"error":"Unsupported tool."}"#,
                 displayBody: "Unsupported tool: \(toolCall.function.name)",
                 isError: true,
-                debugInvocation: debugInvocation(
+                traceInvocation: traceInvocation(
                     for: toolCall,
                     displayBody: "Unsupported tool: \(toolCall.function.name)",
                     isError: true
                 )
             )
         }
+    }
+
+    private func cancelledToolExecutionResult(
+        for toolCall: CPSLOpenAIToolCall
+    ) -> CPSLToolExecutionResult {
+        let message = "Stopped."
+        return CPSLToolExecutionResult(
+            providerContent: providerToolContent(ok: false, output: nil, error: message),
+            displayBody: message,
+            isError: true,
+            traceInvocation: traceInvocation(for: toolCall, displayBody: message, isError: true)
+        )
     }
 
     private func restoreCurrentDirectory(
@@ -588,7 +755,7 @@ extension CPSLChatModel {
             providerContent: providerToolContent(ok: false, output: nil, error: displayBody),
             displayBody: displayBody,
             isError: true,
-            debugInvocation: debugInvocation(for: toolCall, displayBody: displayBody, isError: true)
+            traceInvocation: traceInvocation(for: toolCall, displayBody: displayBody, isError: true)
         )
     }
 
@@ -598,7 +765,7 @@ extension CPSLChatModel {
                 providerContent: #"{"ok":false,"error":"Missing source argument."}"#,
                 displayBody: "Missing source argument.",
                 isError: true,
-                debugInvocation: debugInvocation(
+                traceInvocation: traceInvocation(
                     for: toolCall,
                     displayBody: "Missing source argument.",
                     isError: true
@@ -606,7 +773,13 @@ extension CPSLChatModel {
             )
         }
 
+        if Task.isCancelled {
+            return cancelledToolExecutionResult(for: toolCall)
+        }
         let result = await service.evaluateLuau(source)
+        if Task.isCancelled || result.errorCode == "cancelled" {
+            return cancelledToolExecutionResult(for: toolCall)
+        }
         let output = CPSLAgentToolOutput(
             stdout: result.stdout,
             stderr: result.stderr,
@@ -622,7 +795,11 @@ extension CPSLChatModel {
             providerContent: CPSLAgentToolFormatting.providerContent(output),
             displayBody: displayBody,
             isError: isError,
-            debugInvocation: debugInvocation(for: toolCall, displayBody: displayBody, isError: isError)
+            traceInvocation: traceInvocation(
+                for: toolCall,
+                displayBody: CPSLAgentToolFormatting.completeBody(output),
+                isError: isError
+            )
         )
     }
 
@@ -636,7 +813,7 @@ extension CPSLChatModel {
                 providerContent: providerToolContent(ok: false, output: nil, error: message),
                 displayBody: message,
                 isError: true,
-                debugInvocation: debugInvocation(for: toolCall, displayBody: message, isError: true)
+                traceInvocation: traceInvocation(for: toolCall, displayBody: message, isError: true)
             )
         }
 
@@ -647,7 +824,7 @@ extension CPSLChatModel {
                 providerContent: providerToolContent(ok: false, output: nil, error: message),
                 displayBody: message,
                 isError: true,
-                debugInvocation: debugInvocation(for: toolCall, displayBody: message, isError: true)
+                traceInvocation: traceInvocation(for: toolCall, displayBody: message, isError: true)
             )
         }
 
@@ -657,7 +834,9 @@ extension CPSLChatModel {
                 client: context.client,
                 config: context.config,
                 agentDepth: childDepth,
-                requestDirectory: nil
+                requestDirectory: nil,
+                traceStore: context.traceStore,
+                conversationID: context.conversationID
             )
         )
         return CPSLToolExecutionResult(
@@ -668,7 +847,7 @@ extension CPSLChatModel {
             ),
             displayBody: result.output,
             isError: result.isError,
-            debugInvocation: debugInvocation(for: toolCall, displayBody: result.output, isError: result.isError)
+            traceInvocation: traceInvocation(for: toolCall, displayBody: result.output, isError: result.isError)
         )
     }
 
@@ -690,12 +869,19 @@ extension CPSLChatModel {
 
         do {
             for turn in 0..<maxTurns {
+                try Task.checkCancellation()
                 turnsUsed = turn + 1
                 let isFinalTurn = turn == maxTurns - 1
                 let sandboxDirectory = await service.currentDirectory()
-                let turnGuidance = isFinalTurn
-                    ? "Budget: turn \(turn + 1)/\(maxTurns). FINAL, produce summary, no tools."
-                    : "Budget: turn \(turn + 1)/\(maxTurns)."
+                try Task.checkCancellation()
+                let turnGuidance: String
+                if isFinalTurn {
+                    turnGuidance = "Budget: turn \(turn + 1)/\(maxTurns). FINAL: return the best usable result now; no tools."
+                } else if turn >= maxTurns - 3 {
+                    turnGuidance = "Budget: turn \(turn + 1)/\(maxTurns). Synthesize usable findings now; use another tool only for an essential missing fact."
+                } else {
+                    turnGuidance = "Budget: turn \(turn + 1)/\(maxTurns)."
+                }
                 let requestMessages = [
                     CPSLOpenAIMessage.system(
                         subAgentSystemPrompt
@@ -705,16 +891,37 @@ extension CPSLChatModel {
                             + "</system-reminder>"
                     )
                 ] + providerMessages
-                let completion = try await context.client.streamChat(
-                    CPSLOpenAIStreamRequest(
-                        messages: requestMessages,
-                        tools: isFinalTurn ? [] : CPSLOpenAITool.availableTools(
-                            allowsSubagents: context.agentDepth < context.config.maxAgentDepth,
-                            currentDirectory: sandboxDirectory
-                        ),
-                        maxTokens: context.config.maxOutputTokens
+                let tools = isFinalTurn ? [] : CPSLOpenAITool.availableTools(
+                    allowsSubagents: context.agentDepth < context.config.maxAgentDepth,
+                    currentDirectory: sandboxDirectory
+                )
+                let request = CPSLOpenAIStreamRequest(
+                    messages: requestMessages,
+                    tools: tools,
+                    maxTokens: context.config.maxOutputTokens
+                )
+                let scope = "subagent.\(input.mode.rawValue).turn.\(turn + 1)"
+                if let traceStore = context.traceStore,
+                   let conversationID = context.conversationID {
+                    try await traceStore.recordProviderRequest(
+                        conversationID: conversationID,
+                        model: context.config.model,
+                        messages: request.messages,
+                        tools: tools,
+                        maxTokens: request.maxTokens,
+                        scope: scope
                     )
-                ) { _ in }
+                }
+                let completion = try await context.client.streamChat(request) { _ in }
+                try Task.checkCancellation()
+                if let traceStore = context.traceStore,
+                   let conversationID = context.conversationID {
+                    try await traceStore.recordProviderResponse(
+                        conversationID: conversationID,
+                        completion: completion,
+                        scope: scope
+                    )
+                }
 
                 if !completion.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     textParts.append(completion.text)
@@ -755,15 +962,27 @@ extension CPSLChatModel {
                     )
                 )
                 for toolCall in completion.toolCalls {
+                    try Task.checkCancellation()
                     let toolResult = await executeToolCall(
                         toolCall,
                         context: CPSLToolExecutionContext(
                             client: context.client,
                             config: context.config,
                             agentDepth: context.agentDepth,
-                            requestDirectory: sandboxDirectory
+                            requestDirectory: sandboxDirectory,
+                            traceStore: context.traceStore,
+                            conversationID: context.conversationID
                         )
                     )
+                    try Task.checkCancellation()
+                    if let traceStore = context.traceStore,
+                       let conversationID = context.conversationID {
+                        try await traceStore.recordToolInvocation(
+                            conversationID: conversationID,
+                            nodeID: nil,
+                            invocation: toolResult.traceInvocation
+                        )
+                    }
                     providerMessages.append(
                         CPSLOpenAIMessage.tool(id: toolCall.id, content: toolResult.providerContent)
                     )
@@ -781,7 +1000,27 @@ extension CPSLChatModel {
                 ),
                 false
             )
+        } catch is CancellationError {
+            return (
+                subAgentOutput(
+                    CPSLSubAgentOutputDraft(
+                        mode: input.mode,
+                        turnsUsed: turnsUsed,
+                        maxTurns: maxTurns,
+                        textParts: textParts + ["Stopped."]
+                    )
+                ),
+                true
+            )
         } catch {
+            if let traceStore = context.traceStore,
+               let conversationID = context.conversationID {
+                try? await traceStore.recordError(
+                    conversationID: conversationID,
+                    message: error.localizedDescription,
+                    scope: "subagent.\(input.mode.rawValue)"
+                )
+            }
             let output = subAgentOutput(
                 CPSLSubAgentOutputDraft(
                     mode: input.mode,
@@ -799,15 +1038,17 @@ extension CPSLChatModel {
         maxTurns: Int,
         context: CPSLToolExecutionContext
     ) -> String {
-        """
+        let basePrompt = """
         You are a Herm sub-agent running inside the same iOS/macOS app.
         Complete the assigned task, then return a concise result. Do not ask questions.
+        Start collecting useful findings immediately and preserve them in your response. Do not spend the whole budget on discovery. For browser research, reuse one browser across queries and return the best verified result you have before the final turn.
         Mode: \(mode.rawValue). Turn budget: \(maxTurns). Agent depth: \(context.agentDepth)/\(context.config.maxAgentDepth).
         CPSL is your execution environment: a Unix-like local environment with Luau as the command interface instead of Bash. Luau is the only supported execution language.
         Use /home/herm as the default home for durable user-created files and /tmp for temporary files. User-added files remain available under /attachments/<conversation-id>. Other Unix-style directories under / remain available when the task calls for them.
         You may use local_sandbox_exec for CPSL work, including the sandbox webbrowser module when it is available. You have no host shell, package manager, or provider-hosted capabilities.
         Calendar and location are available only through CPSL when compiled into the app sandbox and authorized by the user. Use them only when the assigned task materially needs schedule, event, availability, or current-place context. EventKit does not expose native calendar file attachments. Use calendar.attach to associate durable file copies with an event in Herm, and do not describe them as native Calendar.app attachments. Access states are granted, denied, or undefined; undefined access may prompt, and denied access must be fixed in iOS Settings or macOS System Settings.
         """
+        return addingICloudMountContext(to: basePrompt)
     }
 
     private func subAgentOutput(_ draft: CPSLSubAgentOutputDraft) -> String {
@@ -819,12 +1060,12 @@ extension CPSLChatModel {
         return "[agent mode:\(draft.mode.rawValue) turns:\(draft.turnsUsed)/\(draft.maxTurns)]\n\n\(output)"
     }
 
-    private func debugInvocation(
+    private func traceInvocation(
         for toolCall: CPSLOpenAIToolCall,
         displayBody: String,
         isError: Bool
-    ) -> CPSLToolStatusInvocation {
-        CPSLToolStatusInvocation(
+    ) -> CPSLToolTraceInvocation {
+        CPSLToolTraceInvocation(
             id: toolCall.id,
             name: toolCall.function.name,
             summary: CPSLAgentToolFormatting.summary(for: toolCall),
@@ -852,7 +1093,7 @@ extension CPSLChatModel {
     }
 }
 
-private enum CPSLAgentRequestPreparationBuilder {
+private nonisolated enum CPSLAgentRequestPreparationBuilder {
     static func preparedRequestMessages(
         _ preparation: CPSLRequestPreparation,
         estimatedBytesPerToken: Int,
@@ -887,18 +1128,18 @@ private enum CPSLAgentRequestPreparationBuilder {
         toolResultClearThreshold: Double,
         recentToolResultsToKeep: Int
     ) -> [CPSLOpenAIMessage] {
-        guard let contextWindowTokens = config.contextWindowTokens,
-                contextWindowTokens > 0
-        else {
-            return messages
-        }
-
         let estimatedTokens = estimatedTokenCount(
             systemPrompt: systemPrompt,
             messages: messages,
             estimatedBytesPerToken: estimatedBytesPerToken
         )
-        let threshold = Int(Double(contextWindowTokens) * toolResultClearThreshold)
+        let replayThreshold = min(config.maxOutputTokens, Int.max / 4) * 4
+        let contextThreshold = config.contextWindowTokens.flatMap { contextWindowTokens in
+            contextWindowTokens > 0
+                ? Int(Double(contextWindowTokens) * toolResultClearThreshold)
+                : nil
+        }
+        let threshold = min(contextThreshold ?? replayThreshold, replayThreshold)
         guard estimatedTokens >= threshold else {
             return messages
         }
@@ -974,8 +1215,11 @@ private enum CPSLAgentRequestPreparationBuilder {
         _ preparation: CPSLRequestPreparation,
         estimatedTokens: Int
     ) -> String {
-        let remainingIterations = max(0, preparation.maxIterations - preparation.iteration)
-        var lines = ["Session: approximately \(estimatedTokens) replay tokens in the current request."]
+        let currentIteration = preparation.iteration + 1
+        var lines = [
+            "Session: approximately \(estimatedTokens) replay tokens in the current request.",
+            "Tool round: \(currentIteration)/\(preparation.maxIterations)."
+        ]
         lines.append(
             "Current CPSL directory: \(CPSLAgentToolFormatting.promptPathLiteral(preparation.sandboxDirectory))."
         )
@@ -983,11 +1227,10 @@ private enum CPSLAgentRequestPreparationBuilder {
             let percent = Int((Double(estimatedTokens) * 100 / Double(contextWindowTokens)).rounded())
             lines.append("Context: approximately \(percent)% full (\(estimatedTokens)/\(contextWindowTokens) tokens).")
         }
-        let remainingFraction = Double(remainingIterations) / Double(preparation.maxIterations)
-        if remainingFraction < 0.25 {
-            lines.append("Tool budget: \(remainingIterations) of \(preparation.maxIterations) rounds remain; wrap up efficiently.")
-        } else if remainingFraction < 0.50 {
-            lines.append("Tool budget: past halfway with \(remainingIterations) of \(preparation.maxIterations) rounds remaining.")
+        if currentIteration >= 12 {
+            lines.append("Use the evidence already gathered and finish now unless one essential action is still missing.")
+        } else if currentIteration >= 8 {
+            lines.append("Avoid repeating discovery. Start synthesizing the result and use more tools only for specific gaps.")
         }
         return preparation.systemPrompt
             + "\n\n<system-reminder>\n"

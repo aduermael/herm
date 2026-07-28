@@ -55,26 +55,49 @@ cpsl_ensure_lock_mtime() {
 
 cpsl_ensure_acquire_lock() {
 	lock_path=$1
-	lock_timeout=$2
 
 	mkdir -p "$(dirname "$lock_path")"
 
-	while [ -f "$lock_path" ]; do
-		lock_age=$(($(date +%s) - $(cpsl_ensure_lock_mtime "$lock_path")))
-		if [ "$lock_age" -ge "$lock_timeout" ]; then
-			rm -f "$lock_path"
-			break
+	while ! mkdir "$lock_path" 2>/dev/null; do
+		lock_pid=
+		if [ -f "$lock_path/pid" ]; then
+			lock_pid=$(cat "$lock_path/pid" 2>/dev/null || printf '')
+		elif [ -f "$lock_path" ]; then
+			lock_pid=$(cat "$lock_path" 2>/dev/null || printf '')
+		fi
+		case "$lock_pid" in
+		'' | *[!0-9]*) lock_pid= ;;
+		esac
+		if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+			printf 'Waiting for CPSL XCFramework build lock held by PID %s: %s\n' "$lock_pid" "$lock_path"
+			sleep 5
+			continue
+		fi
+
+		lock_mtime=$(cpsl_ensure_lock_mtime "$lock_path" 2>/dev/null) || continue
+		lock_age=$(($(date +%s) - lock_mtime))
+		if [ -n "$lock_pid" ] || [ "$lock_age" -ge 10 ]; then
+			if [ -d "$lock_path" ]; then
+				rm -f "$lock_path/pid"
+				rmdir "$lock_path" 2>/dev/null || true
+			else
+				rm -f "$lock_path"
+			fi
+			continue
 		fi
 		printf 'Waiting for CPSL XCFramework build lock: %s\n' "$lock_path"
 		sleep 5
 	done
 
-	printf '%s\n' "$$" >"$lock_path"
+	printf '%s\n' "$$" >"$lock_path/pid"
+	lock_owned=1
 }
 
 cpsl_ensure_release_lock() {
-	[ -n "${lock_file:-}" ] || return 0
-	rm -f "$lock_file"
+	[ "${lock_owned:-0}" -eq 1 ] || return 0
+	rm -f "$lock_file/pid"
+	rmdir "$lock_file" 2>/dev/null || true
+	lock_owned=0
 }
 
 cpsl_ensure_rebuild_reason() {
@@ -96,22 +119,25 @@ cpsl_ensure_rebuild_reason() {
 		printf '%s\n' "$xcframework_path is still the bootstrap placeholder"
 		return 0
 	}
-	if [ "$require_submodule_source_stamp" -eq 1 ]; then
-		cpsl_xcframework_source_stamp_matches "$source_stamp_path" "$default_cpsl_root" "$cargo_profile" || {
-			printf '%s\n' "$xcframework_path was not built from external/cpsl at the current revision and Cargo profile"
-			return 0
-		}
-	fi
-	cpsl_xcframework_satisfies_targets "$xcframework_info" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || {
-		printf '%s\n' "$xcframework_path does not contain requested CPSL target(s): $CPSL_REQUEST_DESCRIPTION"
+	expected_build_identity=$(cpsl_apple_build_stamp_expected \
+		"$herm_root" "$cpsl_input_root" apple-app "$cargo_profile" "$cargo_incremental") || {
+		printf '%s\n' "could not compute the current CPSL Apple build identity"
+		return 0
+	}
+	cpsl_apple_build_stamp_matches_value "$build_stamp_path" "$expected_build_identity" || {
+		printf '%s\n' "CPSL build identity changed (source, exact targets, configuration, toolchain, or build flags)"
+		return 0
+	}
+	cpsl_xcframework_matches_targets "$xcframework_info" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || {
+		printf '%s\n' "$xcframework_path does not exactly match requested CPSL target(s): $CPSL_REQUEST_DESCRIPTION"
+		return 0
+	}
+	cpsl_xcframework_binaries_satisfy_targets "$xcframework_path" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || {
+		printf '%s\n' "$xcframework_path has missing or invalid CPSL binaries for: $CPSL_REQUEST_DESCRIPTION"
 		return 0
 	}
 	cpsl_pdfium_satisfies_targets "$pdfium_path" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || {
 		printf '%s\n' "$pdfium_path does not contain requested PDFium target(s): $CPSL_REQUEST_DESCRIPTION"
-		return 0
-	}
-	cpsl_xcframework_inputs_newer_than "$xcframework_info" "$herm_root" "$cpsl_input_root" && {
-		printf '%s\n' "CPSL build inputs changed"
 		return 0
 	}
 	return 1
@@ -127,7 +153,8 @@ script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 herm_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
 . "$script_dir/lib/host-path.sh"
 . "$script_dir/lib/cpsl-xcframework.sh"
-herm_ensure_rust_path
+. "$script_dir/lib/cpsl-apple-build-state.sh"
+herm_ensure_host_tools_path
 
 skip_mode=0
 while [ "$#" -gt 0 ]; do
@@ -161,27 +188,43 @@ if cpsl_apple_has_xcode_selection; then
 	export HERM_CPSL_FORCE_SUBMODULE
 	unset CPSL_ROOT
 fi
-require_submodule_source_stamp=${HERM_CPSL_FORCE_SUBMODULE:-0}
-
 work_dir=${CPSL_WORK_DIR:-"$herm_root/.herm-cpsl"}
-cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+build_system=$(cpsl_apple_build_system_from_environment) || die "failed to resolve CPSL Apple build system"
+if [ "$build_system" = cargo ]; then
+	cargo_profile=$(cpsl_apple_cargo_profile_from_environment) || die "failed to resolve CPSL Cargo profile"
+	cargo_incremental=$(cpsl_apple_cargo_incremental_from_environment) || die "failed to resolve CPSL incremental compilation setting"
+else
+	cargo_profile=unused
+	cargo_incremental=unused
+fi
 out_dir=${OUT_DIR:-$(cpsl_apple_default_artifact_dir "$work_dir")}
 default_cpsl_root="$herm_root/external/cpsl"
 cpsl_input_root=${CPSL_ROOT:-"$default_cpsl_root"}
-[ "$require_submodule_source_stamp" -eq 0 ] || cpsl_input_root=$default_cpsl_root
+[ "${HERM_CPSL_FORCE_SUBMODULE:-0}" -eq 0 ] || cpsl_input_root=$default_cpsl_root
+if [ "$build_system" = bazel ]; then
+	if [ -n "${CPSL_ROOT:-}" ]; then
+		requested_cpsl_root=$(CDPATH= cd "$CPSL_ROOT" && pwd -P) || die "CPSL_ROOT is not a directory: $CPSL_ROOT"
+		[ "$requested_cpsl_root" = "$default_cpsl_root" ] || \
+			die "Bazel builds use $default_cpsl_root; set CPSL_APPLE_BUILD_SYSTEM=cargo to build a different CPSL_ROOT"
+	fi
+	cpsl_input_root=$default_cpsl_root
+fi
 xcframework_path="$out_dir/cpsl.xcframework"
 pdfium_path="$out_dir/libs/pdfium"
-source_stamp_path=$(cpsl_xcframework_source_stamp_path "$out_dir")
+build_stamp_path=$(cpsl_apple_build_stamp_path "$out_dir")
 xcframework_info=$(cpsl_xcframework_info_plist "$xcframework_path")
 
 if [ "$skip_mode" -eq 1 ]; then
 	[ -d "$xcframework_path" ] || die "missing $xcframework_path; rerun without --skip"
-	if [ "$require_submodule_source_stamp" -eq 1 ]; then
-		cpsl_xcframework_source_stamp_matches "$source_stamp_path" "$default_cpsl_root" "$cargo_profile" || \
-			die "$xcframework_path was not built from external/cpsl at the current revision and Cargo profile; rerun without --skip"
-	fi
-	cpsl_xcframework_satisfies_targets "$xcframework_info" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || \
-		die "$xcframework_path does not contain requested CPSL target(s): $CPSL_REQUEST_DESCRIPTION; rerun without --skip"
+	expected_build_identity=$(cpsl_apple_build_stamp_expected \
+		"$herm_root" "$cpsl_input_root" apple-app "$cargo_profile" "$cargo_incremental") || \
+		die "could not compute the current CPSL Apple build identity"
+	cpsl_apple_build_stamp_matches_value "$build_stamp_path" "$expected_build_identity" || \
+		die "$xcframework_path does not match the current source, exact targets, configuration, toolchain, and build flags; rerun without --skip"
+	cpsl_xcframework_matches_targets "$xcframework_info" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || \
+		die "$xcframework_path does not exactly match requested CPSL target(s): $CPSL_REQUEST_DESCRIPTION; rerun without --skip"
+	cpsl_xcframework_binaries_satisfy_targets "$xcframework_path" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || \
+		die "$xcframework_path has missing or invalid CPSL binaries for: $CPSL_REQUEST_DESCRIPTION; rerun without --skip"
 	cpsl_pdfium_satisfies_targets "$pdfium_path" "$ios_device_targets" "$ios_simulator_targets" "$macos_targets" || \
 		die "$pdfium_path does not contain requested PDFium target(s): $CPSL_REQUEST_DESCRIPTION; rerun without --skip"
 	printf 'Using existing CPSL XCFramework: %s\n' "$xcframework_path"
@@ -195,9 +238,9 @@ fi
 rebuild_reason=$(cpsl_ensure_rebuild_reason "$xcframework_info" || printf '%s\n' "unknown reason")
 
 lock_file="$work_dir/.cpsl-xcframework-build.lock"
-lock_timeout=7200
+lock_owned=0
 trap cpsl_ensure_release_lock EXIT HUP INT TERM
-cpsl_ensure_acquire_lock "$lock_file" "$lock_timeout"
+cpsl_ensure_acquire_lock "$lock_file"
 
 xcframework_info=$(cpsl_xcframework_info_plist "$xcframework_path")
 if cpsl_ensure_should_reuse "$xcframework_info"; then
@@ -210,6 +253,7 @@ printf 'Building CPSL Apple XCFramework for: %s (%s)\n' "$CPSL_REQUEST_DESCRIPTI
 APPLE_PLATFORMS="$APPLE_PLATFORMS" \
 	IOS_DEVICE_TARGETS="$IOS_DEVICE_TARGETS" \
 	IOS_SIMULATOR_TARGETS="$IOS_SIMULATOR_TARGETS" \
-	MACOS_TARGETS="$MACOS_TARGETS" \
-	CONFIGURATION="${CONFIGURATION:-}" \
+MACOS_TARGETS="$MACOS_TARGETS" \
+CONFIGURATION="${CONFIGURATION:-}" \
+CPSL_APPLE_BUILD_SYSTEM="$build_system" \
 	"$herm_root/scripts/build-cpsl-apple-xcframework.sh"

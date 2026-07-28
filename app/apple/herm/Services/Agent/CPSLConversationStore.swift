@@ -1,119 +1,95 @@
 import Foundation
-import SQLite3
 
 actor CPSLConversationStore {
-    private nonisolated static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    private nonisolated static let iso8601FractionalSecondsFormat = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: true
+    )
+    private nonisolated static let iso8601SecondPrecisionFormat = Date.ISO8601FormatStyle(
+        includingFractionalSeconds: false
+    )
 
-    let databaseURL: URL
+    let conversationLogURL: URL
+    let traceLogURL: URL
     let usesICloudContainer: Bool
 
-    private var database: OpaquePointer?
-
     init() throws {
-        let location = try CPSLConversationDatabaseLocation.resolve()
-        try self.init(location: location)
+        try self.init(location: CPSLConversationLogLocation.resolve())
     }
 
-    init(databaseURL: URL, usesICloudContainer: Bool) throws {
+    init(logURL: URL, usesICloudContainer: Bool) throws {
+        let stem = logURL.deletingPathExtension().lastPathComponent
         try self.init(
-            location: CPSLConversationDatabaseLocation(
-                url: databaseURL,
+            location: CPSLConversationLogLocation(
+                conversationLogURL: logURL,
+                traceLogURL: logURL.deletingLastPathComponent()
+                    .appendingPathComponent("\(stem)-traces.jsonl"),
                 usesICloudContainer: usesICloudContainer
             )
         )
     }
 
-    private init(location: CPSLConversationDatabaseLocation) throws {
-        databaseURL = location.url
+    private init(location: CPSLConversationLogLocation) throws {
+        conversationLogURL = location.conversationLogURL
+        traceLogURL = location.traceLogURL
         usesICloudContainer = location.usesICloudContainer
-
-        if sqlite3_open(location.url.path, &database) != SQLITE_OK {
-            let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown SQLite error"
-            throw CPSLConversationStoreError.openFailed(message)
-        }
-        sqlite3_busy_timeout(database, 5_000)
-        try Self.migrate(database: database)
+        try Self.prepareLog(at: conversationLogURL)
+        try Self.prepareLog(at: traceLogURL)
     }
 
-    deinit {
-        sqlite3_close(database)
-    }
-
-    func loadSummaries() throws -> [CPSLConversationSummary] {
-        try query(
-            """
-            SELECT id, title, current_node_id, model, created_at, updated_at
-            FROM conversations
-            ORDER BY updated_at DESC
-            """
-        ) { statement in
-            CPSLConversationSummary(
-                id: columnString(statement, 0) ?? "",
-                title: columnString(statement, 1) ?? "Untitled",
-                currentNodeID: columnString(statement, 2),
-                model: columnString(statement, 3),
-                createdAt: columnDate(statement, 4),
-                updatedAt: columnDate(statement, 5)
-            )
-        }
+    func fetchConversationSummaries(
+        archiveScope: CPSLArchiveScope,
+        tagIDs: Set<String>
+    ) throws -> [CPSLConversationSummary] {
+        let state = try loadState()
+        let isArchived = archiveScope == .archived
+        return state.conversations.values
+            .filter { conversation in
+                conversation.archived == isArchived
+                    && tagIDs.isSubset(of: state.conversationTags[conversation.id] ?? [])
+            }
+            .map(\.summary)
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     func loadNodes(conversationID: String) throws -> [CPSLStoredNode] {
-        try query(
-            """
-            SELECT id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at
-            FROM nodes
-            WHERE conversation_id = ?
-            ORDER BY sequence ASC, created_at ASC
-            """,
-            bindings: [.text(conversationID)]
-        ) { statement in
-            storedNode(from: statement)
-        }
+        try loadState().conversations[conversationID]?.nodes.sorted(by: Self.nodeOrder) ?? []
     }
 
     func loadConversation(id: String) throws -> CPSLLoadedConversation? {
-        let loadedHeaders = try query(
-            """
-            SELECT id, title, current_node_id, model, system_prompt, created_at, updated_at
-            FROM conversations
-            WHERE id = ?
-            LIMIT 1
-            """,
-            bindings: [.text(id)]
-        ) { statement in
-            (
-                summary: CPSLConversationSummary(
-                    id: columnString(statement, 0) ?? "",
-                    title: columnString(statement, 1) ?? "Untitled",
-                    currentNodeID: columnString(statement, 2),
-                    model: columnString(statement, 3),
-                    createdAt: columnDate(statement, 5),
-                    updatedAt: columnDate(statement, 6)
-                ),
-                systemPrompt: columnString(statement, 4) ?? ""
-            )
-        }
-        guard let loadedHeader = loadedHeaders.first else {
+        guard let conversation = try loadState().conversations[id] else {
             return nil
         }
-        return CPSLLoadedConversation(
-            summary: loadedHeader.summary,
-            systemPrompt: loadedHeader.systemPrompt,
-            nodes: try loadNodes(conversationID: id)
-        )
+        return conversation.loadedConversation
     }
 
 #if DEBUG
     func exportConversationJSON(id: String) throws -> String {
-        guard let conversation = try loadConversation(id: id) else {
+        let conversationEvents = try loadConversationEvents()
+        let state = Self.replay(conversationEvents)
+        guard let conversation = state.conversations[id] else {
             throw CPSLConversationStoreError.conversationNotFound
         }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(conversation)
-        return String(decoding: data, as: UTF8.self)
+        let traceEvents = try Self.readJSONLines(CPSLTraceEvent.self, from: traceLogURL)
+            .filter { $0.conversationID == id }
+        let relevantConversationEvents = conversationEvents.filter { event in
+            if event.conversationID == id {
+                return true
+            }
+            if let tagID = event.tag?.id ?? event.tagID {
+                return state.conversationTags[id]?.contains(tagID) == true
+            }
+            return false
+        }
+        let export = CPSLConversationDebugExport(
+            generatedAt: Date(),
+            conversation: conversation.loadedConversation,
+            tags: (state.conversationTags[id] ?? []).compactMap { state.tags[$0] }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
+            conversationEvents: relevantConversationEvents,
+            traceEvents: traceEvents
+        )
+        let encoder = Self.jsonEncoder(prettyPrinted: true)
+        return String(decoding: try encoder.encode(export), as: UTF8.self)
     }
 #endif
 
@@ -124,56 +100,14 @@ actor CPSLConversationStore {
         model: String?,
         systemPrompt: String
     ) throws -> (summary: CPSLConversationSummary, userNode: CPSLStoredNode) {
+        let state = try loadState()
         let now = Date()
         let conversationID = id ?? UUID().uuidString
         let userNodeID = UUID().uuidString
-        let title = Self.generateTitle(from: userText)
-        let providerMessage = CPSLOpenAIMessage.user(providerText ?? userText)
-        let providerJSON = try encodeProviderMessage(providerMessage)
-
-        try withTransaction {
-            try execute(
-                """
-                INSERT INTO conversations (id, title, root_node_id, current_node_id, model, system_prompt, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                bindings: [
-                    .text(conversationID),
-                    .text(title),
-                    .text(userNodeID),
-                    .text(userNodeID),
-                    .nullableText(model),
-                    .text(systemPrompt),
-                    .date(now),
-                    .date(now)
-                ]
-            )
-            try execute(
-                """
-                INSERT INTO nodes (id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at)
-                VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, 0, ?)
-                """,
-                bindings: [
-                    .text(userNodeID),
-                    .text(conversationID),
-                    .text(CPSLChatRole.user.rawValue),
-                    .text(userText),
-                    .nullableText(model),
-                    .text(providerJSON),
-                    .date(now)
-                ]
-            )
+        guard state.conversations[conversationID] == nil else {
+            throw CPSLConversationStoreError.conversationAlreadyExists
         }
-
-        let summary = CPSLConversationSummary(
-            id: conversationID,
-            title: title,
-            currentNodeID: userNodeID,
-            model: model,
-            createdAt: now,
-            updatedAt: now
-        )
-        let node = CPSLStoredNode(
+        let userNode = CPSLStoredNode(
             id: userNodeID,
             conversationID: conversationID,
             parentID: nil,
@@ -181,11 +115,31 @@ actor CPSLConversationStore {
             title: nil,
             body: userText,
             model: model,
-            providerMessage: providerMessage,
+            providerMessage: .user(providerText ?? userText),
             sequence: 0,
             createdAt: now
         )
-        return (summary, node)
+        let conversation = CPSLConversationLogRecord(
+            id: conversationID,
+            title: Self.generateTitle(from: userText),
+            currentNodeID: userNodeID,
+            model: model,
+            systemPrompt: systemPrompt,
+            createdAt: now,
+            updatedAt: now,
+            pinned: false,
+            archived: false,
+            nodes: [userNode]
+        )
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                timestamp: now,
+                kind: .conversationCreated,
+                conversationID: conversationID,
+                conversation: conversation
+            )
+        )
+        return (conversation.summary, userNode)
     }
 
     func appendNode(
@@ -193,50 +147,7 @@ actor CPSLConversationStore {
         parentID: String?,
         draft: CPSLNodeAppendDraft
     ) throws -> CPSLStoredNode {
-        var sequence = 0
-        let now = Date()
-        let nodeID = UUID().uuidString
-        let providerJSON = try draft.providerMessage.map(encodeProviderMessage)
-
-        try withTransaction {
-            guard let parentID else {
-                throw CPSLConversationStoreError.parentRequired
-            }
-            try assertParentBelongsToConversation(parentID: parentID, conversationID: conversationID)
-            sequence = try nextSequence(conversationID: conversationID)
-            try execute(
-                """
-                INSERT INTO nodes (id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                bindings: [
-                    .text(nodeID),
-                    .text(conversationID),
-                    .nullableText(parentID),
-                    .text(draft.role.rawValue),
-                    .nullableText(draft.title),
-                    .text(draft.body),
-                    .nullableText(draft.model),
-                    .nullableText(providerJSON),
-                    .int(sequence),
-                    .date(now)
-                ]
-            )
-            try updateConversationCurrentNode(conversationID: conversationID, currentNodeID: nodeID, updatedAt: now)
-        }
-
-        return CPSLStoredNode(
-            id: nodeID,
-            conversationID: conversationID,
-            parentID: parentID,
-            role: draft.role,
-            title: draft.title,
-            body: draft.body,
-            model: draft.model,
-            providerMessage: draft.providerMessage,
-            sequence: sequence,
-            createdAt: now
-        )
+        try appendNodes(conversationID: conversationID, parentID: parentID, drafts: [draft])[0]
     }
 
     func appendNodes(
@@ -247,96 +158,165 @@ actor CPSLConversationStore {
         guard !drafts.isEmpty else {
             return []
         }
+        guard let parentID else {
+            throw CPSLConversationStoreError.parentRequired
+        }
+        let state = try loadState()
+        guard let conversation = state.conversations[conversationID],
+              conversation.nodes.contains(where: { $0.id == parentID })
+        else {
+            throw CPSLConversationStoreError.parentConversationMismatch
+        }
 
         let now = Date()
-        let prepared = try drafts.map { draft in
-            (
+        var nextSequence = (conversation.nodes.map(\.sequence).max() ?? -1) + 1
+        var currentParentID = parentID
+        let nodes = drafts.map { draft in
+            defer { nextSequence += 1 }
+            let node = CPSLStoredNode(
                 id: UUID().uuidString,
-                draft: draft,
-                providerJSON: try draft.providerMessage.map(encodeProviderMessage)
-            )
-        }
-        var insertedNodes: [CPSLStoredNode] = []
-
-        try withTransaction {
-            guard let parentID else {
-                throw CPSLConversationStoreError.parentRequired
-            }
-            try assertParentBelongsToConversation(parentID: parentID, conversationID: conversationID)
-
-            var sequence = try nextSequence(conversationID: conversationID)
-            var currentParentID = parentID
-            for item in prepared {
-                try execute(
-                    """
-                    INSERT INTO nodes (id, conversation_id, parent_id, role, title, body, model, provider_message_json, sequence, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    bindings: [
-                        .text(item.id),
-                        .text(conversationID),
-                        .nullableText(currentParentID),
-                        .text(item.draft.role.rawValue),
-                        .nullableText(item.draft.title),
-                        .text(item.draft.body),
-                        .nullableText(item.draft.model),
-                        .nullableText(item.providerJSON),
-                        .int(sequence),
-                        .date(now)
-                    ]
-                )
-                insertedNodes.append(
-                    CPSLStoredNode(
-                        id: item.id,
-                        conversationID: conversationID,
-                        parentID: currentParentID,
-                        role: item.draft.role,
-                        title: item.draft.title,
-                        body: item.draft.body,
-                        model: item.draft.model,
-                        providerMessage: item.draft.providerMessage,
-                        sequence: sequence,
-                        createdAt: now
-                    )
-                )
-                currentParentID = item.id
-                sequence += 1
-            }
-
-            try updateConversationCurrentNode(
                 conversationID: conversationID,
-                currentNodeID: currentParentID,
-                updatedAt: now
+                parentID: currentParentID,
+                role: draft.role,
+                title: draft.title,
+                body: draft.body,
+                model: draft.model,
+                providerMessage: draft.providerMessage,
+                sequence: nextSequence,
+                createdAt: now
             )
+            currentParentID = node.id
+            return node
         }
-
-        return insertedNodes
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                timestamp: now,
+                kind: .nodesAppended,
+                conversationID: conversationID,
+                nodes: nodes
+            )
+        )
+        return nodes
     }
 
-    func updateNodeBody(id: String, body: String) throws {
-        try execute(
-            "UPDATE nodes SET body = ? WHERE id = ?",
-            bindings: [.text(body), .text(id)]
-        )
-        if let conversationID = try conversationID(forNode: id) {
-            try execute(
-                "UPDATE conversations SET updated_at = ? WHERE id = ?",
-                bindings: [.date(Date()), .text(conversationID)]
+    func updateNodeBody(conversationID: String, id: String, body: String) throws {
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                kind: .nodeBodyUpdated,
+                conversationID: conversationID,
+                nodeID: id,
+                body: body
             )
-        }
+        )
     }
 
     func updateConversationModelIfMissing(conversationID: String, model: String) throws {
-        try execute(
-            "UPDATE conversations SET model = ? WHERE id = ? AND model IS NULL",
-            bindings: [.text(model), .text(conversationID)]
+        guard let conversation = try loadState().conversations[conversationID] else {
+            throw CPSLConversationStoreError.conversationNotFound
+        }
+        guard conversation.model == nil else {
+            return
+        }
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                kind: .conversationModelSet,
+                conversationID: conversationID,
+                model: model
+            )
         )
     }
 
     func deleteConversation(id: String) throws {
-        try execute(
-            "DELETE FROM conversations WHERE id = ?",
-            bindings: [.text(id)]
+        try appendConversationEvent(
+            CPSLConversationLogEvent(kind: .conversationDeleted, conversationID: id)
+        )
+    }
+
+    func setPinned(conversationID: String, pinned: Bool) throws {
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                kind: .conversationPinned,
+                conversationID: conversationID,
+                flag: pinned
+            )
+        )
+    }
+
+    func setArchived(conversationID: String, archived: Bool) throws {
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                kind: .conversationArchived,
+                conversationID: conversationID,
+                flag: archived
+            )
+        )
+    }
+
+    func renameConversation(id: String, title: String) throws {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CPSLConversationStoreError.invalidTitle
+        }
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                kind: .conversationRenamed,
+                conversationID: id,
+                title: trimmed
+            )
+        )
+    }
+
+    static func normalizedTagName(_ raw: String) throws -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 40 else {
+            throw CPSLConversationStoreError.invalidTagName
+        }
+        return trimmed
+    }
+
+    func allTags() throws -> [CPSLTag] {
+        try loadState().tags.values.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    func createTag(name: String, color: String) throws -> CPSLTag {
+        let clean = try Self.normalizedTagName(name)
+        let state = try loadState()
+        guard !Self.tagNameExists(clean, in: state, excludingID: nil) else {
+            throw CPSLConversationStoreError.duplicateTagName
+        }
+        let tag = CPSLTag(id: UUID().uuidString, name: clean, color: color, createdAt: Date())
+        try appendConversationEvent(CPSLConversationLogEvent(kind: .tagCreated, tag: tag))
+        return tag
+    }
+
+    func renameTag(id: String, name: String) throws {
+        let clean = try Self.normalizedTagName(name)
+        let state = try loadState()
+        guard !Self.tagNameExists(clean, in: state, excludingID: id) else {
+            throw CPSLConversationStoreError.duplicateTagName
+        }
+        try appendConversationEvent(
+            CPSLConversationLogEvent(kind: .tagRenamed, title: clean, tagID: id)
+        )
+    }
+
+    func deleteTag(id: String) throws {
+        try appendConversationEvent(CPSLConversationLogEvent(kind: .tagDeleted, tagID: id))
+    }
+
+    func tagIDs(forConversation id: String) throws -> Set<String> {
+        try loadState().conversationTags[id] ?? []
+    }
+
+    func setTags(conversationID: String, tagIDs: Set<String>) throws {
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                kind: .conversationTagsSet,
+                conversationID: conversationID,
+                tagIDs: tagIDs.sorted()
+            )
         )
     }
 
@@ -344,295 +324,226 @@ actor CPSLConversationStore {
         try loadNodes(conversationID: conversationID).compactMap(\.providerMessage)
     }
 
-    private nonisolated static func migrate(database: OpaquePointer?) throws {
-        try execute("PRAGMA journal_mode=DELETE", database: database)
-        try execute("PRAGMA synchronous=FULL", database: database)
-        try execute("PRAGMA foreign_keys=ON", database: database)
-        try execute(
-            """
-            CREATE TABLE IF NOT EXISTS conversations (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                root_node_id TEXT,
-                current_node_id TEXT,
-                model TEXT,
-                system_prompt TEXT,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL
-            )
-            """,
-            database: database
-        )
-        try addColumnIfMissing(.init(table: "conversations", column: "root_node_id", definition: "TEXT"), database: database)
-        try addColumnIfMissing(.init(table: "conversations", column: "current_node_id", definition: "TEXT"), database: database)
-        try addColumnIfMissing(.init(table: "conversations", column: "model", definition: "TEXT"), database: database)
-        try addColumnIfMissing(.init(table: "conversations", column: "system_prompt", definition: "TEXT"), database: database)
-        try execute(
-            """
-            CREATE TABLE IF NOT EXISTS nodes (
-                id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                parent_id TEXT,
-                role TEXT NOT NULL,
-                title TEXT,
-                body TEXT NOT NULL,
-                model TEXT,
-                provider_message_json TEXT,
-                sequence INTEGER NOT NULL,
-                created_at REAL NOT NULL,
-                FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-                FOREIGN KEY(parent_id) REFERENCES nodes(id) ON DELETE SET NULL
-            )
-            """,
-            database: database
-        )
-        try addColumnIfMissing(.init(table: "nodes", column: "title", definition: "TEXT"), database: database)
-        try addColumnIfMissing(.init(table: "nodes", column: "model", definition: "TEXT"), database: database)
-        try addColumnIfMissing(.init(table: "nodes", column: "provider_message_json", definition: "TEXT"), database: database)
-        try backfillLegacyConversationPointers(database: database)
-        try execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_conversation_sequence_unique ON nodes(conversation_id, sequence)", database: database)
-        try execute("CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)", database: database)
-        try execute("CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at)", database: database)
-    }
-
-    private nonisolated static func backfillLegacyConversationPointers(database: OpaquePointer?) throws {
-        try execute(
-            """
-            UPDATE conversations
-            SET root_node_id = (
-                SELECT id
-                FROM nodes
-                WHERE nodes.conversation_id = conversations.id
-                ORDER BY sequence ASC, created_at ASC
-                LIMIT 1
-            )
-            WHERE NULLIF(root_node_id, '') IS NULL
-            """,
-            database: database
-        )
-        try execute(
-            """
-            UPDATE conversations
-            SET current_node_id = (
-                SELECT id
-                FROM nodes
-                WHERE nodes.conversation_id = conversations.id
-                ORDER BY sequence DESC, created_at DESC
-                LIMIT 1
-            )
-            WHERE NULLIF(current_node_id, '') IS NULL
-            """,
-            database: database
-        )
-        try execute("UPDATE conversations SET system_prompt = '' WHERE system_prompt IS NULL", database: database)
-    }
-
-    private nonisolated static func addColumnIfMissing(
-        _ column: CPSLSQLiteColumnMigration,
-        database: OpaquePointer?
-    ) throws {
-        guard !column.table.contains("\""),
-                !column.name.contains("\""),
-                !column.definition.contains(";")
-        else {
-            throw CPSLConversationStoreError.sqlite("Invalid migration identifier.")
-        }
-
-        let columns = try query(.init("PRAGMA table_info(\"\(column.table)\")"), database: database) { statement in
-            columnString(statement, 1) ?? ""
-        }
-        guard !columns.contains(column.name) else {
-            return
-        }
-
-        try execute(
-            "ALTER TABLE \"\(column.table)\" ADD COLUMN \"\(column.name)\" \(column.definition)",
-            database: database
-        )
-    }
-
-    private func nextSequence(conversationID: String) throws -> Int {
-        let values = try query(
-            "SELECT COALESCE(MAX(sequence), -1) + 1 FROM nodes WHERE conversation_id = ?",
-            bindings: [.text(conversationID)]
-        ) { statement in
-            Int(sqlite3_column_int(statement, 0))
-        }
-        return values.first ?? 0
-    }
-
-    private func assertParentBelongsToConversation(parentID: String, conversationID: String) throws {
-        let values = try query(
-            "SELECT 1 FROM nodes WHERE id = ? AND conversation_id = ? LIMIT 1",
-            bindings: [.text(parentID), .text(conversationID)]
-        ) { _ in
-            true
-        }
-        if values.first != true {
-            throw CPSLConversationStoreError.parentConversationMismatch
-        }
-    }
-
-    private func conversationID(forNode id: String) throws -> String? {
-        try query(
-            "SELECT conversation_id FROM nodes WHERE id = ? LIMIT 1",
-            bindings: [.text(id)]
-        ) { statement in
-            columnString(statement, 0)
-        }
-        .first ?? nil
-    }
-
-    private func updateConversationCurrentNode(
+    func recordProviderRequest(
         conversationID: String,
-        currentNodeID: String,
-        updatedAt: Date
+        model: String,
+        messages: [CPSLOpenAIMessage],
+        tools: [CPSLOpenAITool],
+        maxTokens: Int?,
+        scope: String
     ) throws {
-        try execute(
-            "UPDATE conversations SET current_node_id = ?, updated_at = ? WHERE id = ?",
-            bindings: [.text(currentNodeID), .date(updatedAt), .text(conversationID)]
+        try appendTraceEvent(
+            CPSLTraceEvent(
+                conversationID: conversationID,
+                kind: .providerRequest,
+                scope: scope,
+                providerRequest: CPSLProviderRequestTrace(
+                    model: model,
+                    messages: messages,
+                    tools: tools,
+                    maxTokens: maxTokens
+                )
+            )
         )
     }
 
-    private func encodeProviderMessage(_ message: CPSLOpenAIMessage) throws -> String {
-        let data = try JSONEncoder().encode(message)
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private func decodeProviderMessage(_ json: String?) -> CPSLOpenAIMessage? {
-        guard let json, let data = json.data(using: .utf8) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(CPSLOpenAIMessage.self, from: data)
-    }
-
-    private func execute(_ sql: String, bindings: [CPSLSQLiteBinding] = []) throws {
-        try Self.execute(sql, bindings: bindings, database: database)
-    }
-
-    private func withTransaction(_ work: () throws -> Void) throws {
-        try execute("BEGIN IMMEDIATE TRANSACTION")
-        do {
-            try work()
-            try execute("COMMIT")
-        } catch {
-            try? execute("ROLLBACK")
-            throw error
-        }
-    }
-
-    private func query<T>(
-        _ sql: String,
-        bindings: [CPSLSQLiteBinding] = [],
-        row: (OpaquePointer?) throws -> T
-    ) throws -> [T] {
-        try Self.query(.init(sql, bindings: bindings), database: database, row: row)
-    }
-
-    private nonisolated static func execute(
-        _ sql: String,
-        bindings: [CPSLSQLiteBinding] = [],
-        database: OpaquePointer?
+    func recordProviderResponse(
+        conversationID: String,
+        completion: CPSLOpenAICompletion,
+        scope: String
     ) throws {
-        let statement = try prepare(sql, bindings: bindings, database: database)
-        defer {
-            sqlite3_finalize(statement)
+        try appendTraceEvent(
+            CPSLTraceEvent(
+                conversationID: conversationID,
+                kind: .providerResponse,
+                scope: scope,
+                providerResponse: CPSLProviderResponseTrace(completion: completion)
+            )
+        )
+    }
+
+    func recordToolInvocation(
+        conversationID: String,
+        nodeID: String?,
+        invocation: CPSLToolTraceInvocation
+    ) throws {
+        try appendTraceEvent(
+            CPSLTraceEvent(
+                conversationID: conversationID,
+                kind: .toolInvocation,
+                nodeID: nodeID,
+                toolInvocation: invocation
+            )
+        )
+    }
+
+    func toolStatusInvocations(
+        conversationID: String,
+        nodeIDs: Set<String>,
+        limitPerNode: Int = 4
+    ) throws -> [String: [CPSLToolStatusInvocation]] {
+        guard !nodeIDs.isEmpty, limitPerNode > 0 else {
+            return [:]
         }
-        while true {
-            let result = sqlite3_step(statement)
-            if result == SQLITE_DONE {
+
+        var result: [String: [CPSLToolStatusInvocation]] = [:]
+        try Self.forEachJSONLine(CPSLToolInvocationTraceEnvelope.self, from: traceLogURL) { event in
+            guard event.conversationID == conversationID,
+                  event.kind == .toolInvocation,
+                  let nodeID = event.nodeID,
+                  nodeIDs.contains(nodeID),
+                  let invocation = event.toolInvocation
+            else {
                 return
             }
-            if result != SQLITE_ROW {
-                throw lastError(database: database)
-            }
+
+            var invocations = result[nodeID, default: []]
+            invocations.append(CPSLToolStatusInvocation(traceInvocation: invocation))
+            result[nodeID] = Array(invocations.suffix(limitPerNode))
         }
+        return result
     }
 
-    private nonisolated static func query<T>(
-        _ request: CPSLSQLiteStatementRequest,
-        database: OpaquePointer?,
-        row: (OpaquePointer?) throws -> T
-    ) throws -> [T] {
-        let statement = try prepare(request.sql, bindings: request.bindings, database: database)
-        defer {
-            sqlite3_finalize(statement)
-        }
-
-        var values: [T] = []
-        while true {
-            let result = sqlite3_step(statement)
-            if result == SQLITE_ROW {
-                values.append(try row(statement))
-            } else if result == SQLITE_DONE {
-                return values
-            } else {
-                throw lastError(database: database)
-            }
-        }
-    }
-
-    private nonisolated static func prepare(
-        _ sql: String,
-        bindings: [CPSLSQLiteBinding],
-        database: OpaquePointer?
-    ) throws -> OpaquePointer? {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw lastError(database: database)
-        }
-        for (index, binding) in bindings.enumerated() {
-            try bind(
-                CPSLSQLiteBindOperation(
-                    binding: binding,
-                    statement: statement,
-                    index: Int32(index + 1)
-                ),
-                database: database
-            )
-        }
-        return statement
-    }
-
-    private nonisolated static func bind(
-        _ operation: CPSLSQLiteBindOperation,
-        database: OpaquePointer?
+    func recordWebVisit(
+        conversationID: String,
+        nodeID: String,
+        visit: CPSLWebSearchVisit
     ) throws {
-        let result: Int32
-        switch operation.binding {
-        case .null:
-            result = sqlite3_bind_null(operation.statement, operation.index)
-        case .text(let value):
-            result = sqlite3_bind_text(operation.statement, operation.index, value, -1, sqliteTransient)
-        case .int(let value):
-            result = sqlite3_bind_int(operation.statement, operation.index, Int32(value))
-        case .date(let value):
-            result = sqlite3_bind_double(operation.statement, operation.index, value.timeIntervalSince1970)
-        }
-        guard result == SQLITE_OK else {
-            throw lastError(database: database)
-        }
-    }
-
-    private func storedNode(from statement: OpaquePointer?) -> CPSLStoredNode {
-        let providerJSON = columnString(statement, 7)
-        return CPSLStoredNode(
-            id: columnString(statement, 0) ?? "",
-            conversationID: columnString(statement, 1) ?? "",
-            parentID: columnString(statement, 2),
-            role: CPSLChatRole(rawValue: columnString(statement, 3) ?? "") ?? .assistant,
-            title: columnString(statement, 4),
-            body: columnString(statement, 5) ?? "",
-            model: columnString(statement, 6),
-            providerMessage: decodeProviderMessage(providerJSON),
-            sequence: Int(sqlite3_column_int(statement, 8)),
-            createdAt: columnDate(statement, 9)
+        try appendTraceEvent(
+            CPSLTraceEvent(
+                conversationID: conversationID,
+                kind: .webVisit,
+                nodeID: nodeID,
+                webVisit: visit
+            )
         )
     }
 
-    private nonisolated static func lastError(database: OpaquePointer?) -> CPSLConversationStoreError {
-        let message = database.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown SQLite error"
-        return .sqlite(message)
+    func recordError(conversationID: String, message: String, scope: String) throws {
+        try appendTraceEvent(
+            CPSLTraceEvent(
+                conversationID: conversationID,
+                kind: .error,
+                scope: scope,
+                message: message
+            )
+        )
+    }
+
+    private func loadState() throws -> CPSLConversationLogState {
+        Self.replay(try loadConversationEvents())
+    }
+
+    private func loadConversationEvents() throws -> [CPSLConversationLogEvent] {
+        try Self.readJSONLines(CPSLConversationLogEvent.self, from: conversationLogURL)
+    }
+
+    private func appendConversationEvent(_ event: CPSLConversationLogEvent) throws {
+        try Self.appendJSONLine(event, to: conversationLogURL)
+    }
+
+    private func appendTraceEvent(_ event: CPSLTraceEvent) throws {
+        try Self.appendJSONLine(event, to: traceLogURL)
+    }
+
+    private static func replay(_ events: [CPSLConversationLogEvent]) -> CPSLConversationLogState {
+        var state = CPSLConversationLogState()
+        for event in events {
+            switch event.kind {
+            case .conversationCreated:
+                guard let conversation = event.conversation,
+                      let conversationID = event.conversationID
+                else { continue }
+                state.conversations[conversationID] = conversation
+            case .nodesAppended:
+                guard let conversationID = event.conversationID,
+                      var conversation = state.conversations[conversationID],
+                      let nodes = event.nodes,
+                      let lastNode = nodes.last
+                else { continue }
+                conversation.nodes.append(contentsOf: nodes)
+                conversation.currentNodeID = lastNode.id
+                conversation.updatedAt = event.timestamp
+                state.conversations[conversationID] = conversation
+            case .nodeBodyUpdated:
+                guard let conversationID = event.conversationID,
+                      let nodeID = event.nodeID,
+                      let body = event.body,
+                      var conversation = state.conversations[conversationID],
+                      let index = conversation.nodes.firstIndex(where: { $0.id == nodeID })
+                else { continue }
+                conversation.nodes[index].body = body
+                conversation.updatedAt = event.timestamp
+                state.conversations[conversationID] = conversation
+            case .conversationModelSet:
+                guard let conversationID = event.conversationID,
+                      let model = event.model,
+                      var conversation = state.conversations[conversationID],
+                      conversation.model == nil
+                else { continue }
+                conversation.model = model
+                state.conversations[conversationID] = conversation
+            case .conversationDeleted:
+                guard let conversationID = event.conversationID else { continue }
+                state.conversations.removeValue(forKey: conversationID)
+                state.conversationTags.removeValue(forKey: conversationID)
+            case .conversationPinned:
+                guard let conversationID = event.conversationID,
+                      let flag = event.flag,
+                      var conversation = state.conversations[conversationID]
+                else { continue }
+                conversation.pinned = flag
+                state.conversations[conversationID] = conversation
+            case .conversationArchived:
+                guard let conversationID = event.conversationID,
+                      let flag = event.flag,
+                      var conversation = state.conversations[conversationID]
+                else { continue }
+                conversation.archived = flag
+                state.conversations[conversationID] = conversation
+            case .conversationRenamed:
+                guard let conversationID = event.conversationID,
+                      let title = event.title,
+                      var conversation = state.conversations[conversationID]
+                else { continue }
+                conversation.title = title
+                state.conversations[conversationID] = conversation
+            case .tagCreated:
+                guard let tag = event.tag else { continue }
+                state.tags[tag.id] = tag
+            case .tagRenamed:
+                guard let tagID = event.tagID,
+                      let name = event.title,
+                      var tag = state.tags[tagID]
+                else { continue }
+                tag.name = name
+                state.tags[tagID] = tag
+            case .tagDeleted:
+                guard let tagID = event.tagID else { continue }
+                state.tags.removeValue(forKey: tagID)
+                for conversationID in Array(state.conversationTags.keys) {
+                    state.conversationTags[conversationID]?.remove(tagID)
+                }
+            case .conversationTagsSet:
+                guard let conversationID = event.conversationID else { continue }
+                state.conversationTags[conversationID] = Set(event.tagIDs ?? [])
+            }
+        }
+        return state
+    }
+
+    private static func nodeOrder(_ lhs: CPSLStoredNode, _ rhs: CPSLStoredNode) -> Bool {
+        lhs.sequence == rhs.sequence ? lhs.createdAt < rhs.createdAt : lhs.sequence < rhs.sequence
+    }
+
+    private static func tagNameExists(
+        _ name: String,
+        in state: CPSLConversationLogState,
+        excludingID: String?
+    ) -> Bool {
+        state.tags.values.contains {
+            $0.id != excludingID && $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }
     }
 
     private static func generateTitle(from text: String) -> String {
@@ -640,29 +551,158 @@ actor CPSLConversationStore {
             .split(whereSeparator: \.isNewline)
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard singleLine.count > 44 else {
-            return singleLine.isEmpty ? "Untitled" : singleLine
+        return singleLine.isEmpty ? "Untitled" : singleLine
+    }
+
+    private static func prepareLog(at url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        guard !FileManager.default.fileExists(atPath: url.path) else {
+            return
         }
-        return "\(singleLine.prefix(41))..."
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+            throw CPSLConversationStoreError.couldNotCreateLog(url.lastPathComponent)
+        }
+    }
+
+    private static func appendJSONLine<Value: Encodable>(_ value: Value, to url: URL) throws {
+        var data = try jsonEncoder().encode(value)
+        data.append(0x0A)
+        let handle = try FileHandle(forUpdating: url)
+        defer { try? handle.close() }
+        try repairPartialTail(in: handle, at: url)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+        try handle.synchronize()
+    }
+
+    private static func repairPartialTail(in handle: FileHandle, at url: URL) throws {
+        let endOffset = try handle.seekToEnd()
+        guard endOffset > 0 else {
+            return
+        }
+        try handle.seek(toOffset: endOffset - 1)
+        guard try handle.read(upToCount: 1) != Data([0x0A]) else {
+            return
+        }
+        let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        let validEnd = data.lastIndex(of: 0x0A).map { $0 + 1 } ?? 0
+        try handle.truncate(atOffset: UInt64(validEnd))
+    }
+
+    private static func readJSONLines<Value: Decodable>(_ type: Value.Type, from url: URL) throws -> [Value] {
+        var values: [Value] = []
+        try forEachJSONLine(type, from: url) { value in
+            values.append(value)
+        }
+        return values
+    }
+
+    private static func forEachJSONLine<Value: Decodable>(
+        _ type: Value.Type,
+        from url: URL,
+        consume: (Value) -> Void
+    ) throws {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        let decoder = jsonDecoder()
+        var buffer = Data()
+        var lineNumber = 0
+
+        while let chunk = try handle.read(upToCount: 64 * 1_024), !chunk.isEmpty {
+            buffer.append(chunk)
+            var lineStart = buffer.startIndex
+
+            while let newline = buffer[lineStart...].firstIndex(of: 0x0A) {
+                lineNumber += 1
+                if lineStart < newline {
+                    do {
+                        consume(try decoder.decode(type, from: Data(buffer[lineStart..<newline])))
+                    } catch {
+                        throw CPSLConversationStoreError.corruptLogLine(
+                            lineNumber,
+                            url.lastPathComponent
+                        )
+                    }
+                }
+                lineStart = buffer.index(after: newline)
+            }
+
+            if lineStart > buffer.startIndex {
+                buffer.removeSubrange(buffer.startIndex..<lineStart)
+            }
+        }
+
+        guard !buffer.isEmpty else {
+            return
+        }
+
+        // A valid final line without a newline is accepted. An undecodable tail is an interrupted append.
+        if let value = try? decoder.decode(type, from: buffer) {
+            consume(value)
+        }
+    }
+
+    private static func jsonEncoder(prettyPrinted: Bool = false) -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(Self.iso8601FractionalSecondsFormat.format(date))
+        }
+        encoder.outputFormatting = prettyPrinted ? [.prettyPrinted, .sortedKeys] : [.sortedKeys]
+        return encoder
+    }
+
+    private static func jsonDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let value = try decoder.singleValueContainer().decode(String.self)
+            guard let date = (try? Self.iso8601FractionalSecondsFormat.parse(value))
+                ?? (try? Self.iso8601SecondPrecisionFormat.parse(value))
+            else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "Invalid ISO-8601 date.")
+                )
+            }
+            return date
+        }
+        return decoder
     }
 }
 
-nonisolated struct CPSLLoadedConversation: Equatable, Sendable, Encodable {
+nonisolated struct CPSLLoadedConversation: Equatable, Sendable, Codable {
     let summary: CPSLConversationSummary
     let systemPrompt: String
     let nodes: [CPSLStoredNode]
 }
 
-nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable, Encodable {
+nonisolated struct CPSLConversationSummary: Identifiable, Equatable, Sendable, Codable {
     let id: String
     let title: String
     let currentNodeID: String?
     let model: String?
     let createdAt: Date
     let updatedAt: Date
+    let pinned: Bool
+    let archived: Bool
 }
 
-nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Encodable {
+nonisolated struct CPSLTag: Identifiable, Equatable, Sendable, Codable {
+    let id: String
+    var name: String
+    var color: String
+    let createdAt: Date
+}
+
+nonisolated enum CPSLArchiveScope: Sendable, Equatable {
+    case active
+    case archived
+}
+
+nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Codable {
     let id: String
     let conversationID: String
     let parentID: String?
@@ -705,81 +745,259 @@ nonisolated struct CPSLNodeAppendDraft: Equatable, Sendable {
     let providerMessage: CPSLOpenAIMessage?
 }
 
-private nonisolated struct CPSLSQLiteColumnMigration {
-    let table: String
-    let name: String
-    let definition: String
-
-    init(table: String, column: String, definition: String) {
-        self.table = table
-        name = column
-        self.definition = definition
-    }
-}
-
-private nonisolated struct CPSLSQLiteStatementRequest {
-    let sql: String
-    let bindings: [CPSLSQLiteBinding]
-
-    init(_ sql: String, bindings: [CPSLSQLiteBinding] = []) {
-        self.sql = sql
-        self.bindings = bindings
-    }
-}
-
-private nonisolated struct CPSLSQLiteBindOperation {
-    let binding: CPSLSQLiteBinding
-    let statement: OpaquePointer?
-    let index: Int32
-}
-
 nonisolated enum CPSLConversationStoreError: LocalizedError {
     case conversationNotFound
-    case openFailed(String)
+    case conversationAlreadyExists
     case parentRequired
     case parentConversationMismatch
-    case sqlite(String)
+    case invalidTagName
+    case duplicateTagName
+    case invalidTitle
+    case couldNotCreateLog(String)
+    case corruptLogLine(Int, String)
 
     var errorDescription: String? {
         switch self {
         case .conversationNotFound:
             return "Conversation was not found."
-        case .openFailed(let message):
-            return "Could not open conversations database: \(message)"
+        case .conversationAlreadyExists:
+            return "Conversation already exists."
         case .parentRequired:
             return "Conversation nodes must have a parent node."
         case .parentConversationMismatch:
             return "Parent node does not belong to the conversation."
-        case .sqlite(let message):
-            return "SQLite error: \(message)"
+        case .invalidTagName:
+            return "Tag name is empty or too long."
+        case .duplicateTagName:
+            return "A tag with this name already exists."
+        case .invalidTitle:
+            return "Conversation title is empty."
+        case .couldNotCreateLog(let name):
+            return "Could not create JSONL log \(name)."
+        case .corruptLogLine(let line, let name):
+            return "Could not decode line \(line) of JSONL log \(name)."
         }
     }
 }
 
-private nonisolated enum CPSLSQLiteBinding {
-    case null
-    case text(String)
-    case int(Int)
-    case date(Date)
+private nonisolated struct CPSLConversationLogState {
+    var conversations: [String: CPSLConversationLogRecord] = [:]
+    var tags: [String: CPSLTag] = [:]
+    var conversationTags: [String: Set<String>] = [:]
+}
 
-    static func nullableText(_ value: String?) -> CPSLSQLiteBinding {
-        value.map(CPSLSQLiteBinding.text) ?? .null
+private nonisolated struct CPSLConversationLogRecord: Codable {
+    let id: String
+    var title: String
+    var currentNodeID: String?
+    var model: String?
+    let systemPrompt: String
+    let createdAt: Date
+    var updatedAt: Date
+    var pinned: Bool
+    var archived: Bool
+    var nodes: [CPSLStoredNode]
+
+    var summary: CPSLConversationSummary {
+        CPSLConversationSummary(
+            id: id,
+            title: title,
+            currentNodeID: currentNodeID,
+            model: model,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            pinned: pinned,
+            archived: archived
+        )
+    }
+
+    var loadedConversation: CPSLLoadedConversation {
+        CPSLLoadedConversation(summary: summary, systemPrompt: systemPrompt, nodes: nodes)
     }
 }
 
-private nonisolated struct CPSLConversationDatabaseLocation {
-    let url: URL
+private nonisolated enum CPSLConversationLogEventKind: String, Codable {
+    case conversationCreated = "conversation.created"
+    case nodesAppended = "nodes.appended"
+    case nodeBodyUpdated = "node.body_updated"
+    case conversationModelSet = "conversation.model_set"
+    case conversationDeleted = "conversation.deleted"
+    case conversationPinned = "conversation.pinned"
+    case conversationArchived = "conversation.archived"
+    case conversationRenamed = "conversation.renamed"
+    case tagCreated = "tag.created"
+    case tagRenamed = "tag.renamed"
+    case tagDeleted = "tag.deleted"
+    case conversationTagsSet = "conversation.tags_set"
+}
+
+private nonisolated struct CPSLConversationLogEvent: Codable {
+    let schemaVersion: Int
+    let id: String
+    let timestamp: Date
+    let kind: CPSLConversationLogEventKind
+    let conversationID: String?
+    let conversation: CPSLConversationLogRecord?
+    let nodes: [CPSLStoredNode]?
+    let nodeID: String?
+    let body: String?
+    let model: String?
+    let flag: Bool?
+    let title: String?
+    let tag: CPSLTag?
+    let tagID: String?
+    let tagIDs: [String]?
+
+    init(
+        timestamp: Date = Date(),
+        kind: CPSLConversationLogEventKind,
+        conversationID: String? = nil,
+        conversation: CPSLConversationLogRecord? = nil,
+        nodes: [CPSLStoredNode]? = nil,
+        nodeID: String? = nil,
+        body: String? = nil,
+        model: String? = nil,
+        flag: Bool? = nil,
+        title: String? = nil,
+        tag: CPSLTag? = nil,
+        tagID: String? = nil,
+        tagIDs: [String]? = nil
+    ) {
+        schemaVersion = 1
+        id = UUID().uuidString
+        self.timestamp = timestamp
+        self.kind = kind
+        self.conversationID = conversationID
+        self.conversation = conversation
+        self.nodes = nodes
+        self.nodeID = nodeID
+        self.body = body
+        self.model = model
+        self.flag = flag
+        self.title = title
+        self.tag = tag
+        self.tagID = tagID
+        self.tagIDs = tagIDs
+    }
+}
+
+private nonisolated enum CPSLTraceEventKind: String, Codable {
+    case providerRequest = "provider.request"
+    case providerResponse = "provider.response"
+    case toolInvocation = "tool.invocation"
+    case webVisit = "web.visit"
+    case error
+}
+
+private nonisolated struct CPSLProviderRequestTrace: Codable {
+    let model: String
+    let messages: [CPSLOpenAIMessage]
+    let tools: [CPSLOpenAITool]
+    let maxTokens: Int?
+}
+
+private nonisolated struct CPSLProviderResponseTrace: Codable {
+    let text: String
+    let toolCalls: [CPSLOpenAIToolCall]
+    let finishReason: String?
+    let model: String
+
+    init(completion: CPSLOpenAICompletion) {
+        text = completion.text
+        toolCalls = completion.toolCalls
+        finishReason = completion.finishReason
+        model = completion.model
+    }
+}
+
+private nonisolated struct CPSLToolInvocationTraceEnvelope: Decodable {
+    let conversationID: String
+    let kind: CPSLTraceEventKind
+    let nodeID: String?
+    let toolInvocation: CPSLToolTraceInvocation?
+}
+
+private nonisolated struct CPSLTraceEvent: Codable {
+    let schemaVersion: Int
+    let id: String
+    let timestamp: Date
+    let conversationID: String
+    let kind: CPSLTraceEventKind
+    let scope: String?
+    let nodeID: String?
+    let providerRequest: CPSLProviderRequestTrace?
+    let providerResponse: CPSLProviderResponseTrace?
+    let toolInvocation: CPSLToolTraceInvocation?
+    let webVisit: CPSLWebSearchVisit?
+    let message: String?
+
+    init(
+        conversationID: String,
+        kind: CPSLTraceEventKind,
+        scope: String? = nil,
+        nodeID: String? = nil,
+        providerRequest: CPSLProviderRequestTrace? = nil,
+        providerResponse: CPSLProviderResponseTrace? = nil,
+        toolInvocation: CPSLToolTraceInvocation? = nil,
+        webVisit: CPSLWebSearchVisit? = nil,
+        message: String? = nil
+    ) {
+        schemaVersion = 1
+        id = UUID().uuidString
+        timestamp = Date()
+        self.conversationID = conversationID
+        self.kind = kind
+        self.scope = scope
+        self.nodeID = nodeID
+        self.providerRequest = providerRequest
+        self.providerResponse = providerResponse
+        self.toolInvocation = toolInvocation
+        self.webVisit = webVisit
+        self.message = message
+    }
+}
+
+#if DEBUG
+private nonisolated struct CPSLConversationDebugExport: Encodable {
+    let format = "herm.debug-export"
+    let schemaVersion = 1
+    let generatedAt: Date
+    let documentation = CPSLConversationDebugExportDocumentation()
+    let conversation: CPSLLoadedConversation
+    let tags: [CPSLTag]
+    let conversationEvents: [CPSLConversationLogEvent]
+    let traceEvents: [CPSLTraceEvent]
+}
+
+private nonisolated struct CPSLConversationDebugExportDocumentation: Encodable {
+    let overview = "Reconstructed conversation plus the append-only JSONL events used to build and debug it."
+    let ordering = "conversationEvents and traceEvents are chronological. timestamp is ISO-8601 UTC; schemaVersion versions each entry."
+    let conversationEvents = "Durable state mutations from conversations.jsonl. Replay kind in order to reconstruct state."
+    let traceEvents = "Detailed provider, tool, web, and error records from traces.jsonl. These are not required to render the conversation."
+    let jqExamples = [
+        ".conversation.summary",
+        ".conversation.nodes[] | {sequence, role, title, body}",
+        ".traceEvents[] | select(.kind == \"tool.invocation\") | .toolInvocation",
+        ".traceEvents[] | select(.kind == \"provider.response\") | .providerResponse",
+    ]
+}
+#endif
+
+private nonisolated struct CPSLConversationLogLocation {
+    let conversationLogURL: URL
+    let traceLogURL: URL
     let usesICloudContainer: Bool
 
-    static func resolve() throws -> CPSLConversationDatabaseLocation {
+    static func resolve() throws -> CPSLConversationLogLocation {
         let fileManager = FileManager.default
         if let ubiquityURL = fileManager.url(forUbiquityContainerIdentifier: nil) {
             let directory = ubiquityURL
                 .appendingPathComponent("Documents", isDirectory: true)
                 .appendingPathComponent("Herm", isDirectory: true)
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            return CPSLConversationDatabaseLocation(
-                url: directory.appendingPathComponent("conversations.sqlite"),
+            return CPSLConversationLogLocation(
+                conversationLogURL: directory.appendingPathComponent("conversations.jsonl"),
+                traceLogURL: directory.appendingPathComponent("traces.jsonl"),
                 usesICloudContainer: true
             )
         }
@@ -795,22 +1013,10 @@ private nonisolated struct CPSLConversationDatabaseLocation {
             .appendingPathComponent(bundleID, isDirectory: true)
             .appendingPathComponent("Conversations", isDirectory: true)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        return CPSLConversationDatabaseLocation(
-            url: directory.appendingPathComponent("conversations.sqlite"),
+        return CPSLConversationLogLocation(
+            conversationLogURL: directory.appendingPathComponent("conversations.jsonl"),
+            traceLogURL: directory.appendingPathComponent("traces.jsonl"),
             usesICloudContainer: false
         )
     }
-}
-
-private nonisolated func columnString(_ statement: OpaquePointer?, _ index: Int32) -> String? {
-    guard sqlite3_column_type(statement, index) != SQLITE_NULL,
-            let text = sqlite3_column_text(statement, index)
-    else {
-        return nil
-    }
-    return String(cString: text)
-}
-
-private nonisolated func columnDate(_ statement: OpaquePointer?, _ index: Int32) -> Date {
-    Date(timeIntervalSince1970: sqlite3_column_double(statement, index))
 }

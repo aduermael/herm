@@ -1,0 +1,120 @@
+[package]
+name = "cpsl-bazel-deps"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+# Registry-only mirror of the direct dependencies used by the CPSL crates that
+# Herm builds with rules_rust. CPSL's path dependencies are first-party Bazel
+# targets in //:BUILD.bazel; keeping them out of this manifest prevents Crate
+# Universe from writing generated BUILD files into the CPSL submodule.
+[dependencies]
+ab_glyph = "0.2"
+aes-gcm = "0.10"
+block2 = "0.6"
+bzip2 = "0.5"
+calamine = "0.35"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+csv = "1"
+email_address = "0.2"
+faer = "0.21"
+fff-grep = "0.9.6"
+flate2 = "1"
+globset = "0.4"
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
+hex = "0.4"
+hmac = "0.12"
+ignore = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+imageproc = { version = "0.25", default-features = false }
+iso_currency = { version = "0.5", features = ["iterator"] }
+isocountry = "0.3"
+jsonwebtoken = { version = "10.3", default-features = false, features = ["aws_lc_rs"] }
+md-5 = "0.10"
+memchr = "2"
+mlua = { version = "0.12", features = ["luau", "serialize", "send"] }
+ndarray = "0.16"
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3", features = ["CFCGTypes"] }
+objc2-core-graphics = { version = "0.3", default-features = false, features = ["CGColor"] }
+objc2-event-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "EKCalendar",
+    "EKCalendarItem",
+    "EKEvent",
+    "EKEventStore",
+    "EKObject",
+    "EKSource",
+    "EKTypes",
+    "objc2-core-graphics",
+] }
+objc2-foundation = { version = "0.3", features = [
+    "alloc",
+    "NSArray",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSError",
+    "NSObject",
+    "NSPredicate",
+    "NSProcessInfo",
+    "NSRunLoop",
+    "NSString",
+    "NSURL",
+    "NSURLRequest",
+    "NSURLResponse",
+    "NSURLSession",
+] }
+objc2-web-kit = { version = "0.3", features = [
+    "WKPDFConfiguration",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "block2",
+] }
+pdfium-render = { version = "0.8", features = ["sync"] }
+percent-encoding = "2"
+phonenumber = "0.3.10"
+plotly = "0.14"
+png = "0.18"
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+quick-xml = "0.41"
+rand = "0.9"
+rand_distr = "0.5"
+rapidfuzz = "0.5"
+regex = "1"
+reqwest = { version = "0.12", features = ["blocking", "native-tls"] }
+rtf-parser = "0.4"
+rustpython-parser = "0.4.0"
+scraper = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sevenz-rust = "0.6"
+sha2 = "0.10"
+strum = "0.27"
+tar = "0.4"
+thiserror = "2"
+url = "2"
+uuid = { version = "1", features = ["v4", "v7"] }
+void = "1"
+xz2 = "0.1"
+yaml-rust2 = "0.11"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit6 = "0.6"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

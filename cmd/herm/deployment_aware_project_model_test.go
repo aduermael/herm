@@ -18,6 +18,7 @@ func TestProjectModelProjectConfigSaveLoadNormalizesBareAnthropicIDs(t *testing.
 	project := ProjectConfig{
 		ActiveModel:      "claude-opus-4-6",
 		ExplorationModel: "claude-haiku-4-5",
+		VisionModel:      "grok-4.5",
 		Personality:      "project",
 	}
 
@@ -32,6 +33,9 @@ func TestProjectModelProjectConfigSaveLoadNormalizesBareAnthropicIDs(t *testing.
 	if loaded.ExplorationModel != "anthropic/claude-haiku-4-5" {
 		t.Fatalf("ExplorationModel = %q, want anthropic/claude-haiku-4-5", loaded.ExplorationModel)
 	}
+	if loaded.VisionModel != "xai/grok-4.5" {
+		t.Fatalf("VisionModel = %q, want xai/grok-4.5", loaded.VisionModel)
+	}
 
 	data, err := os.ReadFile(filepath.Join(repoRoot, configDir, configFile))
 	if err != nil {
@@ -41,7 +45,7 @@ func TestProjectModelProjectConfigSaveLoadNormalizesBareAnthropicIDs(t *testing.
 	if err := json.Unmarshal(data, &saved); err != nil {
 		t.Fatalf("Unmarshal saved project config: %v", err)
 	}
-	if saved.ActiveModel != "anthropic/claude-opus-4-6" || saved.ExplorationModel != "anthropic/claude-haiku-4-5" {
+	if saved.ActiveModel != "anthropic/claude-opus-4-6" || saved.ExplorationModel != "anthropic/claude-haiku-4-5" || saved.VisionModel != "xai/grok-4.5" {
 		t.Fatalf("saved project config was not canonicalized: %+v", saved)
 	}
 	if containsJSONKey(data, "deployments") || containsJSONKey(data, "routing") {
@@ -458,12 +462,13 @@ func TestProjectModelProjectConfigUnknownValuesRemainRoundTrippable(t *testing.T
 	project := ProjectConfig{
 		ActiveModel:      "future-native-model",
 		ExplorationModel: "future-fast-model",
+		VisionModel:      "future-vision-model",
 	}
 	if err := saveProjectConfig(saveProjectConfigOptions{repoRoot: repoRoot, pc: project}); err != nil {
 		t.Fatalf("saveProjectConfig: %v", err)
 	}
 	loaded := loadProjectConfig(repoRoot)
-	if loaded.ActiveModel != project.ActiveModel || loaded.ExplorationModel != project.ExplorationModel {
+	if loaded.ActiveModel != project.ActiveModel || loaded.ExplorationModel != project.ExplorationModel || loaded.VisionModel != project.VisionModel {
 		t.Fatalf("loaded = %+v, want unknown values preserved %+v", loaded, project)
 	}
 
@@ -475,7 +480,7 @@ func TestProjectModelProjectConfigUnknownValuesRemainRoundTrippable(t *testing.T
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("Unmarshal saved project config: %v", err)
 	}
-	if raw["active_model"] != "future-native-model" || raw["exploration_model"] != "future-fast-model" {
+	if raw["active_model"] != "future-native-model" || raw["exploration_model"] != "future-fast-model" || raw["vision_model"] != "future-vision-model" {
 		t.Fatalf("saved JSON did not preserve unknown values: %s", data)
 	}
 }

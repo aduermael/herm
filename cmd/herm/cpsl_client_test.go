@@ -201,6 +201,30 @@ func TestCPSLWorkerClientEvalSuccess(t *testing.T) {
 	}
 }
 
+func TestCPSLWorkerClientConfigureVision(t *testing.T) {
+	var configured *cpslVisionRuntimeConfig
+	_, proc := newFakeCPSLProcess(t, func(request cpslWorkerRequest, encoder *json.Encoder) {
+		if request.Op == cpslWorkerOpVision {
+			configured = request.Vision
+		}
+		_ = encoder.Encode(cpslOKResponse(request.ID))
+	})
+	withFakeCPSLProcess(t, proc)
+
+	client, err := NewCPSLWorkerClient(newCPSLWorkerClientOptions{LibraryPath: "/tmp/libcpsl.so", Workspace: "/tmp/work"})
+	if err != nil {
+		t.Fatalf("NewCPSLWorkerClient: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.ConfigureVision(context.Background(), cpslVisionRuntimeConfig{Model: "xai/grok-4.5"}); err != nil {
+		t.Fatalf("ConfigureVision: %v", err)
+	}
+	if configured == nil || configured.Model != "xai/grok-4.5" {
+		t.Fatalf("configured = %#v", configured)
+	}
+}
+
 func TestCPSLWorkerClientTimeoutKillsWorker(t *testing.T) {
 	var count int
 	var fake *fakeCPSLProcess

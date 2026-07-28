@@ -10,8 +10,10 @@ import (
 const (
 	uiConfigLabelActiveModel             = "Model"
 	uiConfigLabelExplorationModel        = "Exploration"
+	uiConfigLabelVisionModel             = "Vision"
 	uiConfigLabelProjectActiveModel      = "Project Model"
 	uiConfigLabelProjectExplorationModel = "Project Exploration"
+	uiConfigLabelProjectVisionModel      = "Project Vision"
 )
 
 const uiConfigLabelAPIKeySubstring = "API Key"
@@ -91,6 +93,15 @@ func isExplorationModelConfigLabel(label string) bool {
 	}
 }
 
+func isVisionModelConfigLabel(label string) bool {
+	switch label {
+	case uiConfigLabelVisionModel, uiConfigLabelProjectVisionModel:
+		return true
+	default:
+		return false
+	}
+}
+
 type configChangeLabelForFieldOptions struct {
 	field      cfgField
 	projectTab bool
@@ -105,6 +116,8 @@ func configChangeLabelForField(opts configChangeLabelForFieldOptions) string {
 		return uiConfigLabelProjectActiveModel
 	case uiConfigLabelExplorationModel:
 		return uiConfigLabelProjectExplorationModel
+	case uiConfigLabelVisionModel:
+		return uiConfigLabelProjectVisionModel
 	default:
 		return opts.field.label
 	}

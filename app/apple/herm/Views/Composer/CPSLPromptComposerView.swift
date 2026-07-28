@@ -12,6 +12,20 @@ import AppKit
 #endif
 
 #if canImport(UIKit)
+private final class CPSLPasteAwareTextView: UITextView {
+    var pasteAttachments: (() -> Bool)?
+
+    override func paste(_ sender: Any?) {
+        if pasteAttachments?() == true {
+            return
+        }
+        guard !UIPasteboard.general.hasImages else {
+            return
+        }
+        super.paste(sender)
+    }
+}
+
 private struct CPSLPromptTextView: UIViewRepresentable {
     @Binding var text: String
     let isCommandInput: Bool
@@ -20,11 +34,13 @@ private struct CPSLPromptTextView: UIViewRepresentable {
     let maxHeight: CGFloat
     let focusPromptRequest: Int
     let dismissKeyboardRequest: Int
+    let onPasteAttachments: () -> Bool
     let onHeightChange: (CGFloat) -> Void
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> CPSLPasteAwareTextView {
+        let textView = CPSLPasteAwareTextView()
         textView.delegate = context.coordinator
+        textView.pasteAttachments = onPasteAttachments
         textView.backgroundColor = .clear
         textView.textColor = UIColor(CPSLTheme.text)
         textView.tintColor = UIColor(CPSLTheme.text)
@@ -39,15 +55,17 @@ private struct CPSLPromptTextView: UIViewRepresentable {
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
+    func updateUIView(_ textView: CPSLPasteAwareTextView, context: Context) {
         context.coordinator.parent = self
+        textView.pasteAttachments = onPasteAttachments
 
-        if textView.text != text {
+        let didChangeText = textView.text != text
+        if didChangeText {
             textView.text = text
         }
 
         let didChangeTraits = applyInputTraits(to: textView)
-        if !UIEdgeInsetsEqualToEdgeInsets(textView.textContainerInset, textContainerInset) {
+        if textView.textContainerInset != textContainerInset {
             textView.textContainerInset = textContainerInset
         }
         textView.isEditable = !isDisabled
@@ -72,7 +90,9 @@ private struct CPSLPromptTextView: UIViewRepresentable {
             textView.reloadInputViews()
         }
 
-        context.coordinator.reportHeight(for: textView)
+        if didChangeText {
+            context.coordinator.reportHeight(for: textView)
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -142,7 +162,7 @@ private struct CPSLPromptTextView: UIViewRepresentable {
 #endif
 
 struct CPSLPromptComposerView: View {
-    @ObservedObject var model: CPSLChatModel
+    @Bindable var model: CPSLChatModel
     let dismissKeyboardRequest: Int
     let isCompact: Bool
     let dismissKeyboard: () -> Void
@@ -157,6 +177,7 @@ struct CPSLPromptComposerView: View {
     @State private var isCameraPresented = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var pendingPhotoImportCount = 0
+    @State private var isDropTargeted = false
     @FocusState private var isPromptFocused: Bool
 
     private var dictation: CPSLDictationService {
@@ -223,12 +244,15 @@ struct CPSLPromptComposerView: View {
             if !model.composerAttachments.isEmpty {
                 CPSLComposerAttachmentStrip(
                     attachments: model.composerAttachments,
-                    onRemove: model.removeComposerAttachment
+                    onRemove: model.removeComposerAttachment,
+                    loadThumbnail: model.attachmentThumbnail(for:)
                 )
+                .frame(height: CPSLTheme.controlSize)
                 .padding(.bottom, CPSLTheme.small)
             }
-            if isAddingAttachment {
+            if isAddingAttachment && model.composerAttachments.isEmpty {
                 CPSLAttachmentImportStatus()
+                    .frame(height: CPSLTheme.controlSize)
                     .padding(.bottom, CPSLTheme.small)
             }
             if isCompact {
@@ -245,7 +269,7 @@ struct CPSLPromptComposerView: View {
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous))
         .contextMenu {
             Button {
-                pastePromptText()
+                pastePromptContent()
             } label: {
                 Label("Paste", systemImage: "doc.on.clipboard")
             }
@@ -263,6 +287,11 @@ struct CPSLPromptComposerView: View {
             tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.54),
             strokeOpacity: 0.055
         )
+        .cpslAttachmentDropDestination(
+            isTargeted: $isDropTargeted,
+            isEnabled: !model.isBusy,
+            onDropFiles: importDroppedFiles
+        )
     }
 
     private var promptInputBox: some View {
@@ -279,11 +308,29 @@ struct CPSLPromptComposerView: View {
             CPSLPromptTextView(
                 text: $model.promptText,
                 isCommandInput: isCommandInput,
-                isDisabled: model.isRunning,
+                isDisabled: model.isBusy,
                 verticalInset: promptVerticalInset,
                 maxHeight: promptMaxTextHeight,
                 focusPromptRequest: focusPromptRequest,
-                dismissKeyboardRequest: dismissKeyboardRequest
+                dismissKeyboardRequest: dismissKeyboardRequest,
+                onPasteAttachments: importPasteboardAttachments
+            ) { height in
+                promptContentHeight = height
+            }
+            .frame(height: promptTextHeight)
+#elseif os(macOS)
+            CPSLPromptTextView(
+                text: $model.promptText,
+                isCommandInput: isCommandInput,
+                isDisabled: model.isBusy,
+                verticalInset: promptVerticalInset,
+                maxHeight: promptMaxTextHeight,
+                focusPromptRequest: focusPromptRequest,
+                dismissKeyboardRequest: dismissKeyboardRequest,
+                canPasteAttachments: canImportPasteboardAttachments,
+                onPasteAttachments: importPasteboardAttachments,
+                onDropFiles: importDroppedFiles,
+                onDropTargeted: { isDropTargeted = $0 }
             ) { height in
                 promptContentHeight = height
             }
@@ -297,7 +344,7 @@ struct CPSLPromptComposerView: View {
                 .foregroundStyle(CPSLTheme.text)
                 .tint(CPSLTheme.text)
                 .focused($isPromptFocused)
-                .disabled(model.isRunning)
+                .disabled(model.isBusy)
                 .padding(.horizontal, CPSLTheme.medium)
                 .padding(.vertical, promptVerticalInset)
 #endif
@@ -373,7 +420,7 @@ struct CPSLPromptComposerView: View {
             strokeOpacity: 0.045
         )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-        .disabled(model.isRunning || isAddingAttachment)
+        .disabled(model.isBusy || isAddingAttachment)
         .accessibilityLabel("Add Attachment")
     }
 
@@ -397,7 +444,7 @@ struct CPSLPromptComposerView: View {
             strokeOpacity: 0.045
         )
         .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
-        .disabled(model.isRunning)
+        .disabled(model.isBusy)
     }
 
     @ViewBuilder
@@ -412,11 +459,12 @@ struct CPSLPromptComposerView: View {
                     .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             }
             .buttonStyle(.plain)
-            .foregroundStyle(CPSLTheme.background)
-            .background(CPSLTheme.error)
+            .foregroundStyle(CPSLTheme.text)
+            .background(CPSLTheme.danger)
             .clipShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous))
             .accessibilityLabel("Stop")
+            .accessibilityAddTraits(.isButton)
         } else if canSubmit {
             Button {
                 dismissKeyboard()
@@ -454,8 +502,8 @@ struct CPSLPromptComposerView: View {
         .onChange(of: dismissKeyboardRequest) { _, _ in
             isPromptFocused = false
         }
-        .onChange(of: model.isRunning) { _, isRunning in
-            if isRunning {
+        .onChange(of: model.isBusy) { _, isBusy in
+            if isBusy {
                 isPromptFocused = false
             }
         }
@@ -552,7 +600,7 @@ struct CPSLPromptComposerView: View {
     }
 
     private func focusPrompt() {
-        guard !model.isRunning else {
+        guard !model.isBusy else {
             return
         }
 
@@ -560,17 +608,39 @@ struct CPSLPromptComposerView: View {
         isPromptFocused = true
     }
 
-    private func pastePromptText() {
-        guard !model.isRunning else {
+    private func pastePromptContent() {
+        guard !model.isBusy else {
             return
         }
-        guard let text = Self.pasteboardString(), !text.isEmpty else {
+        if importPasteboardAttachments() {
+            return
+        }
+        guard let text = CPSLPasteboardAttachmentImporter.pasteboardString(), !text.isEmpty else {
             focusPrompt()
             return
         }
 
         model.promptText += text
         focusPrompt()
+    }
+
+    private func importDroppedFiles(_ urls: [URL]) {
+        for url in urls where url.isFileURL {
+            model.addAttachment(from: url)
+        }
+    }
+
+#if os(macOS)
+    private func canImportPasteboardAttachments() -> Bool {
+        !model.isBusy && CPSLPasteboardAttachmentImporter.canImportCurrent()
+    }
+#endif
+
+    private func importPasteboardAttachments() -> Bool {
+        guard !model.isBusy else {
+            return false
+        }
+        return CPSLPasteboardAttachmentImporter.importCurrent(into: model)
     }
 
     private func importFiles(_ result: Result<[URL], Error>) {
@@ -608,16 +678,6 @@ struct CPSLPromptComposerView: View {
         }
     }
 
-    private static func pasteboardString() -> String? {
-#if os(macOS)
-        NSPasteboard.general.string(forType: .string)
-#elseif canImport(UIKit)
-        UIPasteboard.general.string
-#else
-        nil
-#endif
-    }
-
     private static func photoFileName(fileExtension: String) -> String {
         "photo-\(UUID().uuidString.prefix(8)).\(fileExtension)"
     }
@@ -626,14 +686,16 @@ struct CPSLPromptComposerView: View {
 private struct CPSLComposerAttachmentStrip: View {
     let attachments: [CPSLAttachment]
     let onRemove: (CPSLAttachment) -> Void
+    let loadThumbnail: (CPSLAttachment) async -> Data?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: CPSLTheme.small) {
                 ForEach(attachments) { attachment in
                     CPSLAttachmentBadge(
-                        name: attachment.name,
-                        onRemove: { onRemove(attachment) }
+                        attachment: attachment,
+                        onRemove: { onRemove(attachment) },
+                        loadThumbnail: loadThumbnail
                     )
                 }
             }

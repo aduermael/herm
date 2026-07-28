@@ -14,6 +14,7 @@ enum CPSLTheme {
     static let mutedText = Color(red: 0.345, green: 0.369, blue: 0.447)
     static let mauve = Color(red: 0.49, green: 0.42, blue: 0.78)
     static let success = Color(red: 0.22, green: 0.62, blue: 0.39)
+    static let warning = Color(red: 0.90, green: 0.62, blue: 0.22)
     static let danger = Color(red: 0.86, green: 0.28, blue: 0.32)
     static let command = Color(red: 0.076, green: 0.091, blue: 0.145)
     static let error = Color(red: 0.36, green: 0.16, blue: 0.20)

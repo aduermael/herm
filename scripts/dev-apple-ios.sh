@@ -39,8 +39,8 @@ Options:
   --device-name NAME           Use a connected device by exact display name.
   --skip-cpsl                  Do not build the CPSL XCFramework; require it to already exist.
   --rebuild-cpsl               Rebuild the CPSL XCFramework before building the app.
-  --full-cpsl                  Deprecated: the ensure script always builds the full iOS+macOS framework.
-  --universal-cpsl             Build both arm64 and x86_64 iOS simulator CPSL slices.
+  --full-cpsl                  Deprecated: CPSL follows Xcode's selected destination.
+  --universal-cpsl             Deprecated: CPSL follows Xcode's selected architecture.
   --allow-provisioning-updates Allow xcodebuild to update automatic signing assets. Default.
   --no-provisioning-updates    Do not allow xcodebuild to update signing assets.
   --register-device            Also allow xcodebuild to register the selected device.
@@ -249,8 +249,6 @@ trap cleanup EXIT HUP INT TERM
 
 mode=run
 cpsl_mode=auto
-cpsl_ios_simulator_targets=${IOS_SIMULATOR_TARGETS:-}
-cpsl_macos_targets=${MACOS_TARGETS:-}
 configuration=Debug
 derived_data="$root/.herm-apple/DerivedData"
 device_id=${IOS_DEVICE_ID:-}
@@ -293,7 +291,6 @@ while [ "$#" -gt 0 ]; do
 	--full-cpsl)
 		;;
 	--universal-cpsl)
-		cpsl_ios_simulator_targets="aarch64-apple-ios-sim x86_64-apple-ios"
 		;;
 	--allow-provisioning-updates)
 		allow_provisioning_updates=1
@@ -346,6 +343,11 @@ done
 [ -z "$device_id" ] || [ -z "$device_name" ] || die "--device and --device-name are mutually exclusive"
 [ "$personal_team" -eq 0 ] || [ "$explicit_team_id" -eq 0 ] || die "--personal-team and --team-id are mutually exclusive"
 
+if [ "$cpsl_mode" = auto ] && [ "${HERM_CPSL_REBUILD:-0}" = 1 ]; then
+	cpsl_mode=rebuild
+fi
+unset HERM_CPSL_REBUILD
+
 [ "$(uname -s)" = Darwin ] || die "run this from a macOS terminal, not Linux or a container"
 
 need_cmd xcode-select "install full Xcode, then select and initialize it with xcode-select/xcodebuild"
@@ -390,7 +392,6 @@ target=herm
 scheme=herm
 app_path="$derived_data/Build/Products/$configuration-iphoneos/$target.app"
 xcframework_path="$root/.herm-cpsl/artifacts/apple/$configuration/cpsl.xcframework"
-host_arch=$(uname -m)
 signing_style_setting=
 team_setting=
 bundle_id_setting=
@@ -415,34 +416,6 @@ fi
 if [ -n "$bundle_id_override" ]; then
 	signing_style_setting=CODE_SIGN_STYLE=Automatic
 	bundle_id_setting="PRODUCT_BUNDLE_IDENTIFIER=$bundle_id_override"
-fi
-
-if [ -z "$cpsl_ios_simulator_targets" ]; then
-	case "$host_arch" in
-	arm64 | aarch64)
-		cpsl_ios_simulator_targets=aarch64-apple-ios-sim
-		;;
-	x86_64)
-		cpsl_ios_simulator_targets=x86_64-apple-ios
-		;;
-	*)
-		die "unsupported host architecture for iOS simulator CPSL build: $host_arch"
-		;;
-	esac
-fi
-
-if [ -z "$cpsl_macos_targets" ]; then
-	case "$host_arch" in
-	arm64 | aarch64)
-		cpsl_macos_targets=aarch64-apple-darwin
-		;;
-	x86_64)
-		cpsl_macos_targets=x86_64-apple-darwin
-		;;
-	*)
-		cpsl_macos_targets=
-		;;
-	esac
 fi
 
 selected_device=
@@ -471,21 +444,16 @@ else
 	fi
 fi
 
-if [ "$cpsl_mode" = rebuild ]; then
-	HERM_CPSL_REBUILD=1
-	export HERM_CPSL_REBUILD
-fi
-if [ -n "$cpsl_ios_simulator_targets" ]; then
-	export IOS_SIMULATOR_TARGETS="$cpsl_ios_simulator_targets"
-fi
-if [ -n "$cpsl_macos_targets" ]; then
-	export MACOS_TARGETS="$cpsl_macos_targets"
-fi
 export CONFIGURATION="$configuration"
 if [ "$cpsl_mode" = skip ]; then
-	"$root/scripts/link-cpsl-xcframework-for-xcode.sh" --skip
+	PLATFORM_NAME=iphoneos SDK_NAME=iphoneos ARCHS=arm64 \
+		"$root/scripts/link-cpsl-xcframework-for-xcode.sh" --skip
+elif [ "$cpsl_mode" = rebuild ]; then
+	HERM_CPSL_REBUILD=1 PLATFORM_NAME=iphoneos SDK_NAME=iphoneos ARCHS=arm64 \
+		"$root/scripts/link-cpsl-xcframework-for-xcode.sh"
 else
-	"$root/scripts/link-cpsl-xcframework-for-xcode.sh"
+	PLATFORM_NAME=iphoneos SDK_NAME=iphoneos ARCHS=arm64 \
+		"$root/scripts/link-cpsl-xcframework-for-xcode.sh"
 fi
 
 clean_xattrs "$root/app/apple/herm" "$xcframework_path" "$app_path"

@@ -4,7 +4,7 @@ import SwiftUI
 #endif
 
 struct CPSLToolStripView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @ObservedObject private var calendar: CPSLCalendarService
     @ObservedObject private var location: CPSLLocationService
 

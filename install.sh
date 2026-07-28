@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # Detect OS and ARCH
@@ -41,8 +41,17 @@ fi
 
 # Fetch the latest release tag from GitHub API
 echo "Fetching latest release information..."
-RELEASE_INFO=$(curl -s https://api.github.com/repos/aduermael/herm/releases/latest)
-LATEST_TAG=$(echo "$RELEASE_INFO" | grep -o '"tag_name":"[^"]*' | head -1 | cut -d'"' -f4)
+if ! RELEASE_INFO=$(curl -fsSL \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  https://api.github.com/repos/aduermael/herm/releases/latest); then
+  echo "Error: Could not fetch latest release information from GitHub API"
+  exit 1
+fi
+
+# GitHub formats its JSON with whitespace around the colon. Avoid requiring jq
+# so the installer continues to work in minimal containers.
+LATEST_TAG=$(printf '%s\n' "$RELEASE_INFO" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 
 if [ -z "$LATEST_TAG" ]; then
   echo "Error: Could not determine latest release tag from GitHub API"
@@ -64,9 +73,7 @@ TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
 # Download the archive
-curl -L -o "$TEMP_DIR/herm.tar.gz" "$DOWNLOAD_URL"
-
-if [ ! -f "$TEMP_DIR/herm.tar.gz" ]; then
+if ! curl -fL -o "$TEMP_DIR/herm.tar.gz" "$DOWNLOAD_URL"; then
   echo "Error: Failed to download release"
   exit 1
 fi

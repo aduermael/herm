@@ -10,6 +10,9 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
     let baseURL: URL
     let token: String
     let model: String
+    let visionBaseURL: URL
+    let visionToken: String
+    let visionModel: String
     let maxToolRounds: Int
     let maxOutputTokens: Int
     let contextWindowTokens: Int?
@@ -41,18 +44,7 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
         else {
             throw CPSLAgentConfigError.missingValue("OPENAI_BASE_URL")
         }
-        let trimmedBaseURL = baseURLValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let baseURL = URL(string: trimmedBaseURL),
-                let scheme = baseURL.scheme?.lowercased(),
-                ["http", "https"].contains(scheme),
-                baseURL.host?.isEmpty == false,
-                baseURL.user == nil,
-                baseURL.password == nil,
-                baseURL.query == nil,
-                baseURL.fragment == nil
-        else {
-            throw CPSLAgentConfigError.invalidValue("OPENAI_BASE_URL")
-        }
+        let baseURL = try validatedBaseURL(baseURLValue, key: "OPENAI_BASE_URL")
 
         guard let token = firstValue(
             in: source,
@@ -72,10 +64,31 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
             throw CPSLAgentConfigError.missingValue("OPENAI_MODEL")
         }
 
+        let visionBaseURL: URL
+        if let value = firstValue(
+            in: source,
+            keys: ["HERM_VISION_BASE_URL", "VISION_BASE_URL", "OPENAI_VISION_BASE_URL"]
+        ) {
+            visionBaseURL = try validatedBaseURL(value, key: "HERM_VISION_BASE_URL")
+        } else {
+            visionBaseURL = baseURL
+        }
+        let visionToken = firstValue(
+            in: source,
+            keys: ["HERM_VISION_API_KEY", "VISION_API_KEY", "OPENAI_VISION_API_KEY"]
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visionModel = firstValue(
+            in: source,
+            keys: ["HERM_VISION_MODEL", "VISION_MODEL", "OPENAI_VISION_MODEL"]
+        )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? model.trimmingCharacters(in: .whitespacesAndNewlines)
+
         return CPSLAgentConfig(
             baseURL: baseURL,
             token: token.trimmingCharacters(in: .whitespacesAndNewlines),
             model: model.trimmingCharacters(in: .whitespacesAndNewlines),
+            visionBaseURL: visionBaseURL,
+            visionToken: visionToken,
+            visionModel: visionModel,
             maxToolRounds: positiveIntValue(
                 in: source,
                 keys: ["HERM_MAX_TOOL_ROUNDS", "MAX_TOOL_ROUNDS"],
@@ -122,6 +135,22 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
             }
         }
         return nil
+    }
+
+    private static func validatedBaseURL(_ value: String, key: String) throws -> URL {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host?.isEmpty == false,
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              url.fragment == nil
+        else {
+            throw CPSLAgentConfigError.invalidValue(key)
+        }
+        return url
     }
 
     private static func positiveIntValue(
@@ -171,7 +200,16 @@ nonisolated struct CPSLAgentConfig: Equatable, Sendable {
             environment["XAI_API_KEY"] != nil ||
             environment["OPENAI_MODEL"] != nil ||
             environment["MODEL"] != nil ||
-            environment["XAI_MODEL"] != nil
+            environment["XAI_MODEL"] != nil ||
+            environment["HERM_VISION_BASE_URL"] != nil ||
+            environment["VISION_BASE_URL"] != nil ||
+            environment["OPENAI_VISION_BASE_URL"] != nil ||
+            environment["HERM_VISION_API_KEY"] != nil ||
+            environment["VISION_API_KEY"] != nil ||
+            environment["OPENAI_VISION_API_KEY"] != nil ||
+            environment["HERM_VISION_MODEL"] != nil ||
+            environment["VISION_MODEL"] != nil ||
+            environment["OPENAI_VISION_MODEL"] != nil
     }
 }
 

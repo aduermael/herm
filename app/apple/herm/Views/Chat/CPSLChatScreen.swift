@@ -368,7 +368,7 @@ private enum CPSLOverlayMotion {
 }
 
 struct CPSLChatScreen: View {
-    @StateObject private var model = CPSLChatModel()
+    @State private var model = CPSLChatModel()
     @State private var promptDismissRequest = 0
     @State private var drawerProgress: CGFloat = 0
     @State private var drawerMotionGeneration = 0
@@ -387,10 +387,10 @@ struct CPSLChatScreen: View {
                 CPSLConversationDrawerView(
                     model: model,
                     topInset: drawerTopInset(topSafeAreaInset: proxy.safeAreaInsets.top),
-                    bottomInset: CPSLTheme.medium
+                    bottomInset: proxy.safeAreaInsets.bottom + CPSLTheme.small
                 )
                 .ignoresSafeArea(.container, edges: .vertical)
-                .allowsHitTesting(isDrawerVisible)
+                .allowsHitTesting(isDrawerInteractionEnabled)
                 .offset(x: drawerOffset(width: proxy.size.width))
 
                 CPSLMainContentStage(
@@ -404,6 +404,12 @@ struct CPSLChatScreen: View {
                 .allowsHitTesting(!isDrawerVisible)
                 .zIndex(1)
 
+                CPSLDrawerGestureCapture(
+                    isOpen: model.isDrawerOpen,
+                    drawerGesture: drawerDragGesture(width: proxy.size.width)
+                )
+                .zIndex(2)
+
                 CPSLDrawerToggleButton(isOpen: model.isDrawerOpen) {
                     toggleDrawer()
                 }
@@ -411,9 +417,7 @@ struct CPSLChatScreen: View {
                 .padding(.top, CPSLTheme.topChromeSafeAreaGap)
                 .offset(x: drawerToggleOffset(width: proxy.size.width))
                 .zIndex(3)
-
             }
-            .simultaneousGesture(drawerDragGesture(width: proxy.size.width))
             .onAppear {
                 drawerProgress = drawerTargetProgress
                 isDrawerMotionActive = false
@@ -475,6 +479,12 @@ struct CPSLChatScreen: View {
         isDrawerVisible
     }
 
+    private var isDrawerInteractionEnabled: Bool {
+        model.isDrawerOpen &&
+            !isDrawerMotionActive &&
+            activeDrawerDragStartProgress == nil
+    }
+
     private func drawerTopInset(topSafeAreaInset: CGFloat) -> CGFloat {
         topSafeAreaInset + CPSLTheme.topChromeSafeAreaGap
     }
@@ -502,10 +512,7 @@ struct CPSLChatScreen: View {
         guard width > 0 else {
             return
         }
-        guard let startProgress = activeDrawerDragStartProgress
-            ?? drawerDragStartProgress(value, width: width) else {
-            return
-        }
+        let startProgress = activeDrawerDragStartProgress ?? drawerProgress
 
         activeDrawerDragStartProgress = startProgress
         drawerProgress = clampedDrawerProgress(startProgress + value.translation.width / width)
@@ -516,10 +523,7 @@ struct CPSLChatScreen: View {
             activeDrawerDragStartProgress = nil
             return
         }
-        guard let startProgress = activeDrawerDragStartProgress
-            ?? drawerDragStartProgress(value, width: width) else {
-            return
-        }
+        let startProgress = activeDrawerDragStartProgress ?? drawerProgress
 
         let predictedProgress = clampedDrawerProgress(
             startProgress + value.predictedEndTranslation.width / width
@@ -533,14 +537,6 @@ struct CPSLChatScreen: View {
         if wasOpen == shouldOpen {
             animateDrawerProgress(to: shouldOpen ? 1 : 0)
         }
-    }
-
-    private func drawerDragStartProgress(_ value: DragGesture.Value, width: CGFloat) -> CGFloat? {
-        if model.isDrawerOpen {
-            return value.startLocation.x >= width - CPSLTheme.drawerGestureEdgeWidth ? drawerProgress : nil
-        }
-
-        return value.startLocation.x <= CPSLTheme.drawerGestureEdgeWidth ? drawerProgress : nil
     }
 
     private func clampedDrawerProgress(_ progress: CGFloat) -> CGFloat {
@@ -566,8 +562,30 @@ struct CPSLChatScreen: View {
     }
 }
 
+private struct CPSLDrawerGestureCapture<DrawerGesture: Gesture>: View {
+    let isOpen: Bool
+    let drawerGesture: DrawerGesture
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if isOpen {
+                Spacer(minLength: 0)
+            }
+
+            Color.clear
+                .contentShape(Rectangle())
+                .frame(width: CPSLTheme.drawerGestureEdgeWidth)
+                .gesture(drawerGesture)
+
+            if !isOpen {
+                Spacer(minLength: 0)
+            }
+        }
+    }
+}
+
 private struct CPSLMainContentStage: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @Binding var promptDismissRequest: Int
     let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
@@ -660,7 +678,7 @@ private struct CPSLMainContentStage: View {
 }
 
 private struct CPSLPrimaryContentView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     let contentTopInset: CGFloat
     let contentBottomInset: CGFloat
     let isTimelineScrollGeometryPaused: Bool
@@ -696,7 +714,7 @@ private struct CPSLFileBrowserOverlay: View {
 }
 
 private struct CPSLBottomChromeView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
     @Binding var promptDismissRequest: Int
 
     private var isPromptCompact: Bool {
@@ -707,20 +725,95 @@ private struct CPSLBottomChromeView: View {
         VStack(spacing: 0) {
             CPSLToolStripView(model: model)
 
-            CPSLPromptComposerView(
-                model: model,
-                dismissKeyboardRequest: promptDismissRequest,
-                isCompact: isPromptCompact
-            ) {
-                promptDismissRequest += 1
+            if let progress = model.iCloudImportProgress {
+                CPSLICloudImportStatusView(progress: progress) {
+                    model.cancelICloudImport()
+                }
+            } else {
+                CPSLPromptComposerView(
+                    model: model,
+                    dismissKeyboardRequest: promptDismissRequest,
+                    isCompact: isPromptCompact
+                ) {
+                    promptDismissRequest += 1
+                }
             }
         }
         .frame(maxWidth: .infinity)
     }
 }
 
+private struct CPSLICloudImportStatusView: View {
+    let progress: CPSLICloudImportProgress
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CPSLTheme.small) {
+            HStack(spacing: CPSLTheme.medium) {
+                if progress.phase == .preparing || progress.phase == .cancelling {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "icloud.and.arrow.down")
+                        .font(CPSLTheme.iconMediumFont)
+                        .foregroundStyle(CPSLTheme.IconPalette.cloud)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Connecting iCloud Folder")
+                        .font(CPSLTheme.supportingMediumFont)
+                        .foregroundStyle(CPSLTheme.text)
+                    Text(detailText)
+                        .font(CPSLTheme.captionFont)
+                        .foregroundStyle(CPSLTheme.secondaryText)
+                }
+
+                Spacer()
+
+                Button("Cancel", action: onCancel)
+                    .font(CPSLTheme.controlFont)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(CPSLTheme.text)
+                    .padding(.horizontal, CPSLTheme.medium)
+                    .frame(height: CPSLTheme.controlSize)
+                    .cpslGlassBackground(
+                        in: RoundedRectangle(cornerRadius: CPSLTheme.controlRadius, style: .continuous),
+                        tint: CPSLGlassTuning.tint(CPSLTheme.card, opacity: 0.38),
+                        strokeOpacity: 0.045
+                    )
+                    .disabled(progress.phase == .cancelling)
+                    .opacity(progress.phase == .cancelling ? 0.45 : 1)
+            }
+
+            if let fraction = progress.fractionCompleted {
+                ProgressView(value: fraction)
+                    .tint(CPSLTheme.IconPalette.cloud)
+            }
+        }
+        .padding(CPSLTheme.composerPadding)
+        .cpslGlassBackground(
+            in: RoundedRectangle(cornerRadius: CPSLTheme.composerRadius, style: .continuous),
+            tint: CPSLGlassTuning.tint(CPSLTheme.background, opacity: 0.54),
+            strokeOpacity: 0.055
+        )
+        .padding(.horizontal, CPSLTheme.chromeHorizontalInset)
+        .padding(.bottom, CPSLTheme.medium)
+    }
+
+    private var detailText: String {
+        switch progress.phase {
+        case .cancelling:
+            return "Stopping…"
+        case .preparing:
+            return "Preparing folder…"
+        case .downloading:
+            return "Downloading \(progress.completedItems) of \(progress.totalItems) iCloud files"
+        }
+    }
+}
+
 private struct CPSLHeaderActionsView: View {
-    @ObservedObject var model: CPSLChatModel
+    let model: CPSLChatModel
 #if DEBUG
     @State private var traceShareFile: CPSLJSONTraceShareFile?
     @State private var isPreparingTraceShareFile = false
@@ -741,8 +834,8 @@ private struct CPSLHeaderActionsView: View {
             CPSLChromeIconButton(systemName: "square.and.pencil", accessibilityLabel: "New conversation") {
                 model.startNewConversation()
             }
-            .disabled(model.isRunning)
-            .opacity(model.isRunning ? 0.45 : 1)
+            .disabled(model.isBusy)
+            .opacity(model.isBusy ? 0.45 : 1)
         }
         .padding(.horizontal, CPSLTheme.medium)
         .padding(.top, CPSLTheme.topChromeSafeAreaGap)
