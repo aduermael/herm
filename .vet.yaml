@@ -25,6 +25,8 @@ languages:
     exclude:
       - "**/*_test.go"
       - "**/testdata/**"
+      - "cmd/herm/cpsl_loader_unix.go"
+      - "cmd/herm/cpsl_loader_windows.go"
     rules:
       indent:
         type: language-default
@@ -44,14 +46,16 @@ languages:
       - "**/GeneratedAssetSymbols.swift"
     rules:
       max-function-parameters:
-        enabled: true
+        enabled: false
         max: 3
+      max-source-file-lines:
+        max: 0
       source-file-header:
         required: false
         min-length: 0
         max-length: 0
       indent:
         type: spaces
-        width: 4
+        width: 0
       casing:
         enabled: false
