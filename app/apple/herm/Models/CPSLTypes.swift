@@ -203,12 +203,18 @@ nonisolated final class CPSLFileActivityNotifier: @unchecked Sendable {
     }
 }
 
-struct CPSLFileEntry: Identifiable, Equatable, Sendable {
+nonisolated struct CPSLFileEntry: Identifiable, Equatable, Sendable {
     var id: String { path }
 
     let name: String
     let path: String
     let isDirectory: Bool
+
+    nonisolated init(name: String, path: String, isDirectory: Bool) {
+        self.name = name
+        self.path = path
+        self.isDirectory = isDirectory
+    }
 }
 
 struct CPSLDirectoryListing: Sendable {
