@@ -203,7 +203,7 @@ nonisolated final class CPSLFileActivityNotifier: @unchecked Sendable {
     }
 }
 
-struct CPSLFileEntry: Identifiable, Equatable, Sendable {
+nonisolated struct CPSLFileEntry: Identifiable, Equatable, Sendable {
     var id: String { path }
 
     let name: String
@@ -212,7 +212,7 @@ struct CPSLFileEntry: Identifiable, Equatable, Sendable {
     /// Set for entries under iCloud mounts when sync metadata is available.
     let syncState: CPSLFileSyncState?
 
-    init(
+    nonisolated init(
         name: String,
         path: String,
         isDirectory: Bool,
