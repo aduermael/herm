@@ -433,6 +433,7 @@ require_match 'print\(fs\.exists\("/home/herm/report\.pdf"\)\)' app/apple/herm/S
 require_match 'platform not supported' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'no PDF was produced' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'name: image-vision' app/apple/herm/Skills/image-vision/SKILL.md
+require_match 'short-description: Inspect images and PDFs with CPSL vision' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'mode = "vision"' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'doc\.readAsync' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'vision callback .* not available' app/apple/herm/Skills/image-vision/SKILL.md
