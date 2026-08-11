@@ -17,7 +17,7 @@ This file is markdown under `/skills/apple-context/SKILL.md`. Read it with:
 print(fs.read("/skills/apple-context/SKILL.md"))
 ```
 
-Do **not** `require("apple-context")`, `require("/skills/apple-context")`, or any other require path. Skills are not Luau modules. CPSL `calendar` and `location` are **globals** (listed by `help()`); call them directly after you understand the APIs below.
+Do **not** `require("apple-context")`, `require("/skills/apple-context")`, `require("/skills/apple-context/SKILL.md")`, or any other require path. Skills are not Luau modules. CPSL `calendar` and `location` are **globals** (listed by `help()`); call them directly after you understand the APIs below.
 
 ## Permissions
 
@@ -25,7 +25,7 @@ Do **not** `require("apple-context")`, `require("/skills/apple-context")`, or an
 - Calendar and location access states use `granted`, `denied`, and `undefined` through the `state` or `access` fields. If access is `undefined`, calling the relevant request/current function may prompt the user.
 - If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings. Do not repeatedly retry.
 - Use only the minimum needed capability. Do not request calendar or location access unless it materially helps with the user's request.
-- After a successful call, inspect nested fields (and printed JSON from `print(table)`); do not conclude "unavailable" from top-level nils alone.
+- Print tables with `print(here)` (or `tostring(here)`); both show nested JSON. Do not conclude "unavailable" from top-level nils alone—coords and place live under `here.location`.
 
 ## Calendar
 
@@ -54,7 +54,7 @@ local event = calendar.create("Dentist", "2026-07-08T16:00:00Z", "2026-07-08T17:
 
 ## Location
 
-Use `location.current()` for the current device location. It prompts if access is undefined and returns a table with access metadata plus a nested `location` object containing `latitude`, `longitude`, accuracy, and timestamp.
+Use `location.current()` for the current device location. It prompts if access is undefined and returns access metadata plus a nested `location` object with coordinates and, when reverse geocoding succeeds, human place fields (city, region, country, etc.).
 
 ```lua
 local status = location.status()
@@ -62,11 +62,14 @@ print(status)
 
 local here = location.current()
 print(here)
--- Nested coordinates (not top-level):
+-- Coordinates (always when a fix is available):
 print(here.location.latitude, here.location.longitude)
+-- Place names from Apple reverse geocoding (may be nil if geocode fails offline):
+print(here.location.city, here.location.region, here.location.country)
+print(here.location.formatted_address)
 print(here.access) -- granted | denied | undefined
 ```
 
-If `here.access` is `denied` or the call errors with a permission message, tell the user to enable Location for Herm in Settings. If `here.location` is present, use those coordinates—do not claim the location is missing because `here.latitude` is nil.
+Prefer answering with city/region/country when present; still keep latitude/longitude available if the user wants precision. If `here.access` is `denied` or the call errors with a permission message, tell the user to enable Location for Herm in Settings.
 
-Treat location as sensitive. Do not print precise coordinates unless the user needs them or asks for them; prefer using the location to answer the task.
+Treat location as sensitive. Do not print precise coordinates unless the user needs them or asks for them; prefer city-level place fields for ordinary answers.

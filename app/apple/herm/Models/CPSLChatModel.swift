@@ -138,9 +138,9 @@ final class CPSLChatModel {
     Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Preparing document", "Checking export", or "Saving result". Do not mention code, sandbox details, paths, module names, tool names, API names, file extensions, HTTP, or implementation details in intent.
     Every agent call must also include intent: a short user-facing description of its expected work. Describe the action itself; never mention a helper, agent, delegation, tool, code, paths, or implementation details.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
-    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures. Use signatures documented by a relevant loaded skill directly. Call help() or a module's help function only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
-    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list.
-    Skills are markdown instruction files under /skills/<name>/SKILL.md, not Luau modules. Load a skill with fs.read (for example fs.read("/skills/apple-context/SKILL.md")). Never require("apple-context"), require("/skills/..."), or treat a skill name as a require path.
+    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures. Use signatures from a skill file only after you have already loaded it with fs.read. Call help() or a module's help function only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
+    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list. require() is only for relative/package module paths (./, ../, @) and never for skills or built-in modules such as location, calendar, or fs.
+    Skills are markdown instruction files under /skills/<name>/SKILL.md, not Luau modules. The only correct way to load a skill is fs.read of that path, for example: print(fs.read("/skills/apple-context/SKILL.md")). Forbidden: require("apple-context"), require("/skills/..."), require("./skills/..."), or any require of a skill name or skill path.
     Treat help output as human-readable documentation. When help is actually needed, call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
     Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed. print() serializes tables as JSON so nested fields are visible; do not assume a bare "table" string means data is missing.
     Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. They are globals (calendar, location), not skill requires. Prefer reading the apple-context skill via fs.read before first use, then call location.status() / location.current() or calendar.status() as documented. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
@@ -158,14 +158,14 @@ final class CPSLChatModel {
             return systemPrompt
         }
         let skillLines = skills.map {
-            "- **\($0.name)**: \($0.description) Read: `\($0.path)`"
+            "- **\($0.name)**: \($0.description)\n  Load with: `print(fs.read(\"\($0.path)\"))` — never require()."
         }.joined(separator: "\n")
         return systemPrompt + """
 
 
         ## Skills
 
-        The following skills are available. Their full instructions are not loaded into this prompt. When a skill is relevant to the user's task, you must fs.read its skill file path before acting or claiming the task cannot be completed, then follow that file's instructions and read any referenced support files from the same folder as needed. Skills are not require()-able modules.
+        The following skills are available. Their full instructions are not loaded into this prompt. When a skill is relevant to the user's task, call local_sandbox_exec and fs.read the listed path (see each "Load with" line) before acting or claiming the task cannot be completed, then follow that file's instructions and read any referenced support files from the same folder as needed. Skills are markdown files, not require()-able modules; require("skill-name") always fails.
 
         \(skillLines)
         """
