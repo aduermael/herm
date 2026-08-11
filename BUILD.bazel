@@ -149,6 +149,7 @@ rust_library(
         "mod-ripgrep",
         "mod-url",
         "mod-webbrowser",
+        "mod-xlsx",
         "mod-xml",
         "mod-yaml",
         "pdfium-render",
@@ -179,7 +180,7 @@ rust_shared_library(
     # rules_rust does not expand Cargo feature dependencies. List every
     # cfg(feature = "...") the ffi crate checks — matching the Cargo
     # `embedded-agent` expansion in external/cpsl/ffi/Cargo.toml. Without
-    # webbrowser/location/calendar/doc/pdfium-render here, host gateways never
+    # webbrowser/location/calendar/xlsx/doc/pdfium-render here, host gateways never
     # compile in and those Luau modules stay unregistered.
     crate_features = select({
         ":cpsl_apple_app_profile": [
@@ -190,6 +191,7 @@ rust_shared_library(
             "location",
             "pdfium-render",
             "webbrowser",
+            "xlsx",
         ],
         "//conditions:default": ["ffi-minimal"],
     }),

@@ -1,0 +1,13 @@
+[package]
+name = "cells-xlsx-luau-eval"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+cpsl-core = { path = "../../external/cpsl/core", default-features = false, features = ["mod-xlsx", "mod-fs", "mod-json"] }
+serde_json = "1"
+tempfile = "3"
+
+[profile.dev]
+# Link the staged cells_xlsx static library (set LIBRARY_PATH / RUSTFLAGS from the shell script).

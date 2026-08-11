@@ -48,6 +48,14 @@ private nonisolated final class CPSLLocationCallbackBox: @unchecked Sendable {
     }
 }
 
+private nonisolated final class CPSLXlsxCallbackBox: @unchecked Sendable {
+    let service: CPSLExcelService
+
+    init(service: CPSLExcelService) {
+        self.service = service
+    }
+}
+
 private nonisolated enum CPSLFileMutationError: LocalizedError {
     case destinationContainsSource
     case destinationExists
@@ -124,6 +132,19 @@ private typealias CPSLLocationUserDataFreeFunction = @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Void
 
+private typealias CPSLXlsxHandleJSONFunction = @convention(c) (
+    UnsafeMutableRawPointer?,
+    UnsafePointer<CChar>?
+) -> UnsafeMutablePointer<CChar>?
+
+private typealias CPSLXlsxStringFreeFunction = @convention(c) (
+    UnsafeMutablePointer<CChar>?
+) -> Void
+
+private typealias CPSLXlsxUserDataFreeFunction = @convention(c) (
+    UnsafeMutableRawPointer?
+) -> Void
+
 private typealias CPSLVisionHandleFunction = @convention(c) (
     UnsafeMutableRawPointer?,
     UnsafeRawPointer?,
@@ -160,6 +181,13 @@ private nonisolated struct CPSLLocationCallbacks {
     var handle_json: CPSLLocationHandleJSONFunction?
     var string_free: CPSLLocationStringFreeFunction?
     var user_data_free: CPSLLocationUserDataFreeFunction?
+}
+
+private nonisolated struct CPSLXlsxCallbacks {
+    var user_data: UnsafeMutableRawPointer?
+    var handle_json: CPSLXlsxHandleJSONFunction?
+    var string_free: CPSLXlsxStringFreeFunction?
+    var user_data_free: CPSLXlsxUserDataFreeFunction?
 }
 
 private nonisolated struct CPSLVisionInputFFI {
@@ -204,6 +232,17 @@ private typealias CPSLSessionNewWithHostCallbacksV3Function = @convention(c) (
     UnsafeRawPointer?,
     UnsafeRawPointer?
 ) -> OpaquePointer?
+
+private typealias CPSLSessionNewWithHostCallbacksV4Function = @convention(c) (
+    UnsafePointer<CChar>?,
+    UnsafePointer<cpsl_webbrowser_callbacks_t>?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?,
+    UnsafeRawPointer?
+) -> OpaquePointer?
+
 private nonisolated final class CPSLWebBrowserCallbackResponse: @unchecked Sendable {
     private let lock = NSLock()
     private var value: String
@@ -330,6 +369,31 @@ private nonisolated let cpslLocationUserDataFree: CPSLLocationUserDataFreeFuncti
         return
     }
     Unmanaged<CPSLLocationCallbackBox>.fromOpaque(userData).release()
+}
+
+private nonisolated let cpslXlsxHandleJSON: CPSLXlsxHandleJSONFunction = { userData, requestJSON in
+    guard let userData, let requestJSON else {
+        return cpslWebBrowserOwnedErrorCString("xlsx callback received NULL input")
+    }
+    let callbackBox = Unmanaged<CPSLXlsxCallbackBox>
+        .fromOpaque(userData)
+        .takeUnretainedValue()
+    let request = String(cString: requestJSON)
+    // cells_xlsx is pure CPU/file I/O; keep it off the main thread and run
+    // synchronously so CPSL eval threads are not forced onto MainActor.
+    let response = callbackBox.service.handleJSON(request)
+    return cpslWebBrowserOwnedCString(response)
+}
+
+private nonisolated let cpslXlsxStringFree: CPSLXlsxStringFreeFunction = { value in
+    cpslWebBrowserStringFree(value)
+}
+
+private nonisolated let cpslXlsxUserDataFree: CPSLXlsxUserDataFreeFunction = { userData in
+    guard let userData else {
+        return
+    }
+    Unmanaged<CPSLXlsxCallbackBox>.fromOpaque(userData).release()
 }
 
 private nonisolated let cpslFileActivityHandle: CPSLFileActivityHandleFunction = { userData, path, operation in
@@ -534,6 +598,21 @@ private nonisolated func cpslSessionNewWithHostCallbacksV3Function() -> CPSLSess
     return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksV3Function.self)
 }
 
+private nonisolated func cpslSessionNewWithHostCallbacksV4Function() -> CPSLSessionNewWithHostCallbacksV4Function? {
+#if canImport(Darwin)
+    let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
+#else
+    let lookupHandle: UnsafeMutableRawPointer? = nil
+#endif
+    let symbol = "cpsl_session_new_with_host_callbacks_v4".withCString { name in
+        dlsym(lookupHandle, name)
+    }
+    guard let symbol else {
+        return nil
+    }
+    return unsafeBitCast(symbol, to: CPSLSessionNewWithHostCallbacksV4Function.self)
+}
+
 private nonisolated func cpslVisionRespondFunction() -> CPSLVisionRespondFunction? {
 #if canImport(Darwin)
     let lookupHandle = UnsafeMutableRawPointer(bitPattern: -2)
@@ -586,6 +665,7 @@ actor CPSLDebugService {
 
     private let webBrowser: CPSLWebBrowserService
     private let location: CPSLLocationService
+    private let excel: CPSLExcelService
     private let calendarActivityNotifier: CPSLCalendarActivityNotifier
     private let fileActivityNotifier: CPSLFileActivityNotifier
     private var iCloudMountManager: CPSLICloudMountManager?
@@ -601,11 +681,13 @@ actor CPSLDebugService {
     init(
         webBrowser: CPSLWebBrowserService,
         location: CPSLLocationService,
+        excel: CPSLExcelService = CPSLExcelService(),
         calendarActivityNotifier: CPSLCalendarActivityNotifier,
         fileActivityNotifier: CPSLFileActivityNotifier
     ) {
         self.webBrowser = webBrowser
         self.location = location
+        self.excel = excel
         self.calendarActivityNotifier = calendarActivityNotifier
         self.fileActivityNotifier = fileActivityNotifier
     }
@@ -1697,6 +1779,7 @@ actor CPSLDebugService {
         let fileActivityCallbackBox = CPSLFileActivityCallbackBox(notifier: fileActivityNotifier)
         let calendarActivityCallbackBox = CPSLCalendarActivityCallbackBox(notifier: calendarActivityNotifier)
         let locationCallbackBox = CPSLLocationCallbackBox(service: location)
+        let xlsxCallbackBox = CPSLXlsxCallbackBox(service: excel)
         let visionCallbackBox = CPSLVisionCallbackBox()
         let result = await Self.performBlockingSessionInit(
             configJSON: configJSON,
@@ -1704,7 +1787,8 @@ actor CPSLDebugService {
             fileActivityCallbackBox: fileActivityCallbackBox,
             calendarActivityCallbackBox: calendarActivityCallbackBox,
             locationCallbackBox: locationCallbackBox,
-            visionCallbackBox: visionCallbackBox
+            visionCallbackBox: visionCallbackBox,
+            xlsxCallbackBox: xlsxCallbackBox
         )
         guard let newSession = result.pointer else {
             return result.errorMessage ?? "cpsl_session_new returned NULL"
@@ -1999,7 +2083,8 @@ actor CPSLDebugService {
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
         locationCallbackBox: CPSLLocationCallbackBox,
-        visionCallbackBox: CPSLVisionCallbackBox
+        visionCallbackBox: CPSLVisionCallbackBox,
+        xlsxCallbackBox: CPSLXlsxCallbackBox
     ) async -> CPSLSessionInitResult {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .default).async {
@@ -2009,7 +2094,8 @@ actor CPSLDebugService {
                     fileActivityCallbackBox: fileActivityCallbackBox,
                     calendarActivityCallbackBox: calendarActivityCallbackBox,
                     locationCallbackBox: locationCallbackBox,
-                    visionCallbackBox: visionCallbackBox
+                    visionCallbackBox: visionCallbackBox,
+                    xlsxCallbackBox: xlsxCallbackBox
                 ))
             }
         }
@@ -2021,7 +2107,8 @@ actor CPSLDebugService {
         fileActivityCallbackBox: CPSLFileActivityCallbackBox,
         calendarActivityCallbackBox: CPSLCalendarActivityCallbackBox,
         locationCallbackBox: CPSLLocationCallbackBox,
-        visionCallbackBox: CPSLVisionCallbackBox
+        visionCallbackBox: CPSLVisionCallbackBox,
+        xlsxCallbackBox: CPSLXlsxCallbackBox
     ) -> CPSLSessionInitResult {
         configureCPSLLibraryDirectory()
         let fileActivityUserData = Unmanaged.passRetained(fileActivityCallbackBox).toOpaque()
@@ -2049,10 +2136,45 @@ actor CPSLDebugService {
             handle: cpslVisionHandle,
             user_data_free: cpslVisionUserDataFree
         )
+        let xlsxUserData = Unmanaged.passRetained(xlsxCallbackBox).toOpaque()
+        var xlsxCallbacks = CPSLXlsxCallbacks(
+            user_data: xlsxUserData,
+            handle_json: cpslXlsxHandleJSON,
+            string_free: cpslXlsxStringFree,
+            user_data_free: cpslXlsxUserDataFree
+        )
 
         func createPointer(
             webBrowserCallbacks: UnsafePointer<cpsl_webbrowser_callbacks_t>?
         ) -> (pointer: OpaquePointer?, fallback: String) {
+            if let sessionNewWithHostCallbacksV4 = cpslSessionNewWithHostCallbacksV4Function(),
+               cpslVisionRespondFunction() != nil {
+                let pointer = configJSON.withCString { configPointer in
+                    withUnsafePointer(to: &fileActivityCallbacks) { fileActivityCallbacksPointer in
+                        withUnsafePointer(to: &calendarActivityCallbacks) { calendarActivityCallbacksPointer in
+                            withUnsafePointer(to: &locationCallbacks) { locationCallbacksPointer in
+                                withUnsafePointer(to: &visionCallbacks) { visionCallbacksPointer in
+                                    withUnsafePointer(to: &xlsxCallbacks) { xlsxCallbacksPointer in
+                                        sessionNewWithHostCallbacksV4(
+                                            configPointer,
+                                            webBrowserCallbacks,
+                                            UnsafeRawPointer(fileActivityCallbacksPointer),
+                                            UnsafeRawPointer(calendarActivityCallbacksPointer),
+                                            UnsafeRawPointer(locationCallbacksPointer),
+                                            UnsafeRawPointer(visionCallbacksPointer),
+                                            UnsafeRawPointer(xlsxCallbacksPointer)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return (pointer, "cpsl_session_new_with_host_callbacks_v4 returned NULL")
+            }
+
+            // Older CPSL builds: release xlsx callback context and fall back.
+            cpslXlsxUserDataFree(xlsxUserData)
             if let sessionNewWithHostCallbacksV3 = cpslSessionNewWithHostCallbacksV3Function(),
                cpslVisionRespondFunction() != nil {
                 let pointer = configJSON.withCString { configPointer in
