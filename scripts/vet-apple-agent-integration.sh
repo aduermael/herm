@@ -36,7 +36,6 @@ swift_files=(
   app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
   app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
   app/apple/herm/Services/Agent/CPSLPCCMessageMapper.swift
-  app/apple/herm/Services/Agent/CPSLPCCClient.swift
   app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
   app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
   app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
@@ -90,6 +89,9 @@ required_files=(
   scripts/vet-apple-conversation-store.swift
   scripts/vet-apple-openai-protocol.swift
   scripts/vet-apple-agent-pcc.swift
+  scripts/generate-apple-pcc-runtime.sh
+  scripts/apple-pcc/CPSLPCCRuntime.full.swift
+  scripts/apple-pcc/CPSLPCCRuntime.stub.swift
   external/cpsl/core/src/doc/render.rs
   external/cpsl/core/src/sandbox.rs
   external/cpsl/ffi/src/lib.rs
@@ -161,9 +163,11 @@ require_match '^[[:space:]]*\.env\.local,' app/apple/herm.xcodeproj/project.pbxp
 require_match 'Resources/\.env' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Resources/\.env\.local' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Generated/CPSLEnvConstants\.swift' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'Generated/CPSLPCCRuntime\.generated\.swift' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Generate Env Constants' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'generate-apple-env-constants\.sh' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'CPSLEnvConstants\.swift in Sources' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'CPSLPCCRuntime\.generated\.swift in Sources' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'source_entitlements_path=.*herm-macOS.entitlements' scripts/dev-apple-macos.sh
 require_match 'sign_entitlements_path=.source_entitlements_path' scripts/dev-apple-macos.sh
 require_match 'cd "\$root"' scripts/dev-apple-macos.sh
@@ -211,23 +215,41 @@ require_match 'appendingPathComponent\("chat"\)' app/apple/herm/Services/Agent/C
 require_match 'appendingPathComponent\("completions"\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 
 # Main agent prefers Apple PCC on iOS 27+ when available; OpenAI/Grok is fallback.
-require_match 'PrivateCloudComputeLanguageModel' app/apple/herm/Services/Agent/CPSLPCCClient.swift
-require_match 'PrivateCloudComputeLanguageModel' app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
+# 27-only PCC types live only in the full runtime template / generated file — never
+# unguarded in 26.5-safe agent sources (so Xcode 26.5 CI typechecks).
+require_match 'PrivateCloudComputeLanguageModel' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCOuterLoopSignal' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCLocalSandboxTool' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCAgentTool' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'local_sandbox_exec' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCMessageMapper\.mapPrompt' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'isCompileTimeSupported: Bool \{ false \}' scripts/apple-pcc/CPSLPCCRuntime.stub.swift
+require_match 'generate-apple-pcc-runtime\.sh' scripts/generate-apple-env-constants.sh
+require_match 'SDK_VERSION' scripts/generate-apple-pcc-runtime.sh
+require_match 'PrivateCloudComputeLanguageModel' scripts/generate-apple-pcc-runtime.sh
+reject_match 'PrivateCloudComputeLanguageModel' \
+  app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift \
+  app/apple/herm/Services/Agent/CPSLAgentChatClient.swift \
+  app/apple/herm/Services/Agent/CPSLPCCMessageMapper.swift
+require_match 'CPSLPCCRuntime\.isAvailable' app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
+require_match 'CPSLPCCRuntime\.streamChat' app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
 require_match 'CPSLAgentChatClient' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSLAgentChatClient\(config: config\)' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'actor CPSLAgentChatClient' app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
 require_match 'kind == \.applePCC' app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
 require_match 'CPSLAgentProviderSelection\.select' app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
 require_match 'static let pccModelID = "apple/pcc"' app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
-require_match 'CPSLPCCMessageMapper\.mapPrompt' app/apple/herm/Services/Agent/CPSLPCCClient.swift
-require_match 'CPSLPCCOuterLoopSignal' app/apple/herm/Services/Agent/CPSLPCCClient.swift
-require_match 'local_sandbox_exec' app/apple/herm/Services/Agent/CPSLPCCClient.swift
-require_match 'CPSLPCCLocalSandboxTool' app/apple/herm/Services/Agent/CPSLPCCClient.swift
-require_match 'CPSLPCCAgentTool' app/apple/herm/Services/Agent/CPSLPCCClient.swift
+require_match 'CPSLPCCRuntime\.generated\.swift' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'generate-apple-pcc-runtime\.sh' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'let modelID: String' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
 require_match 'let client: CPSLAgentChatClient' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
 reject_match 'let client: CPSLOpenAIClient' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
 reject_match 'CPSLOpenAIClient\(config: config\)' app/apple/herm/Models/CPSLChatModel.swift
+# Ensure no unguarded 27-only client file remains in the synchronized Agent folder.
+if [[ -e app/apple/herm/Services/Agent/CPSLPCCClient.swift ]]; then
+  echo "CPSLPCCClient.swift must not ship in Agent/ (PCC types are generated)" >&2
+  exit 1
+fi
 require_match 'encodeNil\(forKey: \.content\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'name: "local_sandbox_exec"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'name: "agent"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
@@ -548,6 +570,8 @@ if command -v swift >/dev/null 2>&1; then
 fi
 
 if command -v swiftc >/dev/null 2>&1; then
+  # Stub PCC runtime for Linux / pre-27 SDK hosts so agent sources typecheck.
+  HERM_FORCE_PCC_RUNTIME=0 bash scripts/generate-apple-pcc-runtime.sh
   swiftc -typecheck \
     scripts/vet-apple-agent-shared-types.swift \
     app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
@@ -573,8 +597,11 @@ if command -v swiftc >/dev/null 2>&1; then
   /tmp/herm-vet-openai-protocol
   swiftc \
     scripts/vet-apple-agent-shared-types.swift \
+    app/apple/herm/Services/Agent/CPSLAgentConfig.swift \
     app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
+    app/apple/herm/Services/Agent/CPSLOpenAIClient.swift \
     app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift \
+    app/apple/herm/Generated/CPSLPCCRuntime.generated.swift \
     app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift \
     app/apple/herm/Services/Agent/CPSLPCCMessageMapper.swift \
     scripts/vet-apple-agent-pcc.swift \

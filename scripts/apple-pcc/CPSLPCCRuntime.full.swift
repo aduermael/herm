@@ -1,16 +1,40 @@
 import Foundation
-#if canImport(FoundationModels)
 import FoundationModels
-#endif
 
-/// Runs one OpenAI-shaped `streamChat` turn through Apple Private Cloud Compute.
-/// Tool calls are intercepted so herm's existing outer provider loop can execute them.
-#if canImport(FoundationModels)
+/// Full PCC runtime for SDKs that ship PrivateCloudComputeLanguageModel (iOS/macOS 27+).
+/// Tool calls are intercepted so herm's outer provider loop can execute them.
+enum CPSLPCCRuntime {
+    static var isCompileTimeSupported: Bool { true }
+
+    static var isAvailable: Bool {
+        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
+            return PrivateCloudComputeLanguageModel().isAvailable
+        }
+        return false
+    }
+
+    static func streamChat(
+        _ streamRequest: CPSLOpenAIStreamRequest,
+        modelID: String,
+        onEvent: @escaping (CPSLOpenAIStreamEvent) async -> Void
+    ) async throws -> CPSLOpenAICompletion {
+        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
+            return try await CPSLPCCClient(modelID: modelID).streamChat(
+                streamRequest,
+                onEvent: onEvent
+            )
+        }
+        throw CPSLOpenAIError.provider(
+            "Apple Private Cloud Compute requires iOS/macOS 27 or later."
+        )
+    }
+}
+
 @available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
-struct CPSLPCCClient: Sendable {
+private struct CPSLPCCClient: Sendable {
     private let modelID: String
 
-    init(modelID: String = CPSLAgentProviderSelection.pccModelID) {
+    init(modelID: String) {
         self.modelID = modelID
     }
 
@@ -141,12 +165,11 @@ struct CPSLPCCClient: Sendable {
     }
 }
 
-/// Signals that a PCC tool should be executed by herm's outer agent loop.
 @available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
-struct CPSLPCCOuterLoopSignal: Error {}
+private struct CPSLPCCOuterLoopSignal: Error {}
 
 @available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
-final class CPSLPCCToolCapture: @unchecked Sendable {
+private final class CPSLPCCToolCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var calls: [CPSLOpenAIToolCall] = []
     private var nextID = 0
@@ -170,7 +193,7 @@ final class CPSLPCCToolCapture: @unchecked Sendable {
 }
 
 @available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
-struct CPSLPCCLocalSandboxTool: Tool {
+private struct CPSLPCCLocalSandboxTool: Tool {
     let name = "local_sandbox_exec"
     let description: String
     let capture: CPSLPCCToolCapture
@@ -192,7 +215,7 @@ struct CPSLPCCLocalSandboxTool: Tool {
 }
 
 @available(iOS 27.0, macOS 27.0, visionOS 27.0, *)
-struct CPSLPCCAgentTool: Tool {
+private struct CPSLPCCAgentTool: Tool {
     let name = "agent"
     let description: String
     let capture: CPSLPCCToolCapture
@@ -214,4 +237,3 @@ struct CPSLPCCAgentTool: Tool {
         return ""
     }
 }
-#endif

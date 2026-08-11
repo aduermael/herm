@@ -27,23 +27,11 @@ actor CPSLAgentChatClient {
         onEvent: @escaping (CPSLOpenAIStreamEvent) async -> Void
     ) async throws -> CPSLOpenAICompletion {
         if kind == .applePCC {
-            #if canImport(FoundationModels)
-            if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
-                do {
-                    return try await CPSLPCCClient(modelID: modelID).streamChat(
-                        streamRequest,
-                        onEvent: onEvent
-                    )
-                } catch {
-                    // Hard failure on an explicitly selected PCC path — do not
-                    // silently send main-agent traffic to Grok. Callers may
-                    // construct a client with `.openAI` for forced fallback tests.
-                    throw error
-                }
-            }
-            #endif
-            throw CPSLOpenAIError.provider(
-                "Apple Private Cloud Compute was selected but is not available in this build."
+            // Implementation is generated for the active SDK (full on 27+, stub on 26.5).
+            return try await CPSLPCCRuntime.streamChat(
+                streamRequest,
+                modelID: modelID,
+                onEvent: onEvent
             )
         }
         return try await openAI.streamChat(streamRequest, onEvent: onEvent)

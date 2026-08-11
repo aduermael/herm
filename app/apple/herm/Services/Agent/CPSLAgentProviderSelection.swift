@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(FoundationModels)
-import FoundationModels
-#endif
 
 /// Which backend should serve the main Apple agent completion path.
 nonisolated enum CPSLAgentProviderKind: String, Equatable, Sendable {
@@ -58,15 +55,15 @@ nonisolated enum CPSLAgentPlatform {
     }
 }
 
-/// Live PCC availability. Always false when FoundationModels / iOS 27 APIs are absent.
+/// Live PCC availability. Delegates to the generated runtime so 26.5 SDKs never
+/// need to typecheck iOS 27-only FoundationModels PCC types.
 nonisolated enum CPSLPCCAvailability {
     static var isAvailable: Bool {
-        #if canImport(FoundationModels)
-        if #available(iOS 27.0, macOS 27.0, visionOS 27.0, *) {
-            return PrivateCloudComputeLanguageModel().isAvailable
-        }
-        #endif
-        return false
+        CPSLPCCRuntime.isAvailable
+    }
+
+    static var isCompileTimeSupported: Bool {
+        CPSLPCCRuntime.isCompileTimeSupported
     }
 
     static func resolvedKind() -> CPSLAgentProviderKind {

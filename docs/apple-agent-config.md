@@ -8,11 +8,18 @@ is available at runtime, the main agent completion path uses Foundation Models
 
 PCC is gated by:
 
-- compile/runtime availability of the iOS 27 FoundationModels PCC APIs
-- `PrivateCloudComputeLanguageModel().isAvailable`
+- **SDK compile gate:** `scripts/generate-apple-pcc-runtime.sh` emits a full
+  runtime only when building with an iOS/macOS **27+ SDK** (or
+  `HERM_FORCE_PCC_RUNTIME=1`). On the project’s 26.5 SDK toolchain it emits a
+  stub so Xcode CI still typechecks. Source of truth for the full path is
+  `scripts/apple-pcc/CPSLPCCRuntime.full.swift` (references
+  `PrivateCloudComputeLanguageModel`); that type never appears unguarded in
+  the synchronized Agent sources.
+- runtime `CPSLPCCRuntime.isAvailable` (wraps
+  `PrivateCloudComputeLanguageModel().isAvailable` in the full variant)
 - the `com.apple.developer.private-cloud-compute` entitlement on the app target
 
-When PCC is unavailable (older OS, ineligible device, missing entitlement, or
+When PCC is unavailable (older OS/SDK, ineligible device, missing entitlement, or
 Apple Intelligence / PCC not ready), the agent falls back to the OpenAI-compatible
 path below. Vision and other non-agent OpenAI clients are unchanged.
 
