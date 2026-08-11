@@ -11,11 +11,32 @@ Use this skill when a task needs web search, page browsing, browser interaction,
 
 Prefer `webbrowser` over raw HTTP when the page needs JavaScript, logged-in state, form interaction, or visual inspection.
 
-A missing dedicated integration for a service is not a reason to stop when its
-website can perform the requested action. Browser sessions use persistent
-WebKit state and may already be signed in. When the user explicitly asks for a
-specific action, use the normal website flow on their behalf before reporting
-that it cannot be completed.
+## Cookbook (do this first)
+
+You are reading this file because the skill was loaded into context. The `webbrowser` API is a **global** (like `fs`). Do **not** `require("webbrowser")`.
+
+**Happy path — stay in the background and read the page yourself:**
+
+```lua
+-- 1) Open (mobile layout + lean resources by default). Capture the return value.
+local opened = webbrowser.open("https://www.google.com/search?q=barber+shop+near+Menlo+Park+CA")
+print(opened) -- JSON: browser id, layoutMode, page snapshot
+local browser = opened.browser
+
+-- 2) Read content with page() — this is how you "see" the site without show().
+local snap = webbrowser.page(browser, { fields = {"title", "url", "text", "actions"} })
+print(snap)
+
+-- 3) Answer the user from snap.page.text / actions. Do NOT call show() for this.
+```
+
+**Rules that fix the common failures**
+
+1. **Never call `webbrowser.show()`** for ordinary search/browse. The browser runs offscreen. `show()` is only for user handoff (login, CAPTCHA, payment, or the user asked to see the window).
+2. **Always capture `open`/`create` results.** `local opened = webbrowser.open(url)` then `opened.browser`. Discarding the return loses the id and the first page snapshot.
+3. **Use `webbrowser.page(browser)` to read sites.** Do not invent `current_page`, `get`, `inspect`, or `search`. If unsure, `print(webbrowser.help())` once.
+4. **Mobile by default.** New browsers use phone viewport + mobile Safari UA (`layoutMode="mobile"`). Switch the **same** instance with `webbrowser.set_layout(browser, "desktop")` only when a site needs a desktop UI; switch back with `"mobile"` if helpful.
+5. Prefer working in the **main agent** for one search + one `page()` read. Use a sub-agent only for multi-page research, and give it this same recipe (global `webbrowser`, `open` → `page`, no `show`).
 
 ## Availability
 
@@ -34,6 +55,7 @@ after one check instead of trying alternate imports.
 ## Sub-Agent First For Research
 
 - For broad web research, multi-page comparison, repeated search result triage, or anything likely to produce a lot of page text, delegate the browsing task to an `agent` sub-agent in explore mode.
+- The sub-agent must still use the global `webbrowser` API (`open` → `page`, no `require`, no `show` for ordinary reading). Sub-agents have their own CPSL session and **do not share open browser tabs** with the main agent—return extracted text/facts, not "I opened a browser."
 - Delegate broad research once. Give the helper a concrete output shape and ask it to return the best verified findings it has before its final turn; do not redo the same research in the main agent unless the helper reports a specific missing fact.
 - Keep the main conversation context focused on the user's request, the sub-agent task, and the concise result. Do not stream raw search result pages, long page dumps, or every visited URL into the main context unless the user asks for that detail.
 - Use the main agent directly only for small, targeted browsing where one or two page inspections are enough.
@@ -47,15 +69,14 @@ after one check instead of trying alternate imports.
 
 ## Defaults
 
-- `webbrowser.create()` and `webbrowser.open()` use lean resource mode by default in CPSL.
+- `webbrowser.create()` and `webbrowser.open()` use **lean** resource mode and **mobile** layout by default.
 - Lean mode avoids heavy resources such as images, media, and fonts for faster agent browsing.
-- Herm browser sessions default to a desktop-sized viewport, currently 1200px
-  wide by default. Do not resize a browser to phone dimensions unless the user
-  explicitly needs mobile rendering.
+- **Mobile layout** uses an ~390×844 viewport, a mobile Safari user agent, and WebKit mobile content mode. Prefer this for local search and most sites.
+- **Desktop layout** (`layout_mode="desktop"` or `webbrowser.set_layout(browser, "desktop")`) uses ~1200×900, desktop Safari UA, and desktop content mode. Use only when the mobile site blocks the task (missing controls, broken admin UI, etc.). The same browser id can switch either way; the host reloads the current URL when switching.
 - Use `{resource_mode="full"}` when visual resources are needed immediately.
 - Use full mode from the first navigation for heavy JavaScript apps, login flows,
   social sites, and any account action involving a private message, form, or
-  file transfer. Do not switch modes by reloading after preparing a draft.
+  file transfer. Do not switch resource modes by reloading after preparing a draft.
 - `webbrowser.show(browser)` is only for explicit user handoff. The native host should show the browser UI and promote lean pages to full mode before displaying them.
 - `webbrowser.type()` uses `{backend="auto"}` by default. Background pages remain attached to an offscreen native host. macOS uses AppKit key events. iOS uses a scene-associated window that cannot become key, temporarily sets `inputmode="none"`, and attempts WebKit's `UIKeyInput` responder without activating the software keyboard. If WebKit cannot expose that responder before committing text, it falls back once to a whole-string DOM edit. Read `result.typing.backendUsed`, `nativeAttempted`, `committedCharacterCount`, `fallbackReason`, `interruptionReason`, and host diagnostics instead of assuming which path ran. Use `{speed=4.0}` if you need to be explicit.
 
@@ -70,7 +91,11 @@ missing or sources conflict.
 
 ```lua
 local opened = webbrowser.open("https://www.google.com/search?q=site%3Aexample.com+query")
+print(opened)
 local browser = opened.browser
+
+-- Optional: desktop only if mobile UI is insufficient
+-- webbrowser.set_layout(browser, "desktop")
 
 local page = webbrowser.page(browser, {
   fields = {"title", "url", "text", "actions"},

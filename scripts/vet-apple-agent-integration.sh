@@ -404,6 +404,21 @@ require_match 'format_return_value' external/cpsl/core/src/sandbox.rs
 require_match 'print_table_serialized_as_json' external/cpsl/core/src/sandbox/tests.rs
 require_match 'tostring_table_serialized_as_json' external/cpsl/core/src/sandbox/tests.rs
 require_match 'help\(\).*authoritative module list' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'Cookbook \(do this first\)' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'webbrowser\.page\(browser' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'Never call `webbrowser\.show\(\)`' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'set_layout\(browser, "desktop"\)' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'Mobile by default' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'do not share open browser tabs' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'layoutMode' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'browserSetLayout' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'CPSLWebBrowserLayoutMode' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'mobileSafariUserAgent' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'set_layout' external/cpsl/core/src/webbrowser.rs
+require_match 'layout_mode' external/cpsl/core/src/webbrowser.rs
+require_match 'DEFAULT_LAYOUT_MODE' external/cpsl/core/src/webbrowser.rs
+require_match 'webbrowser\.page\(browser\) while staying in the background' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'set_layout\(browser, "desktop"\)' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift

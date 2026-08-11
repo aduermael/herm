@@ -25,7 +25,8 @@ final class CPSLWebBrowserService: ObservableObject {
     private let backgroundHost = CPSLWebBrowserBackgroundHost()
     private let keyboardMonitor = CPSLWebBrowserKeyboardMonitor()
 
-    private let defaultWindowSize = CGSize(width: 1200, height: 900)
+    /// Agent default: mobile phone viewport (sites often serve simpler mobile UIs).
+    private var defaultWindowSize: CGSize { CPSLWebBrowserLayoutMode.mobile.windowSize }
     private let maxInlineJSONBytes = 16_000
     private let activityDuration: TimeInterval = 1.6
     private static let maxBackgroundLeanBrowsers = 6
@@ -224,6 +225,7 @@ final class CPSLWebBrowserService: ObservableObject {
         case "browserCreate":
             let browser = try await createBrowser(
                 resourceMode: request.resourceMode ?? .lean,
+                layoutMode: request.layoutMode ?? .mobile,
                 networkPolicy: request.networkPolicy ?? .unrestricted
             )
             return success(browser: browser).merging(["message": "created"]) { _, new in new }
@@ -260,8 +262,8 @@ final class CPSLWebBrowserService: ObservableObject {
             let browser = try await requireBrowser(request.browser)
             applyNetworkPolicy(from: request, to: browser)
             browser.windowSize = CGSize(
-                width: CGFloat(request.windowWidth ?? Int(defaultWindowSize.width)),
-                height: CGFloat(request.windowHeight ?? Int(defaultWindowSize.height))
+                width: CGFloat(request.windowWidth ?? Int(browser.layoutMode.windowSize.width)),
+                height: CGFloat(request.windowHeight ?? Int(browser.layoutMode.windowSize.height))
             )
             browser.webView.frame = CGRect(origin: .zero, size: browser.windowSize)
             if !browser.isVisible {
@@ -269,6 +271,17 @@ final class CPSLWebBrowserService: ObservableObject {
             }
             refreshSummaries()
             return success(browser: browser).merging(["message": "resized"]) { _, new in new }
+
+        case "browserSetLayout":
+            let browser = try await requireBrowser(request.browser)
+            applyNetworkPolicy(from: request, to: browser)
+            let layoutMode = request.layoutMode ?? browser.layoutMode
+            try await applyLayoutMode(layoutMode, to: browser, reloadCurrentPage: true)
+            refreshSummaries()
+            return success(browser: browser).merging([
+                "message": "layout set",
+                "layoutMode": layoutMode.rawValue,
+            ]) { _, new in new }
 
         case "open":
             return try await open(request)
@@ -509,6 +522,7 @@ final class CPSLWebBrowserService: ObservableObject {
         }
 
         let resourceMode = request.resourceMode ?? .lean
+        let layoutMode = request.layoutMode ?? .mobile
         let networkPolicy = request.networkPolicy ?? .unrestricted
         guard networkPolicy.allows(url) else {
             throw CPSLWebBrowserError.message("Network access is denied by policy")
@@ -518,10 +532,15 @@ final class CPSLWebBrowserService: ObservableObject {
             browser = try await browserForOpen(
                 id: id,
                 resourceMode: resourceMode,
+                layoutMode: layoutMode,
                 networkPolicy: networkPolicy
             )
         } else {
-            browser = try await createBrowser(resourceMode: resourceMode, networkPolicy: networkPolicy)
+            browser = try await createBrowser(
+                resourceMode: resourceMode,
+                layoutMode: layoutMode,
+                networkPolicy: networkPolicy
+            )
         }
 
         let previousURL = browser.webView.url
@@ -554,6 +573,7 @@ final class CPSLWebBrowserService: ObservableObject {
 
     private func createBrowser(
         resourceMode: CPSLWebBrowserResourceMode,
+        layoutMode: CPSLWebBrowserLayoutMode = .mobile,
         networkPolicy: CPSLWebBrowserNetworkPolicy
     ) async throws -> CPSLWebBrowserSession {
         if resourceMode == .lean {
@@ -563,7 +583,8 @@ final class CPSLWebBrowserService: ObservableObject {
         let browser = try await makeBrowser(
             id: id,
             resourceMode: resourceMode,
-            windowSize: defaultWindowSize,
+            layoutMode: layoutMode,
+            windowSize: layoutMode.windowSize,
             networkPolicy: networkPolicy
         )
         browsers[id] = browser
@@ -593,6 +614,7 @@ final class CPSLWebBrowserService: ObservableObject {
     private func makeBrowser(
         id: String,
         resourceMode: CPSLWebBrowserResourceMode,
+        layoutMode: CPSLWebBrowserLayoutMode,
         windowSize: CGSize,
         networkPolicy: CPSLWebBrowserNetworkPolicy
     ) async throws -> CPSLWebBrowserSession {
@@ -602,7 +624,7 @@ final class CPSLWebBrowserService: ObservableObject {
         configuration.websiteDataStore = websiteDataStore
         #if canImport(UIKit)
         if #available(iOS 13.0, *) {
-            configuration.defaultWebpagePreferences.preferredContentMode = .desktop
+            configuration.defaultWebpagePreferences.preferredContentMode = layoutMode.contentMode
         }
         #endif
         let contentController = WKUserContentController()
@@ -612,7 +634,7 @@ final class CPSLWebBrowserService: ObservableObject {
         configuration.userContentController = contentController
 
         let webView = WKWebView(frame: CGRect(origin: .zero, size: windowSize), configuration: configuration)
-        webView.customUserAgent = Self.safariUserAgent()
+        webView.customUserAgent = layoutMode.userAgent
         webView.allowsBackForwardNavigationGestures = true
         let navigationDelegate = CPSLWebBrowserNavigationDelegate(
             policy: networkPolicy,
@@ -633,6 +655,7 @@ final class CPSLWebBrowserService: ObservableObject {
         let browser = CPSLWebBrowserSession(
             id: id,
             resourceMode: resourceMode,
+            layoutMode: layoutMode,
             webView: webView,
             windowSize: windowSize,
             networkPolicy: networkPolicy,
@@ -646,17 +669,22 @@ final class CPSLWebBrowserService: ObservableObject {
     private func browserForOpen(
         id: String,
         resourceMode: CPSLWebBrowserResourceMode,
+        layoutMode: CPSLWebBrowserLayoutMode,
         networkPolicy: CPSLWebBrowserNetworkPolicy
     ) async throws -> CPSLWebBrowserSession {
         if let browser = browsers[id] {
             if browser.resourceMode == resourceMode {
                 applyNetworkPolicy(networkPolicy, to: browser)
+                if browser.layoutMode != layoutMode {
+                    try await applyLayoutMode(layoutMode, to: browser, reloadCurrentPage: false)
+                }
                 lastBrowserID = id
                 return browser
             }
             let replacement = try await replacementBrowser(
                 for: browser,
                 resourceMode: resourceMode,
+                layoutMode: layoutMode,
                 networkPolicy: networkPolicy
             )
             browsers[id] = replacement
@@ -668,13 +696,52 @@ final class CPSLWebBrowserService: ObservableObject {
         let browser = try await makeBrowser(
             id: id,
             resourceMode: resourceMode,
-            windowSize: defaultWindowSize,
+            layoutMode: layoutMode,
+            windowSize: layoutMode.windowSize,
             networkPolicy: networkPolicy
         )
         browsers[id] = browser
         lastBrowserID = id
         refreshSummaries()
         return browser
+    }
+
+    private func applyLayoutMode(
+        _ layoutMode: CPSLWebBrowserLayoutMode,
+        to browser: CPSLWebBrowserSession,
+        reloadCurrentPage: Bool
+    ) async throws {
+        browser.layoutMode = layoutMode
+        browser.windowSize = layoutMode.windowSize
+        browser.webView.frame = CGRect(origin: .zero, size: browser.windowSize)
+        browser.webView.customUserAgent = layoutMode.userAgent
+        #if canImport(UIKit)
+        if #available(iOS 13.0, *) {
+            browser.webView.configuration.defaultWebpagePreferences.preferredContentMode =
+                layoutMode.contentMode
+        }
+        #endif
+        if browser.isVisible {
+            // Keep overlay web view sized for the new layout.
+            browser.webView.frame = CGRect(origin: .zero, size: browser.windowSize)
+        } else {
+            backgroundHost.attach(browser.webView, size: browser.windowSize)
+        }
+        guard reloadCurrentPage,
+              let urlString = browser.url?.nilIfEmpty ?? browser.webView.url?.absoluteString.nilIfEmpty,
+              let url = URL(string: urlString),
+              browser.networkPolicy.allows(url)
+        else {
+            return
+        }
+        let previousURL = browser.webView.url
+        browser.webView.load(Self.browserRequest(for: url))
+        try? await waitForDocumentReady(
+            browser,
+            requestedURL: url,
+            previousURL: previousURL,
+            timeout: 15
+        )
     }
 
     private func browserForUserHandoff(_ browser: CPSLWebBrowserSession) async throws -> CPSLWebBrowserSession {
@@ -701,12 +768,15 @@ final class CPSLWebBrowserService: ObservableObject {
     private func replacementBrowser(
         for browser: CPSLWebBrowserSession,
         resourceMode: CPSLWebBrowserResourceMode,
+        layoutMode: CPSLWebBrowserLayoutMode? = nil,
         networkPolicy: CPSLWebBrowserNetworkPolicy
     ) async throws -> CPSLWebBrowserSession {
+        let resolvedLayout = layoutMode ?? browser.layoutMode
         let replacement = try await makeBrowser(
             id: browser.id,
             resourceMode: resourceMode,
-            windowSize: browser.windowSize,
+            layoutMode: resolvedLayout,
+            windowSize: resolvedLayout.windowSize,
             networkPolicy: networkPolicy
         )
         replacement.isVisible = browser.isVisible
@@ -1689,6 +1759,7 @@ final class CPSLWebBrowserService: ObservableObject {
             "ok": true,
             "browser": browser.id,
             "resourceMode": browser.resourceMode.rawValue,
+            "layoutMode": browser.layoutMode.rawValue,
             "url": browser.url ?? browser.webView.url?.absoluteString ?? "",
             "windowWidth": Int(browser.windowSize.width.rounded()),
             "windowHeight": Int(browser.windowSize.height.rounded()),
@@ -1982,7 +2053,7 @@ final class CPSLWebBrowserService: ObservableObject {
         return request
     }
 
-    private static func safariUserAgent() -> String {
+    fileprivate static func desktopSafariUserAgent() -> String {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         let safariVersion = "\(version.majorVersion).\(version.minorVersion)"
         #if os(macOS)
@@ -1996,6 +2067,15 @@ final class CPSLWebBrowserService: ObservableObject {
         #else
         return "Mozilla/5.0 AppleWebKit/605.1.15 (KHTML, like Gecko) Version/\(safariVersion) Safari/605.1.15"
         #endif
+    }
+
+    fileprivate static func mobileSafariUserAgent() -> String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        let iosVersion = "\(version.majorVersion)_\(version.minorVersion)"
+        let safariVersion = "\(version.majorVersion).\(version.minorVersion)"
+        return "Mozilla/5.0 (iPhone; CPU iPhone OS \(iosVersion) like Mac OS X) "
+            + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+            + "Version/\(safariVersion) Mobile/15E148 Safari/604.1"
     }
 }
 
@@ -2455,6 +2535,7 @@ private final class CPSLWebBrowserSession {
     let id: String
     let createdAt = Date()
     var resourceMode: CPSLWebBrowserResourceMode
+    var layoutMode: CPSLWebBrowserLayoutMode
     let webView: WKWebView
     var windowSize: CGSize
     var latestActions: [String: CPSLWebBrowserAction] = [:]
@@ -2471,6 +2552,7 @@ private final class CPSLWebBrowserSession {
     init(
         id: String,
         resourceMode: CPSLWebBrowserResourceMode,
+        layoutMode: CPSLWebBrowserLayoutMode,
         webView: WKWebView,
         windowSize: CGSize,
         networkPolicy: CPSLWebBrowserNetworkPolicy,
@@ -2479,6 +2561,7 @@ private final class CPSLWebBrowserSession {
     ) {
         self.id = id
         self.resourceMode = resourceMode
+        self.layoutMode = layoutMode
         self.webView = webView
         self.windowSize = windowSize
         self.networkPolicy = networkPolicy
@@ -2492,6 +2575,7 @@ private final class CPSLWebBrowserSession {
             title: title ?? webView.title,
             url: url ?? webView.url?.absoluteString,
             resourceMode: resourceMode,
+            layoutMode: layoutMode,
             isVisible: isVisible,
             canGoBack: webView.canGoBack,
             canGoForward: webView.canGoForward,
@@ -2507,6 +2591,7 @@ struct CPSLWebBrowserSummary: Identifiable, Equatable, Sendable {
     let title: String?
     let url: String?
     let resourceMode: CPSLWebBrowserResourceMode
+    let layoutMode: CPSLWebBrowserLayoutMode
     let isVisible: Bool
     let canGoBack: Bool
     let canGoForward: Bool
@@ -2518,6 +2603,7 @@ struct CPSLWebBrowserSummary: Identifiable, Equatable, Sendable {
         var object: [String: Any] = [
             "browser": id,
             "resourceMode": resourceMode.rawValue,
+            "layoutMode": layoutMode.rawValue,
             "canGoBack": canGoBack,
             "canGoForward": canGoForward,
             "loading": isLoading,
@@ -2533,6 +2619,41 @@ struct CPSLWebBrowserSummary: Identifiable, Equatable, Sendable {
         }
         return object
     }
+}
+
+enum CPSLWebBrowserLayoutMode: String, Equatable, Sendable {
+    case mobile
+    case desktop
+
+    var windowSize: CGSize {
+        switch self {
+        case .mobile:
+            return CGSize(width: 390, height: 844)
+        case .desktop:
+            return CGSize(width: 1200, height: 900)
+        }
+    }
+
+    var userAgent: String {
+        switch self {
+        case .mobile:
+            return CPSLWebBrowserService.mobileSafariUserAgent()
+        case .desktop:
+            return CPSLWebBrowserService.desktopSafariUserAgent()
+        }
+    }
+
+    #if canImport(UIKit)
+    @available(iOS 13.0, *)
+    var contentMode: WKWebpagePreferences.ContentMode {
+        switch self {
+        case .mobile:
+            return .mobile
+        case .desktop:
+            return .desktop
+        }
+    }
+    #endif
 }
 
 enum CPSLWebBrowserResourceMode: String, Equatable, Sendable {
@@ -3197,6 +3318,7 @@ private struct CPSLWebBrowserRequest {
     let browsers: [String]
     let allBrowsers: Bool
     let resourceMode: CPSLWebBrowserResourceMode?
+    let layoutMode: CPSLWebBrowserLayoutMode?
     let url: String?
     let action: String?
     let value: String?
@@ -3242,6 +3364,11 @@ private struct CPSLWebBrowserRequest {
             resourceMode = CPSLWebBrowserResourceMode(rawValue: rawMode)
         } else {
             resourceMode = nil
+        }
+        if let rawLayout = object["layoutMode"] as? String {
+            layoutMode = CPSLWebBrowserLayoutMode(rawValue: rawLayout)
+        } else {
+            layoutMode = nil
         }
         url = object["url"] as? String
         action = object["action"] as? String
