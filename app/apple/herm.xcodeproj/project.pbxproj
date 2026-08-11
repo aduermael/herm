@@ -11,7 +11,7 @@
 		850B3BFB2FE8390E00A21FC8 /* cpsl.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 850B3BF92FE8390E00A21FC8 /* cpsl.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		850B3C062FE8390F00A21FDD /* BuildCPSLAnchor.c in Sources */ = {isa = PBXBuildFile; fileRef = 850B3C052FE8390F00A21FDC /* BuildCPSLAnchor.c */; };
 		85A100052FEA000000000005 /* herm/Generated/CPSLEnvConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */; };
-		85A100082FEA000000000008 /* herm/Generated/CPSLPCCRuntime.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A100072FEA000000000007 /* herm/Generated/CPSLPCCRuntime.generated.swift */; };
+		85B100022FEA000000000002 /* herm/Generated/CPSLPCCRuntime.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85B100012FEA000000000001 /* herm/Generated/CPSLPCCRuntime.generated.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -50,7 +50,7 @@
 		850B3C042FE8390F00A21FDB /* libBuildCPSL.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libBuildCPSL.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		850B3C052FE8390F00A21FDC /* BuildCPSLAnchor.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = BuildCPSLAnchor.c; sourceTree = "<group>"; };
 		85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = herm/Generated/CPSLEnvConstants.swift; sourceTree = SOURCE_ROOT; };
-		85A100072FEA000000000007 /* herm/Generated/CPSLPCCRuntime.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = herm/Generated/CPSLPCCRuntime.generated.swift; sourceTree = SOURCE_ROOT; };
+		85B100012FEA000000000001 /* herm/Generated/CPSLPCCRuntime.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = herm/Generated/CPSLPCCRuntime.generated.swift; sourceTree = SOURCE_ROOT; };
 		85D75D332FE62B6F0095BAB2 /* herm.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = herm.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1E22F983002D2D100D9F1DD /* hermTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = hermTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -114,7 +114,7 @@
 			isa = PBXGroup;
 			children = (
 				85A100042FEA000000000004 /* herm/Generated/CPSLEnvConstants.swift */,
-				85A100072FEA000000000007 /* herm/Generated/CPSLPCCRuntime.generated.swift */,
+				85B100012FEA000000000001 /* herm/Generated/CPSLPCCRuntime.generated.swift */,
 			);
 			name = "Generated Sources";
 			sourceTree = "<group>";
@@ -389,7 +389,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				85A100052FEA000000000005 /* herm/Generated/CPSLEnvConstants.swift in Sources */,
-				85A100082FEA000000000008 /* herm/Generated/CPSLPCCRuntime.generated.swift in Sources */,
+				85B100022FEA000000000002 /* herm/Generated/CPSLPCCRuntime.generated.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
