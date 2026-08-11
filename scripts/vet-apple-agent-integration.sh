@@ -195,6 +195,11 @@ require_match 'updateConversationModelIfMissing' app/apple/herm/Models/CPSLChatM
 require_match 'systemPrompt: String' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'currentSystemPrompt = conversation\.systemPrompt' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'systemPrompt: replaySystemPrompt' app/apple/herm/Models/CPSLChatModel.swift
+# Fresh system prompt every agent turn (not frozen at conversation create).
+require_match 'Rebuild every turn so prompt/skill guidance' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'currentSystemPrompt = promptForConversation' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'addingICloudMountContext\(to: promptForConversation\)' app/apple/herm/Models/CPSLChatModel.swift
+reject_match 'replayBasePrompt = currentSystemPrompt' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'storeLoadTask: Task<CPSLConversationStore, Error>' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'private func loadStore\(\) async throws -> CPSLConversationStore' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'let store = try await loadStore\(\)' app/apple/herm/Models/CPSLChatModel.swift

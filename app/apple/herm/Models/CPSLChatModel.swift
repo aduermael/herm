@@ -1471,8 +1471,11 @@ final class CPSLChatModel {
         do {
             var conversationID: String
             var parentID: String
+            // Rebuild every turn so prompt/skill guidance and available skills stay current
+            // (do not freeze the first-turn prompt for the life of the conversation).
             let availableSkills = await service.availableSkills()
             let promptForConversation = systemPrompt(with: availableSkills)
+            currentSystemPrompt = promptForConversation
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -1507,7 +1510,6 @@ final class CPSLChatModel {
                 selectedConversationID = conversationID
                 draftConversationID = UUID().uuidString
                 currentNodeID = parentID
-                currentSystemPrompt = promptForConversation
                 if let message = created.userNode.chatMessage {
                     messages.append(message)
                 }
@@ -1523,8 +1525,7 @@ final class CPSLChatModel {
             activeModel = modelID
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: modelID)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            let replayBasePrompt = currentSystemPrompt ?? promptForConversation
-            let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
+            let replaySystemPrompt = addingICloudMountContext(to: promptForConversation)
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,
