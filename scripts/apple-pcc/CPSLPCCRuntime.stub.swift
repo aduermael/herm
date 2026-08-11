@@ -1,6 +1,6 @@
 import Foundation
 
-/// Stub PCC runtime used when the active SDK lacks PrivateCloudComputeLanguageModel
+/// Stub PCC runtime used when the active SDK lacks iOS/macOS 27 PCC APIs
 /// (iOS/macOS 26.x and non-Apple hosts). Selection always falls back to OpenAI/Grok.
 enum CPSLPCCRuntime {
     static var isCompileTimeSupported: Bool { false }
