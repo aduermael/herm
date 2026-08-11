@@ -238,7 +238,26 @@ require_match 'activeReaderCount == 0' app/apple/herm/Services/CPSLICloudMountMa
 require_match '!writerInProgress' app/apple/herm/Services/CPSLICloudMountManager.swift
 require_match 'beginSessionUse\(\)' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'beginReadUse\(for:' app/apple/herm/Services/CPSLDebugService.swift
-require_match 'materializeMountsForAccess\(\)' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'materializePinnedContent\(\)' app/apple/herm/Services/CPSLDebugService.swift
+reject_match 'materializeMountsForAccess' \
+  app/apple/herm/Services/CPSLDebugService.swift \
+  app/apple/herm/Services/CPSLICloudMountManager.swift
+require_match 'Download-on-demand' app/apple/herm/Services/CPSLICloudMountManager.swift
+require_match 'materializePinnedContent' app/apple/herm/Services/CPSLICloudMountManager.swift
+require_match 'async let mountsReady' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'async let conversationsReady' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'isLoadingConversations' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'CPSLConversationListPresentation' app/apple/herm/Models/CPSLConversationListPresentation.swift
+require_match 'Loading conversations' app/apple/herm/Views/Chat/CPSLConversationDrawerView.swift
+require_match 'CPSLFileSyncState' app/apple/herm/Services/CPSLICloudFileMaterializer.swift
+require_match 'CPSLFileSyncStateBadge' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'accessMode: \.readWrite' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'Keep Downloaded' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'hasVisibleConversations' app/apple/herm/Models/CPSLConversationListPresentation.swift
+require_match 'hasVisibleConversations: !sectionGroups\.isEmpty' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'prefetchSmallCloudFiles' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'beginReadUse\(for: prefetchPath\)' app/apple/herm/Services/CPSLDebugService.swift
+require_match 'entry\.path == mount\.virtualPath' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'materializeFile\(at:' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'lifetimeToken: mountUseLease' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'withExtendedLifetime\(request\.lifetimeToken\)' app/apple/herm/Services/CPSLDebugService.swift
@@ -420,11 +439,10 @@ require_match 'title: "Cloud Drives"' app/apple/herm/Views/Files/CPSLFileBrowser
 require_match 'actionTitle: "Connect"' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'model\.dictation\.finish\(\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'guard isICloudImporterPending, !model\.dictation\.isActive else' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
-require_match 'Button\("Read Only"\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
-require_match 'Button\("Read & Write"\)' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+reject_match 'isICloudAccessModePickerPresented|iCloud Folder Access' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'Make Read Only' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
+require_match 'Make Read & Write' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'CPSLICloudMountAccessBadge' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
-require_match 'add, edit, and delete files' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
-require_match 'iCloud Drive syncs those changes' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'iCloudMount\(containing: preview\.path\).*accessMode' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'iCloudMount\(containing: model\.browserPath\).*accessMode' app/apple/herm/Views/Files/CPSLFileBrowserView.swift
 require_match 'try Task\.checkCancellation\(\)' app/apple/herm/Services/CPSLDictationService.swift
@@ -558,6 +576,24 @@ if command -v swiftc >/dev/null 2>&1; then
     scripts/vet-apple-icloud-mount-manager.swift \
     -o /tmp/herm-vet-icloud-mount-manager
   /tmp/herm-vet-icloud-mount-manager
+  swiftc \
+    app/apple/herm/Models/CPSLConversationListPresentation.swift \
+    scripts/vet-apple-bootstrap-loading.swift \
+    -o /tmp/herm-vet-bootstrap-loading
+  /tmp/herm-vet-bootstrap-loading
+  swiftc \
+    app/apple/herm/Services/CPSLICloudFileMaterializer.swift \
+    scripts/vet-apple-icloud-sync-policy.swift \
+    -o /tmp/herm-vet-icloud-sync-policy
+  /tmp/herm-vet-icloud-sync-policy
+  swiftc \
+    app/apple/herm/Models/CPSLICloudMount.swift \
+    app/apple/herm/Services/CPSLICloudBookmarkAccess.swift \
+    app/apple/herm/Services/CPSLICloudFileMaterializer.swift \
+    app/apple/herm/Services/CPSLICloudMountManager.swift \
+    scripts/vet-apple-icloud-on-demand.swift \
+    -o /tmp/herm-vet-icloud-on-demand
+  /tmp/herm-vet-icloud-on-demand
   if [[ "$(uname -s)" == "Darwin" ]]; then
     swiftc \
       app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \

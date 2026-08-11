@@ -328,7 +328,7 @@ final class CPSLCalendarService: ObservableObject {
 }
 
 private extension String {
-    var cpslNilIfEmpty: String? {
+    nonisolated var cpslNilIfEmpty: String? {
         isEmpty ? nil : self
     }
 }

@@ -50,7 +50,10 @@ final class CPSLChatModel {
     private(set) var isLocationOpen = false
     private(set) var isLocationActivityActive = false
     private(set) var iCloudMounts: [CPSLICloudMount] = []
-    private(set) var isUpdatingICloudMounts = true
+    /// True only while the user is actively connecting/removing a mount — not during launch prepare.
+    private(set) var isUpdatingICloudMounts = false
+    /// True until the first conversation store load attempt finishes (success or failure).
+    private(set) var isLoadingConversations = true
     private(set) var iCloudImportProgress: CPSLICloudImportProgress?
     private(set) var allTags: [CPSLTag] = []
     var searchText: String = ""
@@ -58,7 +61,20 @@ final class CPSLChatModel {
     private(set) var showingArchived = false
 
     var isBusy: Bool {
+        // Launch mount prepare does not lock chat; only active mutations do.
         isRunning || isUpdatingICloudMounts || isManagingFiles
+    }
+
+    var conversationListPresentation: CPSLConversationListPresentation {
+        let isSearching = !searchText.trimmingCharacters(in: .whitespaces).isEmpty
+            || !activeTagIDs.isEmpty
+        // Use filtered section emptiness so text search with zero hits shows "No matches".
+        return .resolve(
+            isLoading: isLoadingConversations,
+            isSearching: isSearching,
+            showingArchived: showingArchived,
+            hasVisibleConversations: !sectionGroups.isEmpty
+        )
     }
 
     let service: CPSLDebugService
@@ -953,7 +969,7 @@ final class CPSLChatModel {
 
     func importICloudDirectory(
         _ url: URL,
-        accessMode: CPSLICloudMountAccessMode
+        accessMode: CPSLICloudMountAccessMode = .readWrite
     ) {
         guard !isBusy else {
             fileBrowserError = "Wait for the current operation to finish before adding an iCloud folder."
@@ -990,6 +1006,50 @@ final class CPSLChatModel {
                 return
             } catch {
                 self?.fileBrowserError = "iCloud: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func setICloudMountAccessMode(
+        _ accessMode: CPSLICloudMountAccessMode,
+        at path: String
+    ) {
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before changing access."
+            return
+        }
+        fileBrowserError = nil
+        isUpdatingICloudMounts = true
+        Task {
+            defer { isUpdatingICloudMounts = false }
+            do {
+                try await service.setICloudMountAccessMode(accessMode, at: path)
+                iCloudMounts = await service.activeICloudMounts()
+                if isFileBrowserOpen {
+                    loadBrowserPath(browserPath)
+                }
+            } catch {
+                fileBrowserError = "iCloud: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func setKeepDownloaded(_ keep: Bool, at path: String) {
+        guard !isBusy else {
+            fileBrowserError = "Wait for the current operation to finish before changing download state."
+            return
+        }
+        fileBrowserError = nil
+        isUpdatingICloudMounts = true
+        Task {
+            defer { isUpdatingICloudMounts = false }
+            do {
+                try await service.setKeepDownloaded(keep, at: path)
+                if isFileBrowserOpen {
+                    loadBrowserPath(browserPath)
+                }
+            } catch {
+                fileBrowserError = "iCloud: \(error.localizedDescription)"
             }
         }
     }
@@ -1157,6 +1217,16 @@ final class CPSLChatModel {
     }
 
     private func bootstrap() async {
+        // Conversations and mounts load in parallel — neither waits on the other.
+        async let mountsReady: Void = prepareMountsAndSandbox()
+        async let conversationsReady: Void = loadConversationsAtLaunch()
+        _ = await (mountsReady, conversationsReady)
+        if selectedConversationID == nil, messages.isEmpty, let first = conversations.first {
+            await loadConversation(id: first.id)
+        }
+    }
+
+    private func prepareMountsAndSandbox() async {
         do {
             iCloudMounts = try await service.prepareICloudMounts()
         } catch {
@@ -1169,11 +1239,11 @@ final class CPSLChatModel {
         } catch {
             appendErrorMessage(title: "Files", body: error.localizedDescription)
         }
-        isUpdatingICloudMounts = false
+    }
+
+    private func loadConversationsAtLaunch() async {
+        defer { isLoadingConversations = false }
         await reloadConversations()
-        if selectedConversationID == nil, messages.isEmpty, let first = conversations.first {
-            await loadConversation(id: first.id)
-        }
     }
 
     private func loadStore() async throws -> CPSLConversationStore {

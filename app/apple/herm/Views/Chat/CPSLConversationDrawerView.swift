@@ -271,34 +271,30 @@ private struct CPSLConversationListView: View {
     @Binding var tagSheetConversationID: String?
     @Binding var renamingConversation: CPSLConversationSummary?
 
-    private var isSearching: Bool {
-        !model.searchText.trimmingCharacters(in: .whitespaces).isEmpty || !model.activeTagIDs.isEmpty
-    }
-
     var body: some View {
         let groups = model.sectionGroups
-        if groups.isEmpty {
-            emptyState
-        } else {
+        switch model.conversationListPresentation {
+        case .populated:
             list(groups)
-        }
-    }
-
-    @ViewBuilder
-    private var emptyState: some View {
-        if isSearching {
+        case .loading:
+            CPSLDrawerEmptyState(
+                art: { ProgressView() },
+                title: CPSLConversationListPresentation.loading.title ?? "Loading conversations",
+                message: "Restoring chats from storage…"
+            )
+        case .emptySearch:
             CPSLDrawerEmptyState(
                 art: { CPSLDrawerEmptyArt.logo },
                 title: "No matches",
                 message: "Try a different search, or clear the filter."
             )
-        } else if model.showingArchived {
+        case .emptyArchived:
             CPSLDrawerEmptyState(
                 art: { CPSLDrawerEmptyArt.symbol("archivebox") },
                 title: "Nothing archived",
                 message: "Conversations you archive will show up here."
             )
-        } else {
+        case .emptyFresh:
             CPSLDrawerEmptyState(
                 art: { CPSLDrawerEmptyArt.logo },
                 title: "No conversations yet",

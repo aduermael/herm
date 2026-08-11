@@ -16,6 +16,19 @@ assert_contains() {
 
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 repo_root=$(CDPATH= cd "$script_dir/.." && pwd -P)
+
+# Bazel rules_rust does not expand Cargo feature deps. The apple-app profile
+# must list every ffi cfg feature that Cargo's `embedded-agent` enables.
+bazel_build="$repo_root/BUILD.bazel"
+assert_contains "Bazel apple profile webbrowser" '"webbrowser"' "$bazel_build"
+assert_contains "Bazel apple profile location" '"location"' "$bazel_build"
+assert_contains "Bazel apple profile calendar" '"calendar"' "$bazel_build"
+assert_contains "Bazel apple profile doc" '"doc"' "$bazel_build"
+assert_contains "Bazel apple profile pdfium-render" '"pdfium-render"' "$bazel_build"
+assert_contains "Bazel apple profile embedded-agent" '"embedded-agent"' "$bazel_build"
+assert_contains "Bazel core apple webbrowser module" '"mod-webbrowser"' "$bazel_build"
+assert_contains "Bazel core apple location module" '"mod-location"' "$bazel_build"
+
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cpsl-apple-build-integration.XXXXXX")
 cleanup() {
 	status=$?

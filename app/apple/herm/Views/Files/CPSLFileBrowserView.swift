@@ -181,9 +181,6 @@ struct CPSLFileBrowserView: View {
     let model: CPSLChatModel
     @State private var isICloudImporterPresented = false
     @State private var isICloudImporterPending = false
-    @State private var isICloudAccessModePickerPresented = false
-    @State private var isICloudAccessModePickerPending = false
-    @State private var selectedICloudDirectory: URL?
     @State private var isSelectingFiles = false
     @State private var selectedEntriesByPath: [String: CPSLFileEntry] = [:]
     @State private var movingEntries: [CPSLFileEntry] = []
@@ -200,36 +197,15 @@ struct CPSLFileBrowserView: View {
                 switch result {
                 case .success(let urls):
                     if let url = urls.first {
-                        selectedICloudDirectory = url
-                        isICloudAccessModePickerPending = true
-                        presentICloudAccessModePickerIfReady()
+                        // Herm policy default: read-write. Mode can be changed on the mount later.
+                        model.importICloudDirectory(url, accessMode: .readWrite)
                     }
                 case .failure(let error):
                     model.reportICloudImportError(error)
                 }
             }
-            .confirmationDialog(
-                "iCloud Folder Access",
-                isPresented: $isICloudAccessModePickerPresented,
-                titleVisibility: .visible
-            ) {
-                Button("Read Only") {
-                    chooseICloudAccessMode(.readOnly)
-                }
-                Button("Read & Write") {
-                    chooseICloudAccessMode(.readWrite)
-                }
-                Button("Cancel", role: .cancel) {
-                    selectedICloudDirectory = nil
-                }
-            } message: {
-                Text(
-                    "Read Only prevents Herm from changing the folder. Read & Write lets Herm add, edit, and delete files in the selected folder; iCloud Drive syncs those changes."
-                )
-            }
             .onChange(of: model.dictation.isActive) { _, isActive in
                 if !isActive {
-                    presentICloudAccessModePickerIfReady()
                     presentICloudImporterIfReady()
                 }
             }
@@ -352,25 +328,6 @@ struct CPSLFileBrowserView: View {
         isICloudImporterPending = true
         model.dictation.finish()
         presentICloudImporterIfReady()
-    }
-
-    private func presentICloudAccessModePickerIfReady() {
-        guard isICloudAccessModePickerPending, !model.dictation.isActive else {
-            return
-        }
-        isICloudAccessModePickerPending = false
-        isICloudAccessModePickerPresented = true
-    }
-
-    private func chooseICloudAccessMode(_ accessMode: CPSLICloudMountAccessMode) {
-        guard let selectedICloudDirectory else {
-            return
-        }
-        self.selectedICloudDirectory = nil
-        model.importICloudDirectory(
-            selectedICloudDirectory,
-            accessMode: accessMode
-        )
     }
 
     private func presentICloudImporterIfReady() {
@@ -662,6 +619,17 @@ private struct CPSLFileBrowserActions {
 
     func removeICloudMount(_ entry: CPSLFileEntry) {
         model.removeICloudMount(entry)
+    }
+
+    func setICloudAccessMode(
+        _ accessMode: CPSLICloudMountAccessMode,
+        at path: String
+    ) {
+        model.setICloudMountAccessMode(accessMode, at: path)
+    }
+
+    func setKeepDownloaded(_ keep: Bool, at path: String) {
+        model.setKeepDownloaded(keep, at: path)
     }
 
     func showComingSoon(_ message: String) {
@@ -1403,7 +1371,9 @@ private struct CPSLFileBrowserRowView: View {
                     onDelete: {
                         actions.requestDelete([entry])
                     },
-                    onRemove: iCloudMountRemoval(for: entry)
+                    onRemove: iCloudMountRemoval(for: entry),
+                    onSetAccessMode: iCloudMountAccessModeSetter(for: entry),
+                    onSetKeepDownloaded: iCloudKeepDownloadedSetter(for: entry)
                 )
             case .loading(_, let depth):
                 CPSLInlineFileLoadingView(depth: depth)
@@ -1429,6 +1399,36 @@ private struct CPSLFileBrowserRowView: View {
     ) -> CPSLICloudMountAccessMode? {
         actions.iCloudMounts.first { $0.virtualPath == entry.path }?.accessMode
     }
+
+    private func iCloudMountAccessModeSetter(
+        for entry: CPSLFileEntry
+    ) -> ((CPSLICloudMountAccessMode) -> Void)? {
+        guard isICloudMountEntry(entry) else {
+            return nil
+        }
+        return { mode in
+            actions.setICloudAccessMode(mode, at: entry.path)
+        }
+    }
+
+    private func iCloudKeepDownloadedSetter(
+        for entry: CPSLFileEntry
+    ) -> ((Bool) -> Void)? {
+        guard !actions.isBusy else {
+            return nil
+        }
+        // Mount roots and any path under a connected mount can be pinned.
+        let underMount = actions.iCloudMounts.contains { mount in
+            entry.path == mount.virtualPath
+                || entry.path.hasPrefix("\(mount.virtualPath)/")
+        }
+        guard underMount else {
+            return nil
+        }
+        return { keep in
+            actions.setKeepDownloaded(keep, at: entry.path)
+        }
+    }
 }
 
 private struct CPSLFileRowView: View {
@@ -1445,6 +1445,8 @@ private struct CPSLFileRowView: View {
     let onMove: () -> Void
     let onDelete: () -> Void
     let onRemove: (() -> Void)?
+    let onSetAccessMode: ((CPSLICloudMountAccessMode) -> Void)?
+    let onSetKeepDownloaded: ((Bool) -> Void)?
 
     var body: some View {
         HStack(spacing: CPSLTheme.small) {
@@ -1473,6 +1475,10 @@ private struct CPSLFileRowView: View {
                         CPSLFileReadOnlyBadge()
                     }
 
+                    if let syncState = entry.syncState {
+                        CPSLFileSyncStateBadge(state: syncState)
+                    }
+
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1483,15 +1489,53 @@ private struct CPSLFileRowView: View {
             .disabled(isMoving && !entry.isDirectory)
 
             if case .browsing = mode, let onRemove {
-                Button(action: onRemove) {
-                    Image(systemName: "eject.fill")
+                Menu {
+                    if let accessMode, let onSetAccessMode {
+                        if accessMode == .readWrite {
+                            Button("Make Read Only") {
+                                onSetAccessMode(.readOnly)
+                            }
+                        } else {
+                            Button("Make Read & Write") {
+                                onSetAccessMode(.readWrite)
+                            }
+                        }
+                    }
+                    if let onSetKeepDownloaded {
+                        if entry.syncState != .keepDownloaded {
+                            Button {
+                                onSetKeepDownloaded(true)
+                            } label: {
+                                Label("Keep Downloaded", systemImage: "pin.circle")
+                            }
+                        }
+                        if entry.syncState == .keepDownloaded {
+                            Button {
+                                onSetKeepDownloaded(false)
+                            } label: {
+                                Label("Remove Download", systemImage: "icloud")
+                            }
+                        }
+                    }
+                    Button(role: .destructive, action: onRemove) {
+                        Label("Disconnect", systemImage: "eject.fill")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
                         .font(CPSLTheme.iconSmallFont)
                         .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(CPSLTheme.secondaryText)
-                .accessibilityLabel(Text("Unmount iCloud Folder"))
+                .accessibilityLabel(Text("iCloud Folder Actions"))
+            } else if case .browsing = mode, let onSetKeepDownloaded {
+                CPSLFileICloudActionMenu(
+                    syncState: entry.syncState,
+                    onMove: canModify ? onMove : nil,
+                    onDelete: canModify ? onDelete : nil,
+                    onSetKeepDownloaded: onSetKeepDownloaded
+                )
             } else if case .browsing = mode, canModify {
                 CPSLFileActionMenu(onMove: onMove, onDelete: onDelete)
             }
@@ -1559,6 +1603,61 @@ private struct CPSLFileActionMenu: View {
             }
             Button(role: .destructive, action: onDelete) {
                 Label("Delete", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(CPSLTheme.iconSmallFont)
+                .frame(width: CPSLTheme.controlSize, height: CPSLTheme.controlSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.secondaryText)
+        .accessibilityLabel("File actions")
+    }
+}
+
+private struct CPSLFileSyncStateBadge: View {
+    let state: CPSLFileSyncState
+
+    var body: some View {
+        Image(systemName: state.systemImageName)
+            .font(CPSLTheme.iconFont(size: CPSLTheme.FontSize.caption, weight: .semibold))
+            .foregroundStyle(CPSLTheme.secondaryText)
+            .accessibilityLabel(Text(state.accessibilityLabel))
+    }
+}
+
+private struct CPSLFileICloudActionMenu: View {
+    let syncState: CPSLFileSyncState?
+    let onMove: (() -> Void)?
+    let onDelete: (() -> Void)?
+    let onSetKeepDownloaded: (Bool) -> Void
+
+    var body: some View {
+        Menu {
+            if syncState != .keepDownloaded {
+                Button {
+                    onSetKeepDownloaded(true)
+                } label: {
+                    Label("Keep Downloaded", systemImage: "pin.circle")
+                }
+            }
+            if syncState == .keepDownloaded || syncState == .local {
+                Button {
+                    onSetKeepDownloaded(false)
+                } label: {
+                    Label("Remove Download", systemImage: "icloud")
+                }
+            }
+            if let onMove {
+                Button(action: onMove) {
+                    Label("Move…", systemImage: "folder")
+                }
+            }
+            if let onDelete {
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
