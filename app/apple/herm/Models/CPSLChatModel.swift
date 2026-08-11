@@ -138,12 +138,11 @@ final class CPSLChatModel {
     Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Preparing document", "Checking export", or "Saving result". Do not mention code, sandbox details, paths, module names, tool names, API names, file extensions, HTTP, or implementation details in intent.
     Every agent call must also include intent: a short user-facing description of its expected work. Describe the action itself; never mention a helper, agent, delegation, tool, code, paths, or implementation details.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
-    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures. Use signatures from a skill file only after you have already loaded it with fs.read. Call help() or a module's help function only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
+    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures. Prefer CPSL module.help() or a skill file you already loaded into this conversation. Call help() only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
     Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list. require() is only for relative/package module paths (./, ../, @) and never for skills or built-in modules such as location, calendar, or fs.
-    Skills are markdown instruction files under /skills/<name>/SKILL.md, not Luau modules. The only correct way to load a skill is fs.read of that path, for example: print(fs.read("/skills/apple-context/SKILL.md")). Forbidden: require("apple-context"), require("/skills/..."), require("./skills/..."), or any require of a skill name or skill path.
     Treat help output as human-readable documentation. When help is actually needed, call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
-    Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed. print() serializes tables as JSON so nested fields are visible; do not assume a bare "table" string means data is missing.
-    Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. They are globals (calendar, location), not skill requires. Prefer reading the apple-context skill via fs.read before first use, then call location.status() / location.current() or calendar.status() as documented. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
+    Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed. print() and tostring() serialize tables as JSON so nested fields are visible; do not assume a bare "table" string means data is missing.
+    Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. They are globals (calendar, location). For first use of either, load the apple-context skill into this conversation first (see Skills section), then call location.status() / location.current() or calendar.status() as that skill documents. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
     If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available through CPSL.
     When a requested artifact cannot be produced, do not claim success. Mention any partial artifact only as a fallback, and make clear it is not the requested output.
     agent spawns a focused sub-agent with its own turn budget. Use explore mode for research and reading. Use general mode for execution-heavy or implementation-style work. Keep sub-agent tasks narrow and self-contained.
@@ -158,14 +157,37 @@ final class CPSLChatModel {
             return systemPrompt
         }
         let skillLines = skills.map {
-            "- **\($0.name)**: \($0.description)\n  Load with: `print(fs.read(\"\($0.path)\"))` — never require()."
+            """
+            - **\($0.name)**: \($0.description)
+              Path: `\($0.path)`
+              Load into context (mandatory before first use of this skill's domain): call the **local_sandbox_exec** tool with Luau source:
+              `print(fs.read("\($0.path)"))`
+              Intent example: "Reading skill guide". Do not use require().
+            """
         }.joined(separator: "\n")
         return systemPrompt + """
 
 
-        ## Skills
+        ## Skills (Herm concept — not a built-in LLM feature)
 
-        The following skills are available. Their full instructions are not loaded into this prompt. When a skill is relevant to the user's task, call local_sandbox_exec and fs.read the listed path (see each "Load with" line) before acting or claiming the task cannot be completed, then follow that file's instructions and read any referenced support files from the same folder as needed. Skills are markdown files, not require()-able modules; require("skill-name") always fails.
+        A **skill** in Herm is an on-disk markdown guide (a `SKILL.md` file) with step-by-step instructions for a domain (browser, calendar/location, PDFs, vision, …). Skills are **not** automatically in your context. The list below is only a catalog: names, short descriptions, and file paths. The full skill text is **not** included in this system prompt and is **not** available until you load it.
+
+        **How a skill enters your context**
+        1. Decide the skill is relevant from the catalog below.
+        2. Call the **local_sandbox_exec** tool (this is the only channel that can put sandbox output into the conversation).
+        3. In that tool call, run Luau that prints the file, e.g. `print(fs.read("/skills/apple-context/SKILL.md"))`.
+        4. Read the tool result: that returned markdown **is** the skill loaded into context for later turns. Then follow it.
+        5. If the skill points at support files in the same folder, load those the same way with `fs.read` + `print` through local_sandbox_exec.
+
+        **What does not load a skill**
+        - Naming the skill in assistant text without a tool call
+        - `require("apple-context")`, `require("/skills/...")`, `require("./skills/...")`, or any `require` of a skill path (skills are not Luau modules; require always fails for them)
+        - Assuming the catalog description is enough to skip the file
+
+        **When to load**
+        Before acting on a skill's domain—or claiming you cannot complete a related task—load that skill first (unless its full text is already present earlier in this conversation from a previous tool result). Example: calendar/location → load apple-context; websites → load webbrowser.
+
+        ### Catalog
 
         \(skillLines)
         """

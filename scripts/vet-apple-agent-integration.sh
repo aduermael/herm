@@ -373,13 +373,18 @@ require_match 'let callbackBox = CPSLWebBrowserCallbackBox\(service: webBrowser\
   app/apple/herm/Services/CPSLDebugService.swift
 require_match 'let allowedDomains = \["\*"\]' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'do not use require to load them' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Skills are markdown instruction files' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Skills \(Herm concept' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'not automatically in your context' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'How a skill enters your context' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'local_sandbox_exec' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'print\(fs\.read\("/skills/apple-context/SKILL\.md"\)\)' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Forbidden: require\("apple-context"\)' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'print\(\) serializes tables as JSON' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'What does not load a skill' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'require\("apple-context"\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'print\(\) and tostring\(\) serialize tables as JSON' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'location\.status\(\) / location\.current\(\)' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Load with: `print\(fs\.read' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'require\("skill-name"\) always fails' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Load into context \(mandatory before first use' app/apple/herm/Models/CPSLChatModel.swift
+require_match '### Catalog' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'load the apple-context skill into this conversation first' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Do \*\*not\*\* `require\("apple-context"\)`' app/apple/herm/Skills/apple-context/SKILL.md
 require_match 'here\.location\.latitude' app/apple/herm/Skills/apple-context/SKILL.md
 require_match 'here\.location\.city' app/apple/herm/Skills/apple-context/SKILL.md
