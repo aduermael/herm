@@ -1,8 +1,8 @@
 ---
 name: webbrowser
-description: Use CPSL's native webbrowser module for web search, browsing, authenticated website interaction, forms, file uploads and downloads, screenshots, and user handoff.
+description: Use the native webbrowser module for web search, browsing, authenticated website interaction, forms, file uploads and downloads, screenshots, and user handoff.
 metadata:
-  short-description: Native WebKit browsing and authenticated website interaction through CPSL primitives.
+  short-description: Native WebKit browsing and authenticated website interaction
 ---
 
 # Webbrowser
@@ -55,7 +55,7 @@ after one check instead of trying alternate imports.
 ## Sub-Agent First For Research
 
 - For broad web research, multi-page comparison, repeated search result triage, or anything likely to produce a lot of page text, delegate the browsing task to an `agent` sub-agent in explore mode.
-- The sub-agent must still use the global `webbrowser` API (`open` → `page`, no `require`, no `show` for ordinary reading). Sub-agents have their own CPSL session and **do not share open browser tabs** with the main agent—return extracted text/facts, not "I opened a browser."
+- The sub-agent must still use the global `webbrowser` API (`open` → `page`, no `require`, no `show` for ordinary reading). Sub-agents have their own sandbox session and **do not share open browser tabs** with the main agent—return extracted text/facts, not "I opened a browser."
 - Delegate broad research once. Give the helper a concrete output shape and ask it to return the best verified findings it has before its final turn; do not redo the same research in the main agent unless the helper reports a specific missing fact.
 - Keep the main conversation context focused on the user's request, the sub-agent task, and the concise result. Do not stream raw search result pages, long page dumps, or every visited URL into the main context unless the user asks for that detail.
 - Use the main agent directly only for small, targeted browsing where one or two page inspections are enough.
@@ -151,7 +151,7 @@ user explicitly asks. Report the actual result, including every side effect.
 ## File Uploads
 
 Use `webbrowser.upload()` when one visible action directly opens a file chooser.
-Pass that action and one CPSL path or an array of CPSL paths. The host arms a
+Pass that action and one sandbox path or an array of sandbox paths. The host arms a
 one-shot native file-picker handler, clicks the action, and gives WebKit the
 resolved on-device file URLs when the page opens its chooser.
 

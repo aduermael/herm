@@ -1,8 +1,8 @@
 ---
 name: apple-context
-description: Use CPSL calendar and location modules for user-approved Apple Calendar events and current device location.
+description: Use calendar and location modules for user-approved Apple Calendar events and current device location.
 metadata:
-  short-description: Calendar and location through CPSL
+  short-description: Calendar and location on device
 ---
 
 # Apple Context
@@ -17,7 +17,7 @@ This file is markdown under `/skills/apple-context/SKILL.md`. Read it with:
 print(fs.read("/skills/apple-context/SKILL.md"))
 ```
 
-Do **not** `require("apple-context")`, `require("/skills/apple-context")`, `require("/skills/apple-context/SKILL.md")`, or any other require path. Skills are not Luau modules. CPSL `calendar` and `location` are **globals** (listed by `help()`); call them directly after you understand the APIs below.
+Do **not** `require("apple-context")`, `require("/skills/apple-context")`, `require("/skills/apple-context/SKILL.md")`, or any other require path. Skills are not Luau modules. The `calendar` and `location` modules are **globals** (listed by `help()`); call them directly after you understand the APIs below.
 
 ## Permissions
 

@@ -262,18 +262,22 @@ require_match 'name: "local_sandbox_exec"' app/apple/herm/Services/Agent/CPSLOpe
 require_match 'name: "agent"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'availableTools\(allowsSubagents' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'maxCompletionTokens = "max_completion_tokens"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
-require_match 'CPSL, a Unix-like local environment' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Unix-like local sandbox' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Luau is the command interface instead of Bash' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'only supported execution language' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
-require_match 'Never guess CPSL API signatures' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Current directory for this request' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Never guess API signatures' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+reject_match 'CPSL, a Unix-like|Current CPSL directory|Never guess CPSL|through CPSL|CPSL vision|CPSL primitives' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'fs\.help\(\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Declare variables with local' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'external lua/luau interpreters' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Bash, Python, shell commands' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'module\.help\(\)' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'CPSL is your execution environment: a Unix-like local environment' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Your execution environment is a Unix-like local sandbox' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Luau is the interface instead of Bash' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Luau essentials' app/apple/herm/Models/CPSLChatModel.swift
+# Agent-facing prompt strings must not name the CPSL implementation detail.
+reject_match 'CPSL is your|through CPSL|in CPSL|CPSL directory|CPSL modules|CPSL API|outside CPSL|to CPSL|CPSL still|CPSL vision|CPSL primitives|CPSL calendar|CPSL session|CPSL path' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSLOpenAIError\.provider' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'CPSLOpenAIError\.invalidToolCall' scripts/vet-apple-openai-protocol.swift
 require_match 'validatedCompletion\(\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
@@ -419,7 +423,7 @@ require_match 'layout_mode' external/cpsl/core/src/webbrowser.rs
 require_match 'DEFAULT_LAYOUT_MODE' external/cpsl/core/src/webbrowser.rs
 require_match 'webbrowser\.page\(browser\) while staying in the background' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'set_layout\(browser, "desktop"\)' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Treat the sandbox as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'external renderers' app/apple/herm/Models/CPSLChatModel.swift
@@ -433,14 +437,16 @@ require_match 'print\(fs\.exists\("/home/herm/report\.pdf"\)\)' app/apple/herm/S
 require_match 'platform not supported' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'no PDF was produced' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'name: image-vision' app/apple/herm/Skills/image-vision/SKILL.md
-require_match 'short-description: Inspect images and PDFs with CPSL vision' app/apple/herm/Skills/image-vision/SKILL.md
+require_match 'short-description: Inspect images and PDFs with vision' app/apple/herm/Skills/image-vision/SKILL.md
+reject_match '\bCPSL\b' app/apple/herm/Skills/image-vision/SKILL.md app/apple/herm/Skills/apple-context/SKILL.md app/apple/herm/Skills/webbrowser/SKILL.md app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'mode = "vision"' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'doc\.readAsync' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'vision callback .* not available' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'Never claim to have seen or analyzed' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'target_os = "ios"' external/cpsl/modules/native-webview-pdf/src/lib.rs
 require_match '@page' app/apple/herm/Skills/beautiful-pdfs/print.css
-require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'Current directory:' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+reject_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'requestDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'promptPathLiteral' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
