@@ -373,6 +373,18 @@ require_match 'let callbackBox = CPSLWebBrowserCallbackBox\(service: webBrowser\
   app/apple/herm/Services/CPSLDebugService.swift
 require_match 'let allowedDomains = \["\*"\]' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'do not use require to load them' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Skills are markdown instruction files' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Never require\("apple-context"\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'fs\.read\("/skills/apple-context/SKILL\.md"\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'print\(\) serializes tables as JSON' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'location\.status\(\) / location\.current\(\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'fs\.read its skill file path' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Skills are not require\(\)-able modules' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Do \*\*not\*\* `require\("apple-context"\)`' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'here\.location\.latitude' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'print\(here\)' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'format_return_value' external/cpsl/core/src/sandbox.rs
+require_match 'print_table_serialized_as_json' external/cpsl/core/src/sandbox/tests.rs
 require_match 'help\(\).*authoritative module list' app/apple/herm/Skills/webbrowser/SKILL.md
 require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
