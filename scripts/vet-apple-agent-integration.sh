@@ -122,6 +122,8 @@ require_match 'OpenAI-compatible Chat Completions' docs/apple-agent-config.md
 require_match 'Private Cloud Compute' docs/apple-agent-config.md
 require_match 'PrivateCloudComputeLanguageModel' docs/apple-agent-config.md
 require_match 'apple/pcc' docs/apple-agent-config.md
+require_match 'private-cloud-compute' docs/apple-agent-config.md
+require_match 'contact/request/private-cloud-compute' docs/apple-agent-config.md
 require_match 'Do not ship real API tokens in the app bundle as resource files' docs/apple-agent-config.md
 require_match 'scripts/dev-apple-macos\.sh.*repo root' docs/apple-agent-config.md
 require_match 'Generate Env Constants' docs/apple-agent-config.md
@@ -142,10 +144,14 @@ require_match 'XAI_MODEL.*!= nil' app/apple/herm/Services/Agent/CPSLAgentConfig.
 
 require_match 'com.apple.developer.icloud-services' app/apple/herm/herm.entitlements
 require_match 'CloudDocuments' app/apple/herm/herm.entitlements
-require_match 'com.apple.developer.private-cloud-compute' app/apple/herm/herm.entitlements
 require_match 'com.apple.developer.icloud-services' app/apple/herm/herm-macOS.entitlements
 require_match 'CloudDocuments' app/apple/herm/herm-macOS.entitlements
-require_match 'com.apple.developer.private-cloud-compute' app/apple/herm/herm-macOS.entitlements
+# PCC entitlement is restricted (must be assigned by Apple). Do not ship it in
+# herm.entitlements until the team has capability approval — otherwise Xcode
+# fails profile generation. Documented in docs/apple-agent-config.md.
+reject_match 'com.apple.developer.private-cloud-compute' \
+  app/apple/herm/herm.entitlements \
+  app/apple/herm/herm-macOS.entitlements
 require_match 'com.apple.security.app-sandbox' app/apple/herm/herm-macOS.entitlements
 require_match 'com.apple.security.network.client' app/apple/herm/herm-macOS.entitlements
 require_match 'com.apple.security.files.user-selected.read-write' app/apple/herm/herm-macOS.entitlements

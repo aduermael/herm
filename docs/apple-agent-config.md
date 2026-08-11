@@ -17,9 +17,17 @@ PCC is gated by:
   the synchronized Agent sources.
 - runtime `CPSLPCCRuntime.isAvailable` (wraps
   `PrivateCloudComputeLanguageModel().isAvailable` in the full variant)
-- the `com.apple.developer.private-cloud-compute` entitlement on the app target
+- Apple **Private Cloud Compute entitlement** assigned to your developer
+  account (restricted capability — request at
+  [developer.apple.com/contact/request/private-cloud-compute](https://developer.apple.com/contact/request/private-cloud-compute/)
+  / [Accessing Private Cloud Compute](https://developer.apple.com/private-cloud-compute/)).
+  After approval, add `com.apple.developer.private-cloud-compute` = `true` to
+  `herm.entitlements` and `herm-macOS.entitlements`, then regenerate provisioning
+  profiles. The key is **not** shipped in those files by default: without
+  account assignment Xcode fails signing with “entitlement not found … could
+  not be included in profile.”
 
-When PCC is unavailable (older OS/SDK, ineligible device, missing entitlement, or
+When PCC is unavailable (older OS/SDK, no entitlement, ineligible device, or
 Apple Intelligence / PCC not ready), the agent falls back to the OpenAI-compatible
 path below. Vision and other non-agent OpenAI clients are unchanged.
 
