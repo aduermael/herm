@@ -375,7 +375,7 @@ require_match 'let callbackBox = CPSLWebBrowserCallbackBox\(service: webBrowser\
 require_match 'let allowedDomains = \["\*"\]' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'do not use require to load them' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Skills \(Herm concept' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'not automatically in your context' app/apple/herm/Models/CPSLChatModel.swift
+require_match '\*\*not\*\* automatically in your context' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'How a skill enters your context' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'local_sandbox_exec' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'print\(fs\.read\("/skills/apple-context/SKILL\.md"\)\)' app/apple/herm/Models/CPSLChatModel.swift
