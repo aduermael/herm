@@ -1,7 +1,25 @@
 # Apple Agent Configuration
 
-The Apple agent uses OpenAI-compatible Chat Completions endpoints only. Configure
-it with a local `.env` file:
+## Main agent provider selection
+
+On **iOS 27+ / macOS 27+** (and matching visionOS), when Apple **Private Cloud Compute**
+is available at runtime, the main agent completion path uses Foundation Models
+`PrivateCloudComputeLanguageModel` (`apple/pcc`) instead of Grok/xAI.
+
+PCC is gated by:
+
+- compile/runtime availability of the iOS 27 FoundationModels PCC APIs
+- `PrivateCloudComputeLanguageModel().isAvailable`
+- the `com.apple.developer.private-cloud-compute` entitlement on the app target
+
+When PCC is unavailable (older OS, ineligible device, missing entitlement, or
+Apple Intelligence / PCC not ready), the agent falls back to the OpenAI-compatible
+path below. Vision and other non-agent OpenAI clients are unchanged.
+
+## OpenAI-compatible fallback (and vision)
+
+Configure the OpenAI-compatible Chat Completions fallback (and vision) with a
+local `.env` file:
 
 ```dotenv
 OPENAI_BASE_URL=https://api.x.ai/v1

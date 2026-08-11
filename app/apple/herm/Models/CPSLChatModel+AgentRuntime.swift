@@ -32,7 +32,7 @@ extension CPSLChatModel {
             )
             try await context.store.recordProviderRequest(
                 conversationID: context.conversationID,
-                model: context.config.model,
+                model: context.modelID,
                 messages: request.messages,
                 tools: tools,
                 maxTokens: request.maxTokens,
@@ -130,6 +130,7 @@ extension CPSLChatModel {
                     context: CPSLToolExecutionContext(
                         client: context.client,
                         config: context.config,
+                        modelID: context.modelID,
                         agentDepth: 0,
                         requestDirectory: sandboxDirectory,
                         traceStore: context.store,
@@ -288,7 +289,7 @@ extension CPSLChatModel {
                 role: .hidden,
                 title: "Agent",
                 body: synthesisPrompt,
-                model: context.config.model,
+                model: context.modelID,
                 providerMessage: synthesisMessage
             )
         )
@@ -314,7 +315,7 @@ extension CPSLChatModel {
         )
         try await context.store.recordProviderRequest(
             conversationID: context.conversationID,
-            model: context.config.model,
+            model: context.modelID,
             messages: request.messages,
             tools: [],
             maxTokens: request.maxTokens,
@@ -510,7 +511,7 @@ extension CPSLChatModel {
                 role: .error,
                 title: "Agent",
                 body: body,
-                model: context.config.model,
+                model: context.modelID,
                 providerMessage: nil
             )
         )
@@ -833,6 +834,7 @@ extension CPSLChatModel {
             context: CPSLToolExecutionContext(
                 client: context.client,
                 config: context.config,
+                modelID: context.modelID,
                 agentDepth: childDepth,
                 requestDirectory: nil,
                 traceStore: context.traceStore,
@@ -905,7 +907,7 @@ extension CPSLChatModel {
                    let conversationID = context.conversationID {
                     try await traceStore.recordProviderRequest(
                         conversationID: conversationID,
-                        model: context.config.model,
+                        model: context.modelID,
                         messages: request.messages,
                         tools: tools,
                         maxTokens: request.maxTokens,
@@ -968,6 +970,7 @@ extension CPSLChatModel {
                         context: CPSLToolExecutionContext(
                             client: context.client,
                             config: context.config,
+                            modelID: context.modelID,
                             agentDepth: context.agentDepth,
                             requestDirectory: sandboxDirectory,
                             traceStore: context.traceStore,

@@ -1495,9 +1495,10 @@ final class CPSLChatModel {
             try Task.checkCancellation()
 
             let config = try CPSLAgentConfig.load()
-            let client = CPSLOpenAIClient(config: config)
-            activeModel = config.model
-            try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
+            let client = CPSLAgentChatClient(config: config)
+            let modelID = await client.modelID
+            activeModel = modelID
+            try await store.updateConversationModelIfMissing(conversationID: conversationID, model: modelID)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
             let replayBasePrompt = currentSystemPrompt ?? promptForConversation
             let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
@@ -1507,6 +1508,7 @@ final class CPSLChatModel {
                 conversationID: conversationID,
                 parentID: parentID,
                 config: config,
+                modelID: modelID,
                 systemPrompt: replaySystemPrompt,
                 providerMessages: providerMessages
             ) { nodeID in

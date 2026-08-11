@@ -1,11 +1,13 @@
 import Foundation
 
 struct CPSLProviderLoopContext {
-    let client: CPSLOpenAIClient
+    let client: CPSLAgentChatClient
     let store: CPSLConversationStore
     let conversationID: String
     var parentID: String
     let config: CPSLAgentConfig
+    /// Resolved provider model id (e.g. apple/pcc or the OpenAI model).
+    let modelID: String
     let systemPrompt: String
     var providerMessages: [CPSLOpenAIMessage]
     let onParentIDChange: (String) -> Void
@@ -35,8 +37,9 @@ struct CPSLPendingConversationContext {
 }
 
 struct CPSLToolExecutionContext {
-    let client: CPSLOpenAIClient
+    let client: CPSLAgentChatClient
     let config: CPSLAgentConfig
+    let modelID: String
     let agentDepth: Int
     let requestDirectory: String?
     let traceStore: CPSLConversationStore?
