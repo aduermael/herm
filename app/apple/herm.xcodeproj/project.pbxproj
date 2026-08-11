@@ -176,6 +176,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 85D75D3E2FE62B6F0095BAB2 /* Build configuration list for PBXNativeTarget "herm" */;
 			buildPhases = (
+				85C100012FFA000000000001 /* Link cells_xlsx */,
 				85A100032FEA000000000003 /* Generate Env Constants */,
 				85D75D2F2FE62B6F0095BAB2 /* Sources */,
 				85D75D302FE62B6F0095BAB2 /* Frameworks */,
@@ -364,6 +365,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -euo pipefail\nsrc=\"${SRCROOT}/herm/Skills\"\ndst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Skills\"\nrm -rf \"$dst\"\nif [ -d \"$src\" ]; then\n  mkdir -p \"$(dirname \"$dst\")\"\n  cp -R \"$src\" \"$dst\"\nfi\n";
+		};
+		85C100012FFA000000000001 /* Link cells_xlsx */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../scripts/link-cells-xlsx-for-xcode.sh",
+				"$(SRCROOT)/../../scripts/build-cells-xlsx-apple.sh",
+				"$(SRCROOT)/../../scripts/lib/cells-xlsx-apple.sh",
+			);
+			name = "Link cells_xlsx";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/cells-xlsx-linked.stamp",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/../../scripts/link-cells-xlsx-for-xcode.sh\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -555,6 +579,10 @@
 		85D75D3F2FE62B6F0095BAB2 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../.herm-cells/artifacts/apple/$(PLATFORM_NAME)/include";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../.herm-cells/artifacts/apple/$(PLATFORM_NAME)/lib";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../.herm-cells/artifacts/apple/$(PLATFORM_NAME)/include";
+				OTHER_LDFLAGS = "$(inherited) -lcells_xlsx -lc++";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = herm/herm.entitlements;
@@ -612,6 +640,10 @@
 		85D75D402FE62B6F0095BAB2 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../.herm-cells/artifacts/apple/$(PLATFORM_NAME)/include";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../.herm-cells/artifacts/apple/$(PLATFORM_NAME)/lib";
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/../../.herm-cells/artifacts/apple/$(PLATFORM_NAME)/include";
+				OTHER_LDFLAGS = "$(inherited) -lcells_xlsx -lc++";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = herm/herm.entitlements;

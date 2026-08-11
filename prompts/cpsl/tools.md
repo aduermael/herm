@@ -17,6 +17,7 @@ Use authenticated websites only through their normal browser flow. Do not unhide
 
 If network information is needed, use the sandbox `http` module. Run `http.help()` for usage and `http.policy()` for the current allowed and denied domains.
 If calendar, schedule, availability, current-location, nearby-place, or local-context information is needed, discover and use the sandbox `calendar` and `location` modules when available. Access states are `granted`, `denied`, or `undefined`; undefined access may prompt the user, while denied access must be fixed by the user in iOS Settings or macOS System Settings. Do not request calendar or location access unless it materially helps with the user's request.
+If Excel/spreadsheet work is needed (`.xlsx` create/open/read/write/edit), discover and use the sandbox `xlsx` module when available (`help()` lists it; run `xlsx.help()` for usage). There is no separate `cells` module — spreadsheet support is exposed as `xlsx`.
 
 When `calendar.help()` exposes `calendar.attach`, use it to associate sandbox files with an event in Herm. These are durable Herm-managed attachments, not native Calendar.app attachments.
 

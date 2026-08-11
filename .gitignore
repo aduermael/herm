@@ -23,7 +23,10 @@ tools/edit-file/edit-file
 .herm-cpsl/.cpsl-xcframework-build.lock
 .herm-cpsl/pdfium/
 .herm-cpsl/benchmarks/
+.herm-cells/
 .herm-apple/
+scripts/test-cells-xlsx-luau-eval/target/
+scripts/test-cells-xlsx-luau-eval/Cargo.lock
 .agents/
 
 # Local provider credentials
