@@ -1,6 +1,8 @@
 ---
 name: image-vision
 description: Inspect attached or local images and visually analyze PDFs with CPSL vision. Use for photos, screenshots, scans, charts, diagrams, OCR, handwriting, UI inspection, or any task that depends on pixels, layout, or other non-structural page content.
+metadata:
+  short-description: Inspect images and PDFs with CPSL vision
 ---
 
 # Image Vision
