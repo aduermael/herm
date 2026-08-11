@@ -365,7 +365,8 @@ require_match 'Copy Bundled Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'SRCROOT.*/herm/Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'The following skills are available' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Skills \(Herm concept' app/apple/herm/Models/CPSLChatModel.swift
+require_match '### Catalog' app/apple/herm/Models/CPSLChatModel.swift
 require_match '\$0\.path' app/apple/herm/Models/CPSLChatModel.swift
 reject_match 'iCloudRestrictedSkillNames|Network access is disabled while these mounts are active' \
   app/apple/herm/Models/CPSLChatModel.swift
