@@ -810,6 +810,20 @@ final class CPSLChatModel {
         }
     }
 
+    /// Resolves a file-browser entry to a host URL for the OS share UI.
+    func resolveFileURLForSharing(_ entry: CPSLFileEntry) async -> CPSLShareableFile? {
+        guard !entry.isDirectory else {
+            return nil
+        }
+        let result = await service.resolveShareableHostFileURL(for: entry)
+        if let url = result.url {
+            return CPSLShareableFile(url: url, lifetimeToken: result.lifetimeToken)
+        }
+        let message = result.error ?? "This file cannot be shared."
+        fileBrowserError = "\(entry.path): \(message)"
+        return nil
+    }
+
     func closeFilePreview() {
         isFileInfoOpen = false
         filePreview = nil

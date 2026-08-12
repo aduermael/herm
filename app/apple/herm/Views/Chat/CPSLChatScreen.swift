@@ -815,7 +815,7 @@ private struct CPSLICloudImportStatusView: View {
 private struct CPSLHeaderActionsView: View {
     let model: CPSLChatModel
 #if DEBUG
-    @State private var traceShareFile: CPSLJSONTraceShareFile?
+    @State private var traceShareFile: CPSLShareableFile?
     @State private var isPreparingTraceShareFile = false
 #endif
 
@@ -841,7 +841,7 @@ private struct CPSLHeaderActionsView: View {
         .padding(.top, CPSLTheme.topChromeSafeAreaGap)
         .padding(.bottom, CPSLTheme.medium)
 #if DEBUG
-        .cpslJSONTraceShare(file: $traceShareFile)
+        .cpslShareFile(file: $traceShareFile)
 #endif
     }
 
@@ -857,89 +857,12 @@ private struct CPSLHeaderActionsView: View {
                 isPreparingTraceShareFile = false
             }
             traceShareFile = await model.makeConversationJSONTraceShareFile().map { url in
-                CPSLJSONTraceShareFile(url: url)
+                CPSLShareableFile(url: url)
             }
         }
     }
 #endif
 }
-
-#if DEBUG
-private struct CPSLJSONTraceShareFile: Identifiable {
-    let id = UUID()
-    let url: URL
-
-    init(url: URL) {
-        self.url = url
-    }
-}
-
-private extension View {
-    func cpslJSONTraceShare(file: Binding<CPSLJSONTraceShareFile?>) -> some View {
-#if os(macOS)
-        background(CPSLJSONTraceSharingServicePicker(file: file))
-#elseif canImport(UIKit)
-        sheet(item: file) { shareFile in
-            CPSLJSONTraceActivityView(activityItems: [shareFile.url])
-        }
-#else
-        self
-#endif
-    }
-}
-
-#if os(macOS)
-private struct CPSLJSONTraceSharingServicePicker: NSViewRepresentable {
-    @Binding var file: CPSLJSONTraceShareFile?
-
-    func makeNSView(context: Context) -> NSView {
-        NSView(frame: .zero)
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        guard let file else {
-            return
-        }
-        guard context.coordinator.presentedID != file.id else {
-            return
-        }
-
-        context.coordinator.presentedID = file.id
-        let fileBinding = $file
-        DispatchQueue.main.async {
-            guard nsView.window != nil else {
-                fileBinding.wrappedValue = nil
-                return
-            }
-
-            let picker = NSSharingServicePicker(items: [file.url])
-            context.coordinator.picker = picker
-            picker.show(relativeTo: nsView.bounds, of: nsView, preferredEdge: .minY)
-            fileBinding.wrappedValue = nil
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    final class Coordinator {
-        var presentedID: UUID?
-        var picker: NSSharingServicePicker?
-    }
-}
-#elseif canImport(UIKit)
-private struct CPSLJSONTraceActivityView: UIViewControllerRepresentable {
-    let activityItems: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#endif
-#endif
 
 private struct CPSLDrawerToggleButton: View {
     let isOpen: Bool

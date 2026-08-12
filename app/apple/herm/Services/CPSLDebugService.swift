@@ -955,6 +955,55 @@ actor CPSLDebugService {
         }
     }
 
+    /// Resolves a browser file to a host URL for OS share (materializes iCloud when needed).
+    func resolveShareableHostFileURL(
+        for entry: CPSLFileEntry
+    ) async -> CPSLFileShareResolveResult {
+        guard !entry.isDirectory else {
+            return CPSLFileShareResolveResult(
+                url: nil,
+                error: "Directories cannot be shared."
+            )
+        }
+
+        do {
+            let sandboxURLs = try ensureSandboxURLs()
+            self.sandboxURLs = sandboxURLs
+            let mountUseLease = try iCloudUseLease(forVirtualPath: entry.path)
+            if mountUseLease != nil {
+                try await ensureICloudMountManager().materializeFile(at: entry.path)
+            }
+            let hostURL = try hostURL(forVirtualPath: entry.path, sandboxURLs: sandboxURLs)
+            guard isBrowserHostURLAllowed(hostURL, sandboxURLs: sandboxURLs) else {
+                return CPSLFileShareResolveResult(
+                    url: nil,
+                    error: "Sharing is only available inside the CPSL filesystem."
+                )
+            }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: hostURL.path, isDirectory: &isDirectory) else {
+                return CPSLFileShareResolveResult(url: nil, error: "File does not exist.")
+            }
+            guard !isDirectory.boolValue else {
+                return CPSLFileShareResolveResult(
+                    url: nil,
+                    error: "Directories cannot be shared."
+                )
+            }
+            fileActivityNotifier.notify(
+                CPSLFileActivity(path: entry.path, operation: "read")
+            )
+            let lifetimeToken = mountUseLease?.releaseGateRetainingScopes()
+            return CPSLFileShareResolveResult(
+                url: hostURL,
+                error: nil,
+                lifetimeToken: lifetimeToken
+            )
+        } catch {
+            return CPSLFileShareResolveResult(url: nil, error: error.localizedDescription)
+        }
+    }
+
     func previewFile(_ entry: CPSLFileEntry) async -> CPSLFilePreviewLoadResult {
         guard !entry.isDirectory else {
             return CPSLFilePreviewLoadResult(preview: nil, error: "Directories cannot be previewed.")
@@ -1471,7 +1520,10 @@ actor CPSLDebugService {
             normalized.hasPrefix("\(CPSLVirtualPath.iCloudRoot)/") {
             throw CPSLICloudMountError.mountNotFound
         }
-        return Self.appendingVirtualPath(normalized.dropFirst(), to: sandboxURLs.root)
+        return CPSLSandboxHostURL.hostFileURL(
+            virtualPath: normalized,
+            sandboxRoot: sandboxURLs.root
+        )
     }
 
     private func attachmentDestination(
@@ -1571,28 +1623,7 @@ actor CPSLDebugService {
         _ path: String,
         trimsOuterWhitespace: Bool = true
     ) -> String {
-        var normalized = trimsOuterWhitespace
-            ? path.trimmingCharacters(in: .whitespacesAndNewlines)
-            : path
-        if normalized.isEmpty {
-            normalized = "/"
-        }
-        if !normalized.hasPrefix("/") {
-            normalized = "/\(normalized)"
-        }
-        var components: [String] = []
-        for component in normalized.split(separator: "/") {
-            let pathComponent = String(component)
-            switch pathComponent {
-            case ".", "":
-                continue
-            case "..":
-                _ = components.popLast()
-            default:
-                components.append(pathComponent)
-            }
-        }
-        return components.isEmpty ? "/" : "/\(components.joined(separator: "/"))"
+        CPSLSandboxHostURL.normalize(path, trimsOuterWhitespace: trimsOuterWhitespace)
     }
 
     private nonisolated static func shellDoubleQuoted(_ value: String) -> String {

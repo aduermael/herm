@@ -186,9 +186,12 @@ struct CPSLFileBrowserView: View {
     @State private var movingEntries: [CPSLFileEntry] = []
     @State private var pendingDeletionEntries: [CPSLFileEntry] = []
     @State private var isDeleteConfirmationPresented = false
+    @State private var shareFile: CPSLShareableFile?
+    @State private var isPreparingShare = false
 
     var body: some View {
         browserPanel
+            .cpslShareFile(file: $shareFile)
             .fileImporter(
                 isPresented: $isICloudImporterPresented,
                 allowedContentTypes: [.folder],
@@ -258,8 +261,20 @@ struct CPSLFileBrowserView: View {
             beginMove: beginMove,
             cancelMove: cancelMove,
             completeMove: completeMove,
-            requestDelete: requestDelete
+            requestDelete: requestDelete,
+            shareEntry: shareEntry
         )
+    }
+
+    private func shareEntry(_ entry: CPSLFileEntry) {
+        guard !entry.isDirectory, !isPreparingShare else {
+            return
+        }
+        isPreparingShare = true
+        Task { @MainActor in
+            defer { isPreparingShare = false }
+            shareFile = await model.resolveFileURLForSharing(entry)
+        }
     }
 
     private var deleteConfirmationTitle: String {
@@ -526,6 +541,7 @@ private struct CPSLFileBrowserActions {
     let cancelMove: () -> Void
     let completeMove: () -> Void
     let requestDelete: ([CPSLFileEntry]) -> Void
+    let shareEntry: (CPSLFileEntry) -> Void
 
     var iCloudMounts: [CPSLICloudMount] {
         model.iCloudMounts
@@ -1365,6 +1381,9 @@ private struct CPSLFileBrowserRowView: View {
                     onToggleExpansion: {
                         actions.toggleExpansion(entry)
                     },
+                    onShare: entry.isDirectory ? nil : {
+                        actions.shareEntry(entry)
+                    },
                     onMove: {
                         actions.beginMove([entry])
                     },
@@ -1442,6 +1461,7 @@ private struct CPSLFileRowView: View {
     let canModify: Bool
     let onOpen: () -> Void
     let onToggleExpansion: () -> Void
+    let onShare: (() -> Void)?
     let onMove: () -> Void
     let onDelete: () -> Void
     let onRemove: (() -> Void)?
@@ -1532,12 +1552,17 @@ private struct CPSLFileRowView: View {
             } else if case .browsing = mode, let onSetKeepDownloaded {
                 CPSLFileICloudActionMenu(
                     syncState: entry.syncState,
+                    onShare: onShare,
                     onMove: canModify ? onMove : nil,
                     onDelete: canModify ? onDelete : nil,
                     onSetKeepDownloaded: onSetKeepDownloaded
                 )
-            } else if case .browsing = mode, canModify {
-                CPSLFileActionMenu(onMove: onMove, onDelete: onDelete)
+            } else if case .browsing = mode, canModify || onShare != nil {
+                CPSLFileActionMenu(
+                    onShare: onShare,
+                    onMove: canModify ? onMove : nil,
+                    onDelete: canModify ? onDelete : nil
+                )
             }
         }
         .padding(.leading, leadingPadding)
@@ -1593,16 +1618,26 @@ private struct CPSLFileSelectionControl: View {
 }
 
 private struct CPSLFileActionMenu: View {
-    let onMove: () -> Void
-    let onDelete: () -> Void
+    let onShare: (() -> Void)?
+    let onMove: (() -> Void)?
+    let onDelete: (() -> Void)?
 
     var body: some View {
         Menu {
-            Button(action: onMove) {
-                Label("Move…", systemImage: "folder")
+            if let onShare {
+                Button(action: onShare) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
             }
-            Button(role: .destructive, action: onDelete) {
-                Label("Delete", systemImage: "trash")
+            if let onMove {
+                Button(action: onMove) {
+                    Label("Move…", systemImage: "folder")
+                }
+            }
+            if let onDelete {
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -1629,12 +1664,18 @@ private struct CPSLFileSyncStateBadge: View {
 
 private struct CPSLFileICloudActionMenu: View {
     let syncState: CPSLFileSyncState?
+    let onShare: (() -> Void)?
     let onMove: (() -> Void)?
     let onDelete: (() -> Void)?
     let onSetKeepDownloaded: (Bool) -> Void
 
     var body: some View {
         Menu {
+            if let onShare {
+                Button(action: onShare) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
             if syncState != .keepDownloaded {
                 Button {
                     onSetKeepDownloaded(true)
