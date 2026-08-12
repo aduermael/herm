@@ -26,16 +26,12 @@ private struct CPSLFileShareChecks {
 
     private static func assertShareRowControl(browser: String) throws {
         try require(
-            browser.contains("struct CPSLFileShareButton"),
-            "file browser must define a dedicated share row control"
+            !browser.contains("struct CPSLFileShareButton"),
+            "file browser must not define a dedicated trailing share button"
         )
         try require(
-            browser.contains("square.and.arrow.up"),
-            "share control must use the system share SF Symbol"
-        )
-        try require(
-            browser.contains("accessibilityLabel(\"Share\")"),
-            "share control must expose a Share accessibility label"
+            browser.contains("Label(\"Share\", systemImage: \"square.and.arrow.up\")"),
+            "ellipsis menus must include a Share action with the system share glyph"
         )
         let rowSlice = try requireSlice(
             in: browser,
@@ -43,9 +39,19 @@ private struct CPSLFileShareChecks {
             endingWith: "private struct CPSLFileSelectionControl: View {"
         )
         try require(
-            rowSlice.contains("if case .browsing = mode, let onShare") &&
-                rowSlice.contains("CPSLFileShareButton(action: onShare)"),
-            "browsing-mode file rows must show the share button when onShare is set"
+            !rowSlice.contains("CPSLFileShareButton"),
+            "browsing file rows must not render a standalone share button"
+        )
+        try require(
+            rowSlice.contains("canModify || onShare != nil") &&
+                rowSlice.contains("CPSLFileActionMenu(") &&
+                rowSlice.contains("onShare: onShare"),
+            "browsing rows must surface Share via the ellipsis action menu"
+        )
+        try require(
+            rowSlice.contains("CPSLFileICloudActionMenu(") &&
+                rowSlice.contains("onShare: onShare"),
+            "iCloud file ellipsis menu must also receive the share action"
         )
         try require(
             browser.contains("onShare: entry.isDirectory ? nil : {") ||
@@ -55,7 +61,18 @@ private struct CPSLFileShareChecks {
         try require(
             !rowSlice.contains("if case .selecting = mode, let onShare") &&
                 !rowSlice.contains("if case .moving = mode, let onShare"),
-            "share control must not be required in selecting/moving modes"
+            "share must not be required in selecting/moving modes"
+        )
+
+        let actionMenu = try requireSlice(
+            in: browser,
+            startingWith: "private struct CPSLFileActionMenu: View {",
+            endingWith: "private struct CPSLFileSyncStateBadge: View {"
+        )
+        try require(
+            actionMenu.contains("if let onShare") &&
+                actionMenu.contains("Label(\"Share\", systemImage: \"square.and.arrow.up\")"),
+            "CPSLFileActionMenu must offer Share when onShare is set"
         )
     }
 
