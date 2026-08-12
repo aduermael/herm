@@ -91,8 +91,18 @@ private struct CPSLFileShareChecks {
         )
         try require(
             presenter.contains("activityItems: [shareFile.url]") ||
+                presenter.contains("activityItems: items") ||
                 presenter.contains("items: [file.url]"),
             "share presenter must pass the resolved file URL as the share item"
+        )
+        try require(
+            presenter.contains("prewarmIfNeeded") &&
+                presenter.contains("UIActivityViewController"),
+            "share infrastructure must prewarm UIActivityViewController before first user share"
+        )
+        try require(
+            !presenter.contains("sheet(item: file)"),
+            "iOS share must present UIActivityViewController from a host VC, not as a SwiftUI sheet root"
         )
         try require(
             chatScreen.contains(".cpslShareFile(file: $traceShareFile)"),

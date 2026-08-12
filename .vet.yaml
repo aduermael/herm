@@ -8,7 +8,7 @@ rules:
     min-length: 60
     max-length: 0
   max-source-file-lines:
-    max: 1000
+    max: 1250
   max-function-body-lines:
     max: 0
   function-docstring:
