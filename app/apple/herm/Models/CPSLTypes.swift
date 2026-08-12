@@ -718,6 +718,36 @@ nonisolated struct CPSLFilePreviewLoadResult: @unchecked Sendable {
     }
 }
 
+/// Result of resolving a browser file to a host URL for OS share.
+nonisolated struct CPSLFileShareResolveResult: @unchecked Sendable {
+    let url: URL?
+    let error: String?
+    /// Retains iCloud security scopes while the share UI is presented.
+    let lifetimeToken: AnyObject?
+
+    init(
+        url: URL?,
+        error: String?,
+        lifetimeToken: AnyObject? = nil
+    ) {
+        self.url = url
+        self.error = error
+        self.lifetimeToken = lifetimeToken
+    }
+}
+
+/// File URL ready for the platform share UI, with optional access lifetime.
+struct CPSLShareableFile: Identifiable {
+    let id = UUID()
+    let url: URL
+    let lifetimeToken: AnyObject?
+
+    init(url: URL, lifetimeToken: AnyObject? = nil) {
+        self.url = url
+        self.lifetimeToken = lifetimeToken
+    }
+}
+
 extension CPSLFileEntry {
     var pathExtension: String {
         URL(fileURLWithPath: path).pathExtension.lowercased()

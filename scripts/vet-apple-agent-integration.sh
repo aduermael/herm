@@ -49,6 +49,7 @@ swift_files=(
   app/apple/herm/Models/CPSLEvalTypes.swift
   app/apple/herm/Models/CPSLICloudMount.swift
   app/apple/herm/Models/CPSLTypes.swift
+  app/apple/herm/Models/CPSLSandboxHostURL.swift
   app/apple/herm/Models/CPSLChatModel.swift
   app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
   app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
@@ -59,6 +60,7 @@ swift_files=(
   app/apple/herm/Views/Files/CPSLFileOverlayPanel.swift
   app/apple/herm/Views/Files/CPSLFileBrowserView.swift
   app/apple/herm/Views/Files/CPSLFilePreviewOverlay.swift
+  app/apple/herm/Views/Shared/CPSLSharePresenter.swift
 )
 
 required_files=(
@@ -92,6 +94,7 @@ required_files=(
   scripts/generate-apple-pcc-runtime.sh
   scripts/apple-pcc/CPSLPCCRuntime.full.swift
   scripts/apple-pcc/CPSLPCCRuntime.stub.swift
+  scripts/vet-apple-file-share.swift
   external/cpsl/core/src/doc/render.rs
   external/cpsl/core/src/sandbox.rs
   external/cpsl/ffi/src/lib.rs
@@ -687,6 +690,11 @@ if command -v swiftc >/dev/null 2>&1; then
     scripts/vet-apple-file-info-media-mainthread.swift \
     -o /tmp/herm-vet-file-info-media
   /tmp/herm-vet-file-info-media
+  swiftc \
+    app/apple/herm/Models/CPSLSandboxHostURL.swift \
+    scripts/vet-apple-file-share.swift \
+    -o /tmp/herm-vet-file-share
+  /tmp/herm-vet-file-share
   swiftc \
     app/apple/herm/Models/CPSLICloudMount.swift \
     app/apple/herm/Services/CPSLICloudBookmarkAccess.swift \

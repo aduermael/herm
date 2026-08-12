@@ -186,9 +186,12 @@ struct CPSLFileBrowserView: View {
     @State private var movingEntries: [CPSLFileEntry] = []
     @State private var pendingDeletionEntries: [CPSLFileEntry] = []
     @State private var isDeleteConfirmationPresented = false
+    @State private var shareFile: CPSLShareableFile?
+    @State private var isPreparingShare = false
 
     var body: some View {
         browserPanel
+            .cpslShareFile(file: $shareFile)
             .fileImporter(
                 isPresented: $isICloudImporterPresented,
                 allowedContentTypes: [.folder],
@@ -258,8 +261,20 @@ struct CPSLFileBrowserView: View {
             beginMove: beginMove,
             cancelMove: cancelMove,
             completeMove: completeMove,
-            requestDelete: requestDelete
+            requestDelete: requestDelete,
+            shareEntry: shareEntry
         )
+    }
+
+    private func shareEntry(_ entry: CPSLFileEntry) {
+        guard !entry.isDirectory, !isPreparingShare else {
+            return
+        }
+        isPreparingShare = true
+        Task { @MainActor in
+            defer { isPreparingShare = false }
+            shareFile = await model.resolveFileURLForSharing(entry)
+        }
     }
 
     private var deleteConfirmationTitle: String {
@@ -526,6 +541,7 @@ private struct CPSLFileBrowserActions {
     let cancelMove: () -> Void
     let completeMove: () -> Void
     let requestDelete: ([CPSLFileEntry]) -> Void
+    let shareEntry: (CPSLFileEntry) -> Void
 
     var iCloudMounts: [CPSLICloudMount] {
         model.iCloudMounts
@@ -1365,6 +1381,9 @@ private struct CPSLFileBrowserRowView: View {
                     onToggleExpansion: {
                         actions.toggleExpansion(entry)
                     },
+                    onShare: entry.isDirectory ? nil : {
+                        actions.shareEntry(entry)
+                    },
                     onMove: {
                         actions.beginMove([entry])
                     },
@@ -1442,6 +1461,7 @@ private struct CPSLFileRowView: View {
     let canModify: Bool
     let onOpen: () -> Void
     let onToggleExpansion: () -> Void
+    let onShare: (() -> Void)?
     let onMove: () -> Void
     let onDelete: () -> Void
     let onRemove: (() -> Void)?
@@ -1539,6 +1559,10 @@ private struct CPSLFileRowView: View {
             } else if case .browsing = mode, canModify {
                 CPSLFileActionMenu(onMove: onMove, onDelete: onDelete)
             }
+
+            if case .browsing = mode, let onShare {
+                CPSLFileShareButton(action: onShare)
+            }
         }
         .padding(.leading, leadingPadding)
         .padding(.trailing, CPSLFileRowMetrics.trailing)
@@ -1589,6 +1613,26 @@ private struct CPSLFileSelectionControl: View {
             )
             .opacity(isEnabled ? 1 : 0.45)
             .accessibilityHidden(true)
+    }
+}
+
+private struct CPSLFileShareButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "square.and.arrow.up")
+                .font(CPSLTheme.iconSmallFont)
+                .frame(
+                    width: CPSLFileRowMetrics.trailingControlWidth,
+                    height: CPSLTheme.controlSize
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(CPSLTheme.secondaryText)
+        .accessibilityLabel("Share")
+        .help("Share")
     }
 }
 
