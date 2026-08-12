@@ -116,6 +116,47 @@ struct CPSLGoalClarificationTests {
         let b = prompt.embeddingClarifiedGoal(goal)
         #expect(a == b)
     }
+
+    @Test func runAgentSourcePersistsUserBeforeClarify() throws {
+        let source = try SystemPromptSource.chatModelSource()
+        #expect(CPSLGoalClarification.runAgentSourcePersistsUserBeforeClarify(source))
+        #expect(source.contains("updateNodeProviderMessage"))
+        // Config load after the user write so missing env cannot drop the submit.
+        let createIdx = try #require(source.range(of: "createConversation(")?.lowerBound)
+        let configIdx = try #require(source.range(of: "CPSLAgentConfig.load()")?.lowerBound)
+        #expect(createIdx < configIdx)
+        #expect(CPSLGoalClarification.submitPhaseOrder.first == .persistUserTurn)
+    }
+
+    @Test func providerMessageUpdateKeepsDisplayBody() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("herm-clarify-\(UUID().uuidString).jsonl")
+        let store = try CPSLConversationStore(logURL: url, usesICloudContainer: false)
+        let original = "Find options for me"
+        let created = try await store.createConversation(
+            userText: original,
+            providerText: original,
+            model: nil,
+            systemPrompt: "test"
+        )
+        let clarified = CPSLGoalClarification.providerText(
+            baseProviderText: original,
+            clarifiedGoal: "Deliver finished options in the assistant reply."
+        )
+        try await store.updateNodeProviderMessage(
+            conversationID: created.summary.id,
+            id: created.userNode.id,
+            providerMessage: .user(clarified)
+        )
+        let providerMessages = try await store.providerMessages(conversationID: created.summary.id)
+        #expect(providerMessages.last?.content == clarified)
+        #expect(providerMessages.last?.content?.contains(CPSLGoalClarification.endGoalHeading) == true)
+
+        let loaded = try await store.loadConversation(id: created.summary.id)
+        let userNode = try #require(loaded?.nodes.first { $0.role == .user })
+        #expect(userNode.body == original)
+        #expect(userNode.chatMessage?.body == original)
+    }
 }
 
 /// Locates shipped ChatModel source so tests assert real wiring, not a reimplementation.

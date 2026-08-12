@@ -17,6 +17,40 @@ nonisolated enum CPSLGoalClarification {
     static let maxOutputTokens = 256
     static let timeoutNanoseconds: UInt64 = 5_000_000_000
 
+    /// Documented submit pipeline for the main agent. Write the user turn first so
+    /// cancel/config failure cannot drop the submit after the composer is cleared.
+    enum SubmitPhase: String, CaseIterable, Sendable {
+        case persistUserTurn
+        case loadProvider
+        case clarifyEndGoal
+        case updateProviderMessageIfNeeded
+        case runAgentLoop
+    }
+
+    static let submitPhaseOrder: [SubmitPhase] = [
+        .persistUserTurn,
+        .loadProvider,
+        .clarifyEndGoal,
+        .updateProviderMessageIfNeeded,
+        .runAgentLoop
+    ]
+
+    /// Source-order check: user write must precede clarify; clarify precedes provider patch.
+    static func runAgentSourcePersistsUserBeforeClarify(_ source: String) -> Bool {
+        let persistMarkers = ["body: prompt.displayText", "userText: prompt.displayText"]
+        let clarifyMarker = "clarifyingUserPrompt"
+        let patchMarker = "updateNodeProviderMessage"
+        guard let clarifyRange = source.range(of: clarifyMarker) else {
+            return false
+        }
+        let beforeClarify = source[..<clarifyRange.lowerBound]
+        let persistsBefore = persistMarkers.contains { beforeClarify.contains($0) }
+        guard let patchRange = source.range(of: patchMarker) else {
+            return false
+        }
+        return persistsBefore && clarifyRange.lowerBound < patchRange.lowerBound
+    }
+
     static func shouldClarify(displayText: String) -> Bool {
         !displayText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }

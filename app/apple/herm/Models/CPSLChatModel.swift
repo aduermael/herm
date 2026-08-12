@@ -1478,15 +1478,8 @@ final class CPSLChatModel {
             let promptForConversation = systemPrompt(with: availableSkills)
             currentSystemPrompt = promptForConversation
 
-            let config = try CPSLAgentConfig.load()
-            let client = CPSLAgentChatClient(config: config)
-            let modelID = await client.modelID
-            activeModel = modelID
-
-            // Internal goal clarify: timeline keeps displayText; provider text may gain End goal.
-            let effectivePrompt = await clarifyingUserPrompt(prompt, using: client)
-            try Task.checkCancellation()
-
+            // Persist the user turn first so Stop/config failure cannot discard the submit
+            // (composer is already cleared in submitPrompt). Clarify runs after write.
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
                 let node = try await store.appendNode(
@@ -1495,9 +1488,9 @@ final class CPSLChatModel {
                     draft: CPSLNodeAppendDraft(
                         role: .user,
                         title: nil,
-                        body: effectivePrompt.displayText,
+                        body: prompt.displayText,
                         model: nil,
-                        providerMessage: .user(effectivePrompt.providerText)
+                        providerMessage: .user(prompt.providerText)
                     )
                 )
                 parentID = node.id
@@ -1510,8 +1503,8 @@ final class CPSLChatModel {
             } else {
                 let created = try await store.createConversation(
                     id: draftConversationID,
-                    userText: effectivePrompt.displayText,
-                    providerText: effectivePrompt.providerText,
+                    userText: prompt.displayText,
+                    providerText: prompt.providerText,
                     model: nil,
                     systemPrompt: promptForConversation
                 )
@@ -1527,6 +1520,23 @@ final class CPSLChatModel {
                 activeParentID = parentID
             }
             await reloadConversations()
+            try Task.checkCancellation()
+
+            let config = try CPSLAgentConfig.load()
+            let client = CPSLAgentChatClient(config: config)
+            let modelID = await client.modelID
+            activeModel = modelID
+
+            // Internal goal clarify after the timeline write: display body stays original;
+            // provider message may gain End goal. Fail open leaves the stored provider text.
+            let effectivePrompt = await clarifyingUserPrompt(prompt, using: client)
+            if effectivePrompt.providerText != prompt.providerText {
+                try await store.updateNodeProviderMessage(
+                    conversationID: conversationID,
+                    id: parentID,
+                    providerMessage: .user(effectivePrompt.providerText)
+                )
+            }
             try Task.checkCancellation()
 
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: modelID)

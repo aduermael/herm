@@ -210,6 +210,23 @@ actor CPSLConversationStore {
         )
     }
 
+    /// Updates provider-facing content for a node without changing the visible body.
+    /// Used after internal goal clarification so the timeline keeps the original user text.
+    func updateNodeProviderMessage(
+        conversationID: String,
+        id: String,
+        providerMessage: CPSLOpenAIMessage
+    ) throws {
+        try appendConversationEvent(
+            CPSLConversationLogEvent(
+                kind: .nodeProviderMessageUpdated,
+                conversationID: conversationID,
+                nodeID: id,
+                providerMessage: providerMessage
+            )
+        )
+    }
+
     func updateConversationModelIfMissing(conversationID: String, model: String) throws {
         guard let conversation = try loadState().conversations[conversationID] else {
             throw CPSLConversationStoreError.conversationNotFound
@@ -475,6 +492,16 @@ actor CPSLConversationStore {
                 conversation.nodes[index].body = body
                 conversation.updatedAt = event.timestamp
                 state.conversations[conversationID] = conversation
+            case .nodeProviderMessageUpdated:
+                guard let conversationID = event.conversationID,
+                      let nodeID = event.nodeID,
+                      let providerMessage = event.providerMessage,
+                      var conversation = state.conversations[conversationID],
+                      let index = conversation.nodes.firstIndex(where: { $0.id == nodeID })
+                else { continue }
+                conversation.nodes[index].providerMessage = providerMessage
+                conversation.updatedAt = event.timestamp
+                state.conversations[conversationID] = conversation
             case .conversationModelSet:
                 guard let conversationID = event.conversationID,
                       let model = event.model,
@@ -710,7 +737,7 @@ nonisolated struct CPSLStoredNode: Identifiable, Equatable, Sendable, Codable {
     let title: String?
     var body: String
     let model: String?
-    let providerMessage: CPSLOpenAIMessage?
+    var providerMessage: CPSLOpenAIMessage?
     let sequence: Int
     let createdAt: Date
 
@@ -820,6 +847,7 @@ private nonisolated enum CPSLConversationLogEventKind: String, Codable {
     case conversationCreated = "conversation.created"
     case nodesAppended = "nodes.appended"
     case nodeBodyUpdated = "node.body_updated"
+    case nodeProviderMessageUpdated = "node.provider_message_updated"
     case conversationModelSet = "conversation.model_set"
     case conversationDeleted = "conversation.deleted"
     case conversationPinned = "conversation.pinned"
@@ -841,6 +869,7 @@ private nonisolated struct CPSLConversationLogEvent: Codable {
     let nodes: [CPSLStoredNode]?
     let nodeID: String?
     let body: String?
+    let providerMessage: CPSLOpenAIMessage?
     let model: String?
     let flag: Bool?
     let title: String?
@@ -856,6 +885,7 @@ private nonisolated struct CPSLConversationLogEvent: Codable {
         nodes: [CPSLStoredNode]? = nil,
         nodeID: String? = nil,
         body: String? = nil,
+        providerMessage: CPSLOpenAIMessage? = nil,
         model: String? = nil,
         flag: Bool? = nil,
         title: String? = nil,
@@ -872,6 +902,7 @@ private nonisolated struct CPSLConversationLogEvent: Codable {
         self.nodes = nodes
         self.nodeID = nodeID
         self.body = body
+        self.providerMessage = providerMessage
         self.model = model
         self.flag = flag
         self.title = title

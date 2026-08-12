@@ -459,8 +459,11 @@ require_match 'CPSLAgentToolFormatting\.displayBody' app/apple/herm/Models/CPSLC
 require_match 'CPSLAgentToolFormatting\.agentInput' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'CPSLGoalClarification\.mainAgentCompletionContract' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'clarifyingUserPrompt' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'updateNodeProviderMessage' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'node\.provider_message_updated' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'Carry each user request through to a finished result' app/apple/herm/Models/CPSLGoalClarification.swift
 require_match 'endGoalHeading' app/apple/herm/Models/CPSLGoalClarification.swift
+require_match 'runAgentSourcePersistsUserBeforeClarify' app/apple/herm/Models/CPSLGoalClarification.swift
 require_match 'embeddingClarifiedGoal' app/apple/herm/Models/CPSLAttachmentPrompt.swift
 require_match 'vet-apple-goal-clarification: ok' scripts/vet-apple-goal-clarification.swift
 require_match 'nonNegativeIntValue' app/apple/herm/Services/Agent/CPSLAgentConfig.swift

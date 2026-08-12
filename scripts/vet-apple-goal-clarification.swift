@@ -18,6 +18,7 @@ private struct CPSLGoalClarificationChecks {
         try assertDisplayVsProviderSplit()
         try assertProviderTextKeepsAttachments()
         try assertShippedChatModelWiresHelpers()
+        try assertWriteBeforeClarifyOrder()
         print("vet-apple-goal-clarification: ok")
     }
 
@@ -110,7 +111,8 @@ private struct CPSLGoalClarificationChecks {
         for needle in [
             "CPSLGoalClarification.mainAgentCompletionContract",
             "clarifyingUserPrompt",
-            "clarifyEndGoal"
+            "clarifyEndGoal",
+            "updateNodeProviderMessage"
         ] {
             guard source.contains(needle) else {
                 throw CheckFailure("CPSLChatModel.swift must wire \(needle)")
@@ -120,6 +122,27 @@ private struct CPSLGoalClarificationChecks {
             guard !source.contains(banned) else {
                 throw CheckFailure("ChatModel must not hard-code task category \(banned)")
             }
+        }
+    }
+
+    private static func assertWriteBeforeClarifyOrder() throws {
+        let source = try loadChatModelSource()
+        guard CPSLGoalClarification.runAgentSourcePersistsUserBeforeClarify(source) else {
+            throw CheckFailure(
+                "runAgent must persist user turn (prompt.displayText) before clarifyingUserPrompt, then updateNodeProviderMessage"
+            )
+        }
+        // Config load must not gate the user write.
+        guard let createRange = source.range(of: "createConversation("),
+              let configRange = source.range(of: "CPSLAgentConfig.load()"),
+              createRange.lowerBound < configRange.lowerBound
+        else {
+            throw CheckFailure("createConversation must run before CPSLAgentConfig.load()")
+        }
+        guard CPSLGoalClarification.submitPhaseOrder.first == .persistUserTurn,
+              CPSLGoalClarification.submitPhaseOrder.contains(.clarifyEndGoal)
+        else {
+            throw CheckFailure("submit phase order must start with persistUserTurn")
         }
     }
 
