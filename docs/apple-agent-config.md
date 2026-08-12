@@ -1,7 +1,40 @@
 # Apple Agent Configuration
 
-The Apple agent uses OpenAI-compatible Chat Completions endpoints only. Configure
-it with a local `.env` file:
+## Main agent provider selection
+
+On **iOS 27+ / macOS 27+** (and matching visionOS), when Apple **Private Cloud Compute**
+is available at runtime, the main agent completion path uses Foundation Models
+`PrivateCloudComputeLanguageModel` (`apple/pcc`) instead of Grok/xAI.
+
+PCC is gated by:
+
+- **SDK compile gate:** `scripts/generate-apple-pcc-runtime.sh` emits a full
+  runtime only when building with an iOS/macOS **27+ SDK** (or
+  `HERM_FORCE_PCC_RUNTIME=1`). On the project’s 26.5 SDK toolchain it emits a
+  stub so Xcode CI still typechecks. Source of truth for the full path is
+  `scripts/apple-pcc/CPSLPCCRuntime.full.swift` (references
+  `PrivateCloudComputeLanguageModel`); that type never appears unguarded in
+  the synchronized Agent sources.
+- runtime `CPSLPCCRuntime.isAvailable` (wraps
+  `PrivateCloudComputeLanguageModel().isAvailable` in the full variant)
+- Apple **Private Cloud Compute entitlement** on the app target
+  (`com.apple.developer.private-cloud-compute` = `true` in `herm.entitlements`
+  and `herm-macOS.entitlements`). This is a restricted capability: your Apple
+  Developer account must have PCC assigned (request at
+  [developer.apple.com/contact/request/private-cloud-compute](https://developer.apple.com/contact/request/private-cloud-compute/)
+  / [Accessing Private Cloud Compute](https://developer.apple.com/private-cloud-compute/)).
+  After approval, regenerate provisioning profiles in Xcode so the entitlement
+  is included. Without account assignment, signing fails or the runtime aborts
+  with “Missing entitlement: com.apple.developer.private-cloud-compute.”
+
+When PCC is unavailable (older OS/SDK, no entitlement, ineligible device, or
+Apple Intelligence / PCC not ready), the agent falls back to the OpenAI-compatible
+path below. Vision and other non-agent OpenAI clients are unchanged.
+
+## OpenAI-compatible fallback (and vision)
+
+Configure the OpenAI-compatible Chat Completions fallback (and vision) with a
+local `.env` file:
 
 ```dotenv
 OPENAI_BASE_URL=https://api.x.ai/v1

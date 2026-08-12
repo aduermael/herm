@@ -22,3 +22,6 @@ fi
   "$repo_root/.env.local" \
   "$apple_root/herm/.env.local" \
   "$apple_root/herm/Resources/.env.local"
+
+# Also regenerate the PCC runtime bridge (stub on SDK < 27, full on SDK 27+).
+"${repo_root}/scripts/generate-apple-pcc-runtime.sh"

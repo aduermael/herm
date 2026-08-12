@@ -34,6 +34,9 @@ reject_match() {
 swift_files=(
   app/apple/herm/Services/Agent/CPSLAgentConfig.swift
   app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
+  app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
+  app/apple/herm/Services/Agent/CPSLPCCMessageMapper.swift
+  app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
   app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
   app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
   app/apple/herm/Services/Agent/CPSLConversationStore.swift
@@ -85,6 +88,10 @@ required_files=(
   scripts/vet-apple-icloud-mount-manager.swift
   scripts/vet-apple-conversation-store.swift
   scripts/vet-apple-openai-protocol.swift
+  scripts/vet-apple-agent-pcc.swift
+  scripts/generate-apple-pcc-runtime.sh
+  scripts/apple-pcc/CPSLPCCRuntime.full.swift
+  scripts/apple-pcc/CPSLPCCRuntime.stub.swift
   external/cpsl/core/src/doc/render.rs
   external/cpsl/core/src/sandbox.rs
   external/cpsl/ffi/src/lib.rs
@@ -112,6 +119,11 @@ require_match 'OPENAI_MODEL=' app/apple/herm/Resources/env.example
 require_match 'HERM_MAX_TOOL_ROUNDS=200' app/apple/herm/Resources/env.example
 require_match 'HERM_MAX_OUTPUT_TOKENS=16384' app/apple/herm/Resources/env.example
 require_match 'OpenAI-compatible Chat Completions' docs/apple-agent-config.md
+require_match 'Private Cloud Compute' docs/apple-agent-config.md
+require_match 'PrivateCloudComputeLanguageModel' docs/apple-agent-config.md
+require_match 'apple/pcc' docs/apple-agent-config.md
+require_match 'private-cloud-compute' docs/apple-agent-config.md
+require_match 'contact/request/private-cloud-compute' docs/apple-agent-config.md
 require_match 'Do not ship real API tokens in the app bundle as resource files' docs/apple-agent-config.md
 require_match 'scripts/dev-apple-macos\.sh.*repo root' docs/apple-agent-config.md
 require_match 'Generate Env Constants' docs/apple-agent-config.md
@@ -132,8 +144,10 @@ require_match 'XAI_MODEL.*!= nil' app/apple/herm/Services/Agent/CPSLAgentConfig.
 
 require_match 'com.apple.developer.icloud-services' app/apple/herm/herm.entitlements
 require_match 'CloudDocuments' app/apple/herm/herm.entitlements
+require_match 'com.apple.developer.private-cloud-compute' app/apple/herm/herm.entitlements
 require_match 'com.apple.developer.icloud-services' app/apple/herm/herm-macOS.entitlements
 require_match 'CloudDocuments' app/apple/herm/herm-macOS.entitlements
+require_match 'com.apple.developer.private-cloud-compute' app/apple/herm/herm-macOS.entitlements
 require_match 'com.apple.security.app-sandbox' app/apple/herm/herm-macOS.entitlements
 require_match 'com.apple.security.network.client' app/apple/herm/herm-macOS.entitlements
 require_match 'com.apple.security.files.user-selected.read-write' app/apple/herm/herm-macOS.entitlements
@@ -151,9 +165,11 @@ require_match '^[[:space:]]*\.env\.local,' app/apple/herm.xcodeproj/project.pbxp
 require_match 'Resources/\.env' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Resources/\.env\.local' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Generated/CPSLEnvConstants\.swift' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'Generated/CPSLPCCRuntime\.generated\.swift' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'Generate Env Constants' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'generate-apple-env-constants\.sh' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'CPSLEnvConstants\.swift in Sources' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'CPSLPCCRuntime\.generated\.swift in Sources' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'source_entitlements_path=.*herm-macOS.entitlements' scripts/dev-apple-macos.sh
 require_match 'sign_entitlements_path=.source_entitlements_path' scripts/dev-apple-macos.sh
 require_match 'cd "\$root"' scripts/dev-apple-macos.sh
@@ -171,7 +187,7 @@ require_match 'traces\.jsonl' app/apple/herm/Services/Agent/CPSLConversationStor
 require_match 'appendJSONLine' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'handle\.seekToEnd\(\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'handle\.synchronize\(\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
-require_match 'partial tail' app/apple/herm/Services/Agent/CPSLConversationStore.swift
+require_match 'undecodable tail' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'init\(logURL: URL, usesICloudContainer: Bool\)' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'model: String\?' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'updateConversationModelIfMissing' app/apple/herm/Services/Agent/CPSLConversationStore.swift
@@ -179,6 +195,11 @@ require_match 'updateConversationModelIfMissing' app/apple/herm/Models/CPSLChatM
 require_match 'systemPrompt: String' app/apple/herm/Services/Agent/CPSLConversationStore.swift
 require_match 'currentSystemPrompt = conversation\.systemPrompt' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'systemPrompt: replaySystemPrompt' app/apple/herm/Models/CPSLChatModel.swift
+# Fresh system prompt every agent turn (not frozen at conversation create).
+require_match 'Rebuild every turn so prompt/skill guidance' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'currentSystemPrompt = promptForConversation' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'addingICloudMountContext\(to: promptForConversation\)' app/apple/herm/Models/CPSLChatModel.swift
+reject_match 'replayBasePrompt = currentSystemPrompt' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'storeLoadTask: Task<CPSLConversationStore, Error>' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'private func loadStore\(\) async throws -> CPSLConversationStore' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'let store = try await loadStore\(\)' app/apple/herm/Models/CPSLChatModel.swift
@@ -199,23 +220,64 @@ require_match 'tools: streamRequest\.tools\.isEmpty \? nil : streamRequest\.tool
 require_match 'maxCompletionTokens: streamRequest\.maxTokens' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'appendingPathComponent\("chat"\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
 require_match 'appendingPathComponent\("completions"\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
+
+# Main agent prefers Apple PCC on iOS 27+ when available; OpenAI/Grok is fallback.
+# 27-only PCC types live only in the full runtime template / generated file — never
+# unguarded in 26.5-safe agent sources (so Xcode 26.5 CI typechecks).
+require_match 'PrivateCloudComputeLanguageModel' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCOuterLoopSignal' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCLocalSandboxTool' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCAgentTool' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'local_sandbox_exec' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'CPSLPCCMessageMapper\.mapPrompt' scripts/apple-pcc/CPSLPCCRuntime.full.swift
+require_match 'isCompileTimeSupported: Bool \{ false \}' scripts/apple-pcc/CPSLPCCRuntime.stub.swift
+require_match 'generate-apple-pcc-runtime\.sh' scripts/generate-apple-env-constants.sh
+require_match 'SDK_VERSION' scripts/generate-apple-pcc-runtime.sh
+require_match 'PrivateCloudComputeLanguageModel' scripts/generate-apple-pcc-runtime.sh
+reject_match 'PrivateCloudComputeLanguageModel' \
+  app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift \
+  app/apple/herm/Services/Agent/CPSLAgentChatClient.swift \
+  app/apple/herm/Services/Agent/CPSLPCCMessageMapper.swift
+require_match 'CPSLPCCRuntime\.isAvailable' app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
+require_match 'CPSLPCCRuntime\.streamChat' app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
+require_match 'CPSLAgentChatClient' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'CPSLAgentChatClient\(config: config\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'actor CPSLAgentChatClient' app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
+require_match 'kind == \.applePCC' app/apple/herm/Services/Agent/CPSLAgentChatClient.swift
+require_match 'CPSLAgentProviderSelection\.select' app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
+require_match 'static let pccModelID = "apple/pcc"' app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift
+require_match 'CPSLPCCRuntime\.generated\.swift' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'generate-apple-pcc-runtime\.sh' app/apple/herm.xcodeproj/project.pbxproj
+require_match 'let modelID: String' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
+require_match 'let client: CPSLAgentChatClient' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
+reject_match 'let client: CPSLOpenAIClient' app/apple/herm/Models/CPSLChatModel+AgentRuntimeTypes.swift
+reject_match 'CPSLOpenAIClient\(config: config\)' app/apple/herm/Models/CPSLChatModel.swift
+# Ensure no unguarded 27-only client file remains in the synchronized Agent folder.
+if [[ -e app/apple/herm/Services/Agent/CPSLPCCClient.swift ]]; then
+  echo "CPSLPCCClient.swift must not ship in Agent/ (PCC types are generated)" >&2
+  exit 1
+fi
 require_match 'encodeNil\(forKey: \.content\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'name: "local_sandbox_exec"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'name: "agent"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'availableTools\(allowsSubagents' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'maxCompletionTokens = "max_completion_tokens"' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
-require_match 'CPSL, a Unix-like local environment' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Unix-like local sandbox' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Luau is the command interface instead of Bash' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'only supported execution language' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
-require_match 'Never guess CPSL API signatures' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Current directory for this request' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+require_match 'Never guess API signatures' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
+reject_match 'CPSL, a Unix-like|Current CPSL directory|Never guess CPSL|through CPSL|CPSL vision|CPSL primitives' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'fs\.help\(\)' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Declare variables with local' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'external lua/luau interpreters' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'Bash, Python, shell commands' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'module\.help\(\)' app/apple/herm/Models/CPSLChatModel.swift
-require_match 'CPSL is your execution environment: a Unix-like local environment' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Your execution environment is a Unix-like local sandbox' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Luau is the interface instead of Bash' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'Luau essentials' app/apple/herm/Models/CPSLChatModel.swift
+# Agent-facing prompt strings must not name the CPSL implementation detail.
+reject_match 'CPSL is your|through CPSL|in CPSL|CPSL directory|CPSL modules|CPSL API|outside CPSL|to CPSL|CPSL still|CPSL vision|CPSL primitives|CPSL calendar|CPSL session|CPSL path' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'CPSLOpenAIError\.provider' app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift
 require_match 'CPSLOpenAIError\.invalidToolCall' scripts/vet-apple-openai-protocol.swift
 require_match 'validatedCompletion\(\)' app/apple/herm/Services/Agent/CPSLOpenAIClient.swift
@@ -312,7 +374,8 @@ require_match 'Copy Bundled Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'SRCROOT.*/herm/Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'UNLOCALIZED_RESOURCES_FOLDER_PATH.*/Skills' app/apple/herm.xcodeproj/project.pbxproj
 require_match 'cp -R.*src.*dst' app/apple/herm.xcodeproj/project.pbxproj
-require_match 'The following skills are available' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Skills \(Herm concept' app/apple/herm/Models/CPSLChatModel.swift
+require_match '### Catalog' app/apple/herm/Models/CPSLChatModel.swift
 require_match '\$0\.path' app/apple/herm/Models/CPSLChatModel.swift
 reject_match 'iCloudRestrictedSkillNames|Network access is disabled while these mounts are active' \
   app/apple/herm/Models/CPSLChatModel.swift
@@ -320,8 +383,47 @@ require_match 'let callbackBox = CPSLWebBrowserCallbackBox\(service: webBrowser\
   app/apple/herm/Services/CPSLDebugService.swift
 require_match 'let allowedDomains = \["\*"\]' app/apple/herm/Services/CPSLDebugService.swift
 require_match 'do not use require to load them' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Skills \(Herm concept' app/apple/herm/Models/CPSLChatModel.swift
+require_match '\*\*not\*\* automatically in your context' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'How a skill enters your context' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'local_sandbox_exec' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'print\(fs\.read\("/skills/apple-context/SKILL\.md"\)\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'What does not load a skill' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'require\("apple-context"\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'print\(\) and tostring\(\) serialize tables as JSON' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'location\.status\(\) / location\.current\(\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Load into context \(mandatory before first use' app/apple/herm/Models/CPSLChatModel.swift
+require_match '### Catalog' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'load the apple-context skill into this conversation first' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Do \*\*not\*\* `require\("apple-context"\)`' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'here\.location\.latitude' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'here\.location\.city' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'formatted_address' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'print\(here\)' app/apple/herm/Skills/apple-context/SKILL.md
+require_match 'reverseGeocodedPlace' app/apple/herm/Services/CPSLLocationService.swift
+require_match 'CLGeocoder' app/apple/herm/Services/CPSLLocationService.swift
+require_match 'formatted_address' app/apple/herm/Services/CPSLLocationService.swift
+require_match 'register_tostring' external/cpsl/core/src/sandbox.rs
+require_match 'format_return_value' external/cpsl/core/src/sandbox.rs
+require_match 'print_table_serialized_as_json' external/cpsl/core/src/sandbox/tests.rs
+require_match 'tostring_table_serialized_as_json' external/cpsl/core/src/sandbox/tests.rs
 require_match 'help\(\).*authoritative module list' app/apple/herm/Skills/webbrowser/SKILL.md
-require_match 'Treat CPSL as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Cookbook \(do this first\)' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'webbrowser\.page\(browser' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'Never call `webbrowser\.show\(\)`' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'set_layout\(browser, "desktop"\)' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'Mobile by default' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'do not share open browser tabs' app/apple/herm/Skills/webbrowser/SKILL.md
+require_match 'layoutMode' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'browserSetLayout' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'CPSLWebBrowserLayoutMode' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'mobileSafariUserAgent' app/apple/herm/Services/CPSLWebBrowserService.swift
+require_match 'set_layout' external/cpsl/core/src/webbrowser.rs
+require_match 'layout_mode' external/cpsl/core/src/webbrowser.rs
+require_match 'DEFAULT_LAYOUT_MODE' external/cpsl/core/src/webbrowser.rs
+require_match 'webbrowser\.page\(browser\) while staying in the background' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'set_layout\(browser, "desktop"\)' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Treat the sandbox as its own Luau ecosystem' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'APIs from other Lua/Luau environments' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'do not assign help output to a variable' app/apple/herm/Models/CPSLChatModel.swift
 require_match 'external renderers' app/apple/herm/Models/CPSLChatModel.swift
@@ -335,13 +437,16 @@ require_match 'print\(fs\.exists\("/home/herm/report\.pdf"\)\)' app/apple/herm/S
 require_match 'platform not supported' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'no PDF was produced' app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'name: image-vision' app/apple/herm/Skills/image-vision/SKILL.md
+require_match 'short-description: Inspect images and PDFs with vision' app/apple/herm/Skills/image-vision/SKILL.md
+reject_match '\bCPSL\b' app/apple/herm/Skills/image-vision/SKILL.md app/apple/herm/Skills/apple-context/SKILL.md app/apple/herm/Skills/webbrowser/SKILL.md app/apple/herm/Skills/beautiful-pdfs/SKILL.md
 require_match 'mode = "vision"' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'doc\.readAsync' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'vision callback .* not available' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'Never claim to have seen or analyzed' app/apple/herm/Skills/image-vision/SKILL.md
 require_match 'target_os = "ios"' external/cpsl/modules/native-webview-pdf/src/lib.rs
 require_match '@page' app/apple/herm/Skills/beautiful-pdfs/print.css
-require_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'Current directory:' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+reject_match 'Current CPSL directory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'currentDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'requestDirectory: sandboxDirectory' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'promptPathLiteral' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
@@ -519,6 +624,8 @@ if command -v swift >/dev/null 2>&1; then
 fi
 
 if command -v swiftc >/dev/null 2>&1; then
+  # Stub PCC runtime for Linux / pre-27 SDK hosts so agent sources typecheck.
+  HERM_FORCE_PCC_RUNTIME=0 bash scripts/generate-apple-pcc-runtime.sh
   swiftc -typecheck \
     scripts/vet-apple-agent-shared-types.swift \
     app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
@@ -542,6 +649,18 @@ if command -v swiftc >/dev/null 2>&1; then
     scripts/vet-apple-openai-protocol.swift \
     -o /tmp/herm-vet-openai-protocol
   /tmp/herm-vet-openai-protocol
+  swiftc \
+    scripts/vet-apple-agent-shared-types.swift \
+    app/apple/herm/Services/Agent/CPSLAgentConfig.swift \
+    app/apple/herm/Services/Agent/CPSLOpenAIProtocol.swift \
+    app/apple/herm/Services/Agent/CPSLOpenAIClient.swift \
+    app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift \
+    app/apple/herm/Generated/CPSLPCCRuntime.generated.swift \
+    app/apple/herm/Services/Agent/CPSLAgentProviderSelection.swift \
+    app/apple/herm/Services/Agent/CPSLPCCMessageMapper.swift \
+    scripts/vet-apple-agent-pcc.swift \
+    -o /tmp/herm-vet-agent-pcc
+  /tmp/herm-vet-agent-pcc
   swiftc -parse-as-library scripts/vet-apple-agent-concurrency-ui.swift -o /tmp/herm-vet-agent-concurrency-ui
   /tmp/herm-vet-agent-concurrency-ui
   swiftc \

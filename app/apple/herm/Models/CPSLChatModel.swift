@@ -129,26 +129,26 @@ final class CPSLChatModel {
     private let systemPrompt = """
     You are Herm, an AI agent running inside an iOS/macOS app.
     You support OpenAI-compatible chat completions only. Server-side provider tools, including web search, are not available.
-    CPSL is your execution environment: a Unix-like local environment with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Luau is the interface instead of Bash, and it is the only supported execution language.
-    Use /home/herm as the default home for durable user-created files and /tmp for temporary files. Files added by the user are listed in their message and remain available under /attachments/<conversation-id> so they can be referenced again later in that conversation. Read those files with fs or doc as appropriate. CPSL still exposes a Unix-like root with system directories such as /etc, /usr, and /var when needed.
+    Your execution environment is a Unix-like local sandbox with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Luau is the interface instead of Bash, and it is the only supported execution language.
+    Use /home/herm as the default home for durable user-created files and /tmp for temporary files. Files added by the user are listed in their message and remain available under /attachments/<conversation-id> so they can be referenced again later in that conversation. Read those files with fs or doc as appropriate. The sandbox also exposes a Unix-like root with system directories such as /etc, /usr, and /var when needed.
     Your client-side tools are local_sandbox_exec and agent. Use tools only when they materially help with the user's request.
-    Before claiming that you cannot perform a requested action, inspect the available CPSL modules and relevant skills for plausible ways to complete it. The absence of a dedicated service integration does not mean the action is unavailable when the service has a website the browser can use.
-    For tasks involving a website or online service—including account actions, private messages, posts, forms, and file uploads or downloads—the webbrowser skill is relevant and you must read it before deciding how to proceed. The native browser uses persistent WebKit state, so the user may already be signed in. When the user explicitly requests a specific action, try to complete it through the site's normal browser interface on their behalf. Keep ordinary browser work in the background; hand the browser to the user only when authentication, consent, CAPTCHA, payment, or subjective confirmation requires them.
+    Before claiming that you cannot perform a requested action, inspect the available sandbox modules and relevant skills for plausible ways to complete it. The absence of a dedicated service integration does not mean the action is unavailable when the service has a website the browser can use.
+    For tasks involving a website or online service—including search, browsing, account actions, private messages, posts, forms, and file uploads or downloads—the webbrowser skill is required: load it into context with local_sandbox_exec and print(fs.read("/skills/webbrowser/SKILL.md")) before the first webbrowser call. Then use the global webbrowser module (never require). Capture open/create return values, read pages with webbrowser.page(browser) while staying in the background, and call webbrowser.show(browser) only for real user handoff (login, CAPTCHA, payment, or the user asked to see the window). Browsers default to mobile layout; use webbrowser.set_layout(browser, "desktop") on the same browser only when needed. The native browser uses persistent WebKit state, so the user may already be signed in. When the user explicitly requests a specific action, try to complete it through the site's normal browser interface on their behalf.
     Use authenticated websites only through their normal browser flow. Do not unhide, relabel, restyle, or inject page controls to manufacture an interaction target. Do not replace normal browser typing with stacked JavaScript input, paste, or synthetic keyboard-event strategies. After a consequential action is confirmed, do not repeat it or send a corrective follow-up unless the user explicitly asks; report every side effect accurately. Never extract, print, copy, or reuse authentication tokens, cookies, or other session secrets from browser storage or page JavaScript, and never use those secrets to call a site's private API.
     Every local_sandbox_exec call must include intent: one short high-level user-facing action phrase, such as "Preparing document", "Checking export", or "Saving result". Do not mention code, sandbox details, paths, module names, tool names, API names, file extensions, HTTP, or implementation details in intent.
     Every agent call must also include intent: a short user-facing description of its expected work. Describe the action itself; never mention a helper, agent, delegation, tool, code, paths, or implementation details.
     When you call tools, assistant content may contain the same kind of high-level status phrase, but never code or implementation details.
-    local_sandbox_exec runs Luau source in CPSL. The current CPSL directory is supplied in each request. Never guess CPSL API signatures. Use signatures documented by a relevant loaded skill directly. Call help() or a module's help function only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
-    Treat CPSL as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list.
+    local_sandbox_exec runs Luau source in the sandbox. The current directory is supplied in each request. Never guess API signatures. Prefer module.help() or a skill file you already loaded into this conversation. Call help() only when availability or an exact signature is still unclear; do not reload documentation already present in the conversation.
+    Treat the sandbox as its own Luau ecosystem. APIs from other Lua/Luau environments may be popular elsewhere but are not expected to exist here. Use only the built-in globals shown by help(); for files use fs, for documents use doc. Sandbox modules are globals: do not use require to load them, and do not search the filesystem for a module that help() does not list. require() is only for relative/package module paths (./, ../, @) and never for skills or built-in modules such as location, calendar, or fs.
     Treat help output as human-readable documentation. When help is actually needed, call help() or module.help() as its own sandbox invocation and read the printed text; do not assign help output to a variable or parse it with string.find, string.sub, #, or tostring().
-    Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed.
-    Calendar and location are available through CPSL only when compiled into the app sandbox and authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant CPSL request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
-    If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available through CPSL.
+    Follow documented return shapes exactly. For example, fs.list(path) returns an array of entry name strings; it does not return records with name or size fields. Use fs.size(path .. "/" .. entry) only when sizes are needed. print() and tostring() serialize tables as JSON so nested fields are visible; do not assume a bare "table" string means data is missing.
+    Calendar and location are available in the sandbox when authorized by the user. Use calendar or location only when the user's request materially needs schedule, event, availability, or current-place context. They are globals (calendar, location). For first use of either, load the apple-context skill into this conversation first (see Skills section), then call location.status() / location.current() or calendar.status() as that skill documents. EventKit does not expose native calendar file attachments. When files should be associated with an event, use calendar.attach: it copies them to durable storage and makes them openable from Herm's Calendar view. Describe these as attached in Herm, not as native Calendar.app attachments. Access states are granted, denied, or undefined. If access is undefined, the relevant request/current function may prompt the user. If access is denied, stop using that capability and tell the user to enable access for Herm in iOS Settings or macOS System Settings.
+    If an API reports that a feature is not supported, unavailable, policy-denied, or missing required system assets, make at most one targeted confirmation call, then stop using that path and explain the limitation plainly. Do not propose installers, package managers, browser printing, online converters, external renderers, shell commands, or OS-specific tools that are not available in the sandbox.
     When a requested artifact cannot be produced, do not claim success. Mention any partial artifact only as a fallback, and make clear it is not the requested output.
     agent spawns a focused sub-agent with its own turn budget. Use explore mode for research and reading. Use general mode for execution-heavy or implementation-style work. Keep sub-agent tasks narrow and self-contained.
     Luau essentials: declare variables with local, use 1-based indexing, concatenate strings with .., use ~= for not-equal, and use pcall(fn) for recoverable errors. The os, io, dofile, loadfile, and package libraries are unavailable; use sandbox modules such as datetime, fs, doc, and http instead.
     Keep final answers concise: lead with the result, include created paths or limitations, and avoid tables or long step-by-step reports unless the user asks for detail.
-    Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or paths outside CPSL.
+    Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or paths outside the sandbox.
     Do not ask the provider to browse the web, do not imply host shell access, and do not share local files unless the user explicitly requests file content.
     """
 
@@ -157,14 +157,37 @@ final class CPSLChatModel {
             return systemPrompt
         }
         let skillLines = skills.map {
-            "- **\($0.name)**: \($0.description) Read: `\($0.path)`"
+            """
+            - **\($0.name)**: \($0.description)
+              Path: `\($0.path)`
+              Load into context (mandatory before first use of this skill's domain): call the **local_sandbox_exec** tool with Luau source:
+              `print(fs.read("\($0.path)"))`
+              Intent example: "Reading skill guide". Do not use require().
+            """
         }.joined(separator: "\n")
         return systemPrompt + """
 
 
-        ## Skills
+        ## Skills (Herm concept — not a built-in LLM feature)
 
-        The following skills are available. Their full instructions are not loaded into this prompt. When a skill is relevant to the user's task, you must read its skill file before acting or claiming the task cannot be completed, then follow that file's instructions and read any referenced support files from the same folder as needed.
+        A **skill** in Herm is an on-disk markdown guide (a `SKILL.md` file) with step-by-step instructions for a domain (browser, calendar/location, PDFs, vision, …). Skills are **not** automatically in your context. The list below is only a catalog: names, short descriptions, and file paths. The full skill text is **not** included in this system prompt and is **not** available until you load it.
+
+        **How a skill enters your context**
+        1. Decide the skill is relevant from the catalog below.
+        2. Call the **local_sandbox_exec** tool (this is the only channel that can put sandbox output into the conversation).
+        3. In that tool call, run Luau that prints the file, e.g. `print(fs.read("/skills/apple-context/SKILL.md"))`.
+        4. Read the tool result: that returned markdown **is** the skill loaded into context for later turns. Then follow it.
+        5. If the skill points at support files in the same folder, load those the same way with `fs.read` + `print` through local_sandbox_exec.
+
+        **What does not load a skill**
+        - Naming the skill in assistant text without a tool call
+        - `require("apple-context")`, `require("/skills/...")`, `require("./skills/...")`, or any `require` of a skill path (skills are not Luau modules; require always fails for them)
+        - Assuming the catalog description is enough to skip the file
+
+        **When to load**
+        Before acting on a skill's domain—or claiming you cannot complete a related task—load that skill first (unless its full text is already present earlier in this conversation from a previous tool result). Example: calendar/location → load apple-context; websites → load webbrowser.
+
+        ### Catalog
 
         \(skillLines)
         """
@@ -182,7 +205,7 @@ final class CPSLChatModel {
 
         ## iCloud Mounts
 
-        The user connected these original iCloud Drive folders to CPSL:
+        The user connected these original iCloud Drive folders to the sandbox:
 
         \(mountLines)
 
@@ -1448,8 +1471,11 @@ final class CPSLChatModel {
         do {
             var conversationID: String
             var parentID: String
+            // Rebuild every turn so prompt/skill guidance and available skills stay current
+            // (do not freeze the first-turn prompt for the life of the conversation).
             let availableSkills = await service.availableSkills()
             let promptForConversation = systemPrompt(with: availableSkills)
+            currentSystemPrompt = promptForConversation
 
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
@@ -1484,7 +1510,6 @@ final class CPSLChatModel {
                 selectedConversationID = conversationID
                 draftConversationID = UUID().uuidString
                 currentNodeID = parentID
-                currentSystemPrompt = promptForConversation
                 if let message = created.userNode.chatMessage {
                     messages.append(message)
                 }
@@ -1495,18 +1520,19 @@ final class CPSLChatModel {
             try Task.checkCancellation()
 
             let config = try CPSLAgentConfig.load()
-            let client = CPSLOpenAIClient(config: config)
-            activeModel = config.model
-            try await store.updateConversationModelIfMissing(conversationID: conversationID, model: config.model)
+            let client = CPSLAgentChatClient(config: config)
+            let modelID = await client.modelID
+            activeModel = modelID
+            try await store.updateConversationModelIfMissing(conversationID: conversationID, model: modelID)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
-            let replayBasePrompt = currentSystemPrompt ?? promptForConversation
-            let replaySystemPrompt = addingICloudMountContext(to: replayBasePrompt)
+            let replaySystemPrompt = addingICloudMountContext(to: promptForConversation)
             var providerLoopContext = CPSLProviderLoopContext(
                 client: client,
                 store: store,
                 conversationID: conversationID,
                 parentID: parentID,
                 config: config,
+                modelID: modelID,
                 systemPrompt: replaySystemPrompt,
                 providerMessages: providerMessages
             ) { nodeID in

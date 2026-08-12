@@ -156,7 +156,20 @@ final class CPSLLocationService: NSObject, ObservableObject {
         }
 
         var payload = await statusPayload()
-        payload["location"] = locationPayload(location)
+        var coordinates = locationPayload(location)
+        if let place = await reverseGeocodedPlace(for: location) {
+            coordinates["place"] = place
+            if let formatted = place["formatted_address"] as? String {
+                coordinates["formatted_address"] = formatted
+            }
+            // Convenience aliases so agents need not dig only under place.
+            for key in ["city", "region", "country", "country_code", "neighborhood", "postal_code"] {
+                if let value = place[key] {
+                    coordinates[key] = value
+                }
+            }
+        }
+        payload["location"] = coordinates
         return Self.successJSON(payload)
 #else
         return Self.errorJSON("location: CoreLocation is unavailable on this platform")
@@ -266,6 +279,62 @@ final class CPSLLocationService: NSObject, ObservableObject {
             payload["course_degrees"] = location.course
         }
         return payload
+    }
+
+    /// Reverse-geocode via Core Location. Best-effort: coordinate fields always remain
+    /// even when geocoding fails or is unavailable.
+    private func reverseGeocodedPlace(for location: CLLocation) async -> [String: Any]? {
+        await withCheckedContinuation { continuation in
+            CLGeocoder().reverseGeocodeLocation(location) { placemarks, _ in
+                guard let placemark = placemarks?.first else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                var place: [String: Any] = [:]
+                if let name = placemark.name, !name.isEmpty {
+                    place["name"] = name
+                }
+                if let neighborhood = placemark.subLocality, !neighborhood.isEmpty {
+                    place["neighborhood"] = neighborhood
+                }
+                if let city = placemark.locality, !city.isEmpty {
+                    place["city"] = city
+                }
+                if let region = placemark.administrativeArea, !region.isEmpty {
+                    place["region"] = region
+                }
+                if let postal = placemark.postalCode, !postal.isEmpty {
+                    place["postal_code"] = postal
+                }
+                if let country = placemark.country, !country.isEmpty {
+                    place["country"] = country
+                }
+                if let countryCode = placemark.isoCountryCode, !countryCode.isEmpty {
+                    place["country_code"] = countryCode
+                }
+                if let thoroughfare = placemark.thoroughfare, !thoroughfare.isEmpty {
+                    place["street"] = thoroughfare
+                }
+                if let subThoroughfare = placemark.subThoroughfare, !subThoroughfare.isEmpty {
+                    place["street_number"] = subThoroughfare
+                }
+                let formatted = [
+                    placemark.subThoroughfare,
+                    placemark.thoroughfare,
+                    placemark.locality,
+                    placemark.administrativeArea,
+                    placemark.postalCode,
+                    placemark.country
+                ]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: ", ")
+                if !formatted.isEmpty {
+                    place["formatted_address"] = formatted
+                }
+                continuation.resume(returning: place.isEmpty ? nil : place)
+            }
+        }
     }
 
     private func finishAccessRequestIfNeeded() {

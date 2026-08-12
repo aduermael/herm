@@ -16,6 +16,17 @@ actor CPSLOpenAIClient {
         _ streamRequest: CPSLOpenAIStreamRequest,
         onEvent: @escaping (CPSLOpenAIStreamEvent) async -> Void
     ) async throws -> CPSLOpenAICompletion {
+        let request = try makeChatRequest(streamRequest)
+        try Task.checkCancellation()
+        #if canImport(FoundationNetworking)
+        // Linux FoundationNetworking lacks URLSession.bytes; buffer the SSE body.
+        return try await streamChatBuffered(request: request, onEvent: onEvent)
+        #else
+        return try await streamChatStreaming(request: request, onEvent: onEvent)
+        #endif
+    }
+
+    private func makeChatRequest(_ streamRequest: CPSLOpenAIStreamRequest) throws -> URLRequest {
         let requestBody = CPSLOpenAIChatRequest(
             model: config.model,
             messages: streamRequest.messages,
@@ -24,15 +35,40 @@ actor CPSLOpenAIClient {
             maxCompletionTokens: streamRequest.maxTokens,
             stream: true
         )
-
         var request = URLRequest(url: chatCompletionsURL())
         request.httpMethod = "POST"
         request.httpBody = try JSONEncoder().encode(requestBody)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+        return request
+    }
 
+    #if canImport(FoundationNetworking)
+    private func streamChatBuffered(
+        request: URLRequest,
+        onEvent: @escaping (CPSLOpenAIStreamEvent) async -> Void
+    ) async throws -> CPSLOpenAICompletion {
+        let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()
+        try validate(response: response, body: data)
+        let accumulator = CPSLOpenAIStreamAccumulator(model: config.model)
+        let text = String(decoding: data, as: UTF8.self)
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            try Task.checkCancellation()
+            guard let event = try accumulator.consume(line: String(line)) else {
+                continue
+            }
+            await onEvent(event)
+        }
+        try Task.checkCancellation()
+        return try accumulator.validatedCompletion()
+    }
+    #else
+    private func streamChatStreaming(
+        request: URLRequest,
+        onEvent: @escaping (CPSLOpenAIStreamEvent) async -> Void
+    ) async throws -> CPSLOpenAICompletion {
         let (bytes, response) = try await session.bytes(for: request)
         try Task.checkCancellation()
         try await validate(response: response, bytes: bytes)
@@ -75,6 +111,17 @@ actor CPSLOpenAIClient {
             return ""
         }
         return body
+    }
+    #endif
+
+    private func validate(response: URLResponse, body: Data) throws {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            return
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let preview = String(decoding: body.prefix(4_096), as: UTF8.self)
+            throw CPSLOpenAIError.httpStatus(httpResponse.statusCode, preview)
+        }
     }
 
     private func chatCompletionsURL() -> URL {

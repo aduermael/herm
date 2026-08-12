@@ -141,7 +141,7 @@ nonisolated struct CPSLOpenAITool: Codable, Sendable {
             type: "function",
             function: CPSLOpenAIToolFunction(
                 name: "local_sandbox_exec",
-                description: "Execute Luau source in CPSL, a Unix-like local environment with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Current CPSL directory for this request: \(directory). Relative paths resolve from that directory. Use /home/herm for durable user-created files, /tmp for temporary files, and the user-provided paths under /attachments when present; other Unix-style directories under / remain available when the task calls for them. Luau is the command interface instead of Bash and the only supported execution language. Include intent: a short high-level user-facing action phrase like Exploring files, Reading settings, or Checking results. Intent must not mention code, sandbox details, paths, tool names, or implementation details. Never guess CPSL API signatures: call help() and each module's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside the CPSL virtual filesystem.",
+                description: "Execute Luau source in a Unix-like local sandbox with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Current directory for this request: \(directory). Relative paths resolve from that directory. Use /home/herm for durable user-created files, /tmp for temporary files, and the user-provided paths under /attachments when present; other Unix-style directories under / remain available when the task calls for them. Luau is the command interface instead of Bash and the only supported execution language. Include intent: a short high-level user-facing action phrase like Exploring files, Reading settings, or Checking results. Intent must not mention code, sandbox details, paths, tool names, or implementation details. Never guess API signatures: call help() and each module's help function, such as fs.help(), before using APIs. Declare variables with local; Luau uses 1-based indexing, .. string concatenation, ~= not-equal, and pcall(fn) for recoverable errors. Do not try to launch external lua/luau interpreters, Bash, Python, shell commands, package managers, background services, host Lua APIs, or files outside the sandbox virtual filesystem.",
                 parameters: CPSLOpenAIToolParameters(
                     type: "object",
                     properties: [
@@ -151,7 +151,7 @@ nonisolated struct CPSLOpenAITool: Codable, Sendable {
                         ),
                         "source": CPSLOpenAIToolParameter(
                             type: "string",
-                            description: "Luau source to execute directly in CPSL. Relative paths resolve from the current CPSL directory in the tool description."
+                            description: "Luau source to execute directly in the sandbox. Relative paths resolve from the current directory in the tool description."
                         )
                     ],
                     required: ["intent", "source"],
@@ -165,7 +165,7 @@ nonisolated struct CPSLOpenAITool: Codable, Sendable {
         type: "function",
         function: CPSLOpenAIToolFunction(
             name: "agent",
-            description: "Spawn a focused sub-agent with its own turn budget. Include intent: a short user-facing description of the expected work, without mentioning helpers, agents, tools, code, paths, or implementation details. Use mode explore for research and reading. Use mode general for CPSL execution cycles or implementation-style work. Sub-agents return a concise result to this conversation and cannot access host shell tools.",
+            description: "Spawn a focused sub-agent with its own turn budget. Include intent: a short user-facing description of the expected work, without mentioning helpers, agents, tools, code, paths, or implementation details. Use mode explore for research and reading. Use mode general for sandbox execution cycles or implementation-style work. Sub-agents return a concise result to this conversation and cannot access host shell tools.",
             parameters: CPSLOpenAIToolParameters(
                 type: "object",
                 properties: [
