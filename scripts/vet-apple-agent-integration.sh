@@ -89,6 +89,7 @@ required_files=(
   scripts/vet-apple-conversation-store.swift
   scripts/vet-apple-openai-protocol.swift
   scripts/vet-apple-agent-pcc.swift
+  scripts/vet-apple-goal-clarification.swift
   scripts/generate-apple-pcc-runtime.sh
   scripts/apple-pcc/CPSLPCCRuntime.full.swift
   scripts/apple-pcc/CPSLPCCRuntime.stub.swift
@@ -456,6 +457,12 @@ require_match '"language": language' app/apple/herm/Services/CPSLDebugService.sw
 require_match 'CPSLAgentToolFormatting\.providerContent' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'CPSLAgentToolFormatting\.displayBody' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
 require_match 'CPSLAgentToolFormatting\.agentInput' app/apple/herm/Models/CPSLChatModel+AgentRuntime.swift
+require_match 'CPSLGoalClarification\.mainAgentCompletionContract' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'clarifyingUserPrompt' app/apple/herm/Models/CPSLChatModel.swift
+require_match 'Carry each user request through to a finished result' app/apple/herm/Models/CPSLGoalClarification.swift
+require_match 'endGoalHeading' app/apple/herm/Models/CPSLGoalClarification.swift
+require_match 'embeddingClarifiedGoal' app/apple/herm/Models/CPSLAttachmentPrompt.swift
+require_match 'vet-apple-goal-clarification: ok' scripts/vet-apple-goal-clarification.swift
 require_match 'nonNegativeIntValue' app/apple/herm/Services/Agent/CPSLAgentConfig.swift
 require_match 'Set\(object\.keys\)\.isSubset\(of: \["source", "intent"\]\)' app/apple/herm/Services/Agent/CPSLAgentToolFormatting.swift
 require_match 'unknown fields should not decode' scripts/vet-apple-agent-tool-formatting.swift
@@ -661,6 +668,12 @@ if command -v swiftc >/dev/null 2>&1; then
     scripts/vet-apple-agent-pcc.swift \
     -o /tmp/herm-vet-agent-pcc
   /tmp/herm-vet-agent-pcc
+  swiftc \
+    app/apple/herm/Models/CPSLGoalClarification.swift \
+    app/apple/herm/Models/CPSLAttachmentPrompt.swift \
+    scripts/vet-apple-goal-clarification.swift \
+    -o /tmp/herm-vet-goal-clarification
+  /tmp/herm-vet-goal-clarification
   swiftc -parse-as-library scripts/vet-apple-agent-concurrency-ui.swift -o /tmp/herm-vet-agent-concurrency-ui
   /tmp/herm-vet-agent-concurrency-ui
   swiftc \
