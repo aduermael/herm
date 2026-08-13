@@ -132,6 +132,7 @@ final class CPSLChatModel {
     Your execution environment is a Unix-like local sandbox with a filesystem, current directory, and command-style capabilities exposed through Luau APIs. Luau is the interface instead of Bash, and it is the only supported execution language.
     Use /home/herm as the default home for durable user-created files and /tmp for temporary files. Files added by the user are listed in their message and remain available under /attachments/<conversation-id> so they can be referenced again later in that conversation. Read those files with fs or doc as appropriate. The sandbox also exposes a Unix-like root with system directories such as /etc, /usr, and /var when needed.
     Your client-side tools are local_sandbox_exec and agent. Use tools only when they materially help with the user's request.
+    \(CPSLGoalClarification.mainAgentCompletionContract)
     Before claiming that you cannot perform a requested action, inspect the available sandbox modules and relevant skills for plausible ways to complete it. The absence of a dedicated service integration does not mean the action is unavailable when the service has a website the browser can use.
     For tasks involving a website or online service—including search, browsing, account actions, private messages, posts, forms, and file uploads or downloads—the webbrowser skill is required: load it into context with local_sandbox_exec and print(fs.read("/skills/webbrowser/SKILL.md")) before the first webbrowser call. Then use the global webbrowser module (never require). Capture open/create return values, read pages with webbrowser.page(browser) while staying in the background, and call webbrowser.show(browser) only for real user handoff (login, CAPTCHA, payment, or the user asked to see the window). Browsers default to mobile layout; use webbrowser.set_layout(browser, "desktop") on the same browser only when needed. The native browser uses persistent WebKit state, so the user may already be signed in. When the user explicitly requests a specific action, try to complete it through the site's normal browser interface on their behalf.
     Use authenticated websites only through their normal browser flow. Do not unhide, relabel, restyle, or inject page controls to manufacture an interaction target. Do not replace normal browser typing with stacked JavaScript input, paste, or synthetic keyboard-event strategies. After a consequential action is confirmed, do not repeat it or send a corrective follow-up unless the user explicitly asks; report every side effect accurately. Never extract, print, copy, or reuse authentication tokens, cookies, or other session secrets from browser storage or page JavaScript, and never use those secrets to call a site's private API.
@@ -1491,6 +1492,8 @@ final class CPSLChatModel {
             let promptForConversation = systemPrompt(with: availableSkills)
             currentSystemPrompt = promptForConversation
 
+            // Persist the user turn first so Stop/config failure cannot discard the submit
+            // (composer is already cleared in submitPrompt). Clarify runs after write.
             if let selectedConversationID, let currentNodeID {
                 conversationID = selectedConversationID
                 let node = try await store.appendNode(
@@ -1537,6 +1540,19 @@ final class CPSLChatModel {
             let client = CPSLAgentChatClient(config: config)
             let modelID = await client.modelID
             activeModel = modelID
+
+            // Internal goal clarify after the timeline write: display body stays original;
+            // provider message may gain End goal. Fail open leaves the stored provider text.
+            let effectivePrompt = await clarifyingUserPrompt(prompt, using: client)
+            if effectivePrompt.providerText != prompt.providerText {
+                try await store.updateNodeProviderMessage(
+                    conversationID: conversationID,
+                    id: parentID,
+                    providerMessage: .user(effectivePrompt.providerText)
+                )
+            }
+            try Task.checkCancellation()
+
             try await store.updateConversationModelIfMissing(conversationID: conversationID, model: modelID)
             let providerMessages = try await store.providerMessages(conversationID: conversationID)
             let replaySystemPrompt = addingICloudMountContext(to: promptForConversation)
@@ -1594,6 +1610,71 @@ final class CPSLChatModel {
         streamingAssistantMessageID = nil
     }
 
+    /// Tools-free pre-turn clarify: restates end goal for the provider; fails open.
+    /// Timeline continues to use `prompt.displayText` only.
+    private func clarifyingUserPrompt(
+        _ prompt: CPSLAttachmentPrompt,
+        using client: CPSLAgentChatClient
+    ) async -> CPSLAttachmentPrompt {
+        guard CPSLGoalClarification.shouldClarify(displayText: prompt.displayText) else {
+            return prompt
+        }
+        if Task.isCancelled {
+            return prompt
+        }
+        let goal = await clarifyEndGoal(displayText: prompt.displayText, client: client)
+        return CPSLGoalClarification.applyingClarifiedGoal(goal, to: prompt)
+    }
+
+    private func clarifyEndGoal(
+        displayText: String,
+        client: CPSLAgentChatClient
+    ) async -> String? {
+        enum Race: Sendable {
+            case completed(String?)
+            case timedOut
+        }
+
+        return await withTaskGroup(of: Race.self) { group in
+            group.addTask {
+                do {
+                    let request = CPSLOpenAIStreamRequest(
+                        messages: [
+                            .system(CPSLGoalClarification.clarifyInstructions),
+                            .user(displayText)
+                        ],
+                        tools: [],
+                        maxTokens: CPSLGoalClarification.maxOutputTokens
+                    )
+                    let completion = try await client.streamChat(request) { _ in }
+                    let normalized = CPSLGoalClarification.normalizedClarifiedGoal(
+                        completion.text,
+                        originalDisplayText: displayText
+                    )
+                    return .completed(normalized)
+                } catch {
+                    return .completed(nil)
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: CPSLGoalClarification.timeoutNanoseconds)
+                return .timedOut
+            }
+            var result: String?
+            while let event = await group.next() {
+                switch event {
+                case .completed(let goal):
+                    result = goal
+                    group.cancelAll()
+                case .timedOut:
+                    result = nil
+                    group.cancelAll()
+                }
+                break
+            }
+            return result
+        }
+    }
 
     private func runCommand(_ command: String) {
         let message = CPSLChatMessage(role: .command, title: nil, body: commandBlockBody(command: command))

@@ -1,7 +1,7 @@
 import Foundation
 
 nonisolated struct CPSLAttachmentPrompt: Equatable, Sendable {
-    private static let heading = "Attached files:"
+    static let attachedFilesHeading = "Attached files:"
 
     let displayText: String
     let providerText: String
@@ -10,16 +10,34 @@ nonisolated struct CPSLAttachmentPrompt: Equatable, Sendable {
     init(displayText: String, attachments: [CPSLAttachment]) {
         self.displayText = displayText
         self.attachments = attachments
-        guard !attachments.isEmpty else {
-            providerText = displayText
-            return
-        }
+        providerText = Self.makeProviderText(
+            displayText: displayText,
+            attachments: attachments
+        )
+    }
 
-        let paths = attachments.map { "- \($0.path)" }.joined(separator: "\n")
-        let attachmentSection = "\(Self.heading)\n\(paths)"
-        providerText = displayText.isEmpty
-            ? attachmentSection
-            : "\(displayText)\n\n\(attachmentSection)"
+    /// Full constructor used when provider text has been adjusted (e.g. clarified end goal).
+    init(displayText: String, providerText: String, attachments: [CPSLAttachment]) {
+        self.displayText = displayText
+        self.providerText = providerText
+        self.attachments = attachments
+    }
+
+    /// Returns a copy whose provider-facing content embeds a clarified end goal.
+    /// Display text (timeline body) is unchanged.
+    func embeddingClarifiedGoal(_ goal: String?) -> CPSLAttachmentPrompt {
+        let nextProvider = CPSLGoalClarification.providerText(
+            baseProviderText: providerText,
+            clarifiedGoal: goal
+        )
+        guard nextProvider != providerText else {
+            return self
+        }
+        return CPSLAttachmentPrompt(
+            displayText: displayText,
+            providerText: nextProvider,
+            attachments: attachments
+        )
     }
 
     static func parse(_ text: String?) -> (displayText: String, attachments: [CPSLAttachment]) {
@@ -27,6 +45,7 @@ nonisolated struct CPSLAttachmentPrompt: Equatable, Sendable {
             return ("", [])
         }
 
+        let heading = attachedFilesHeading
         let sectionPrefix = "\n\n\(heading)\n"
         let displayText: String
         let pathText: Substring
@@ -65,6 +84,30 @@ nonisolated struct CPSLAttachmentPrompt: Equatable, Sendable {
         else {
             return (text, [])
         }
-        return (displayText, attachments)
+        // Provider text may include an End goal block before attachments; display is body only.
+        let cleanedDisplay = stripTrailingEndGoal(from: displayText)
+        return (cleanedDisplay, attachments)
+    }
+
+    private static func makeProviderText(
+        displayText: String,
+        attachments: [CPSLAttachment]
+    ) -> String {
+        guard !attachments.isEmpty else {
+            return displayText
+        }
+        let paths = attachments.map { "- \($0.path)" }.joined(separator: "\n")
+        let attachmentSection = "\(attachedFilesHeading)\n\(paths)"
+        return displayText.isEmpty
+            ? attachmentSection
+            : "\(displayText)\n\n\(attachmentSection)"
+    }
+
+    private static func stripTrailingEndGoal(from text: String) -> String {
+        let marker = "\n\n\(CPSLGoalClarification.endGoalHeading)\n"
+        guard let range = text.range(of: marker, options: .backwards) else {
+            return text
+        }
+        return String(text[..<range.lowerBound])
     }
 }
